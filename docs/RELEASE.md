@@ -21,17 +21,29 @@ The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by th
 - `/` and `/PermitMonitorSetup.exe` redirect to the current installer. This is the link to send to new users.
 - `/release-manifest.json` is the signed manifest the app checks.
 - `/PermitMonitorSetup-X.Y.Z.exe` are the versioned installers. Old ones stay so cached manifests keep working.
-- `/upload/...` takes CI uploads and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size, and it never overwrites the installer the live manifest points to.
+- `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size, and it never overwrites the installer the live manifest points to.
 
 Deploy Worker changes with `npx wrangler deploy` from `infra/update-server`.
+
+Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint instead of through the Worker.
 
 CI inputs:
 
 - `UPDATE_FEED_URL` and `UPDATE_PUBLIC_KEY_SPKI_BASE64` (plain values in `windows.yml`) are built into the app.
 - `UPDATE_SIGNING_PRIVATE_KEY` (Actions secret): Ed25519 PEM private key for release manifests.
-- `UPDATE_UPLOAD_TOKEN` (Actions secret): must match the Worker's `UPLOAD_TOKEN`.
+- `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (Actions secrets): an R2 API token with Object Read & Write on the `permitmon-updates` bucket only. Without them the release job skips the feed upload and warns.
 
-The private key's offline backup lives outside the repository with the maintainer. If it's lost, create a new key pair, update the public key in `windows.yml` and the secret, and have users install the next release by hand. Rotating the upload token only needs the Worker secret and the Actions secret to match.
+To publish by hand (for example, when the R2 secrets are missing), download the run's `windows-installer` artifact into `out/make/squirrel.windows/x64`, then from a network Cloudflare doesn't challenge:
+
+```
+UPDATE_INSTALLER_URL=https://permitmon-updates.sc-frederick.workers.dev/PermitMonitorSetup-X.Y.Z.exe \
+UPDATE_SIGNING_PRIVATE_KEY_FILE=... UPDATE_PUBLIC_KEY_SPKI_BASE64=... node scripts/sign-release-manifest.mjs
+UPDATE_SERVER_URL=https://permitmon-updates.sc-frederick.workers.dev UPDATE_UPLOAD_TOKEN=... node scripts/publish-update.mjs
+```
+
+`UPDATE_UPLOAD_TOKEN` must match the Worker's `UPLOAD_TOKEN` secret; it is also stored as an Actions secret.
+
+The private key's offline backup lives outside the repository with the maintainer. If it's lost, create a new key pair, update the public key in `windows.yml` and the secret, and have users install the next release by hand. To rotate the upload token, set the new value as the Worker's `UPLOAD_TOKEN` secret and wherever you keep it for manual publishing.
 
 ## Signed build inputs (not wired into CI)
 
