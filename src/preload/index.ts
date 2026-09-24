@@ -13,6 +13,7 @@ const bridge: PermitBridge = {
   openObservationRecord: (observationId) => ipcRenderer.invoke("permit:open-observation-record", observationId),
   removePermit: (permitId) => ipcRenderer.invoke("permit:remove", permitId),
   setMonitoring: (mode) => ipcRenderer.invoke("permit:set-monitoring", mode),
+  setCheckTimes: (times) => ipcRenderer.invoke("permit:set-check-times", times),
   setPermitMonitoring: (permitId, enabled) => ipcRenderer.invoke("permit:set-permit-monitoring", { permitId, enabled }),
   setPreference: (key, value) => ipcRenderer.invoke("permit:set-preference", { key, value }),
   checkForUpdate: () => ipcRenderer.invoke("permit:check-update"),

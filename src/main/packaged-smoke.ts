@@ -42,5 +42,6 @@ export async function runPackagedBrowserSmoke(): Promise<void> {
       finish(false);
     }
   });
-  worker.postMessage({ kind: "start", runId, permitNumber, previousRecordUrl: null, browserPath } satisfies MainToWorker);
+  worker.postMessage({ kind: "start", runId, jurisdictionId: "hillsborough-county-building", permitNumber,
+    previousRecordUrl: null, browserPath } satisfies MainToWorker);
 }

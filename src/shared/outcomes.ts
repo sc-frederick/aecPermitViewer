@@ -18,9 +18,10 @@ export const outcomeText: Record<RunOutcome, string> = {
 
 /** Extra context only where the label alone doesn't say what happened or what to do. */
 export const outcomeHelp: Partial<Record<RunOutcome, string>> = {
-  not_found_in_supported_search: "No exact match in the county Building search.",
+  not_found_in_supported_search: "No exact match in this jurisdiction's public search.",
   identity_mismatch: "The record showed a different permit number.",
-  status_unavailable: "The record page had no Record Status.",
+  status_unavailable: "The record page had no verified permit status.",
+  blocked: "The portal required login or human verification, or denied access.",
   api_unavailable: "Retrying within the hour.",
   authentication_error: "Check your key in Settings.",
   timeout: "Stopped after 3 minutes.",

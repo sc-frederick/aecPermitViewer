@@ -22,16 +22,16 @@ For a supported authority, the app checks a saved permit and records its exact d
 
 ## Operating context
 
-The first supported authority is Hillsborough County government, using the public HillsGovHub Building and Site record search for its covered records. A municipality inside the county is a separate authority. Checks run locally while the app is open and the computer is awake. Selected, filtered page text goes to TypeSafe for navigation decisions.
+The authority selector includes Hillsborough, Pasco, Pinellas, Hernando, and Polk counties, plus Tampa and St. Petersburg. A municipality inside a county is a separate authority. Accela, Tyler Civic Access, and Click2Gov require separate search paths. Palm Bay (login required) and Orange County (CAPTCHA on every search) are not offered, because neither allows an anonymous lookup. Checks run locally while the app is open and the computer is awake. Selected, filtered page text goes to TypeSafe for navigation decisions. See [portal research](docs/FL_PERMIT_PORTALS.md) for each search boundary and access limit.
 
 ## Capabilities and constraints
 
-- Saved permit list, Check Now, status history, record link, and scheduled checks three times each business day (8:30 AM, 12:30 PM, 4:30 PM local time) while the app is running. A missed time is made up once, only between 8:30 AM and 5 PM.
+- Saved permit list, Check Now, status history, record link, and scheduled checks at up to eight user-chosen times each day (default 8:30 AM, 12:30 PM, 4:30 PM local time) while the app is running. A missed time is made up once, only between the first time and half an hour after the last.
 - Runs from the Windows notification area when its window is closed, can start at sign-in, and sends local desktop notifications when a displayed status changes or a check starts failing.
 - No document analysis, response recommendations, inspection scheduling, payments, applications, email notifications, or cloud browser execution.
 - The user's TypeSafe key is typed into the app's settings, sent once to the main process, and encrypted there for the Windows user. It is never displayed again or returned to the renderer, and it stays out of the worker, logs, and database.
 - Portal status wording is preserved exactly. "In Process" is not interpreted as an action request.
-- Jurisdiction support requires an explicit qualified adapter and profile.
+- Jurisdiction support requires an explicit profile, a portal-specific search, and a verified permit-level status field. A portal login or human challenge produces a failed check, not an inferred status.
 
 ## Evidence on hand
 

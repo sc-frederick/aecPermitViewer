@@ -1,8 +1,9 @@
 import type { PermitBridge } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
-import { describeCheckTimes, effectiveRunTime } from "../shared/schedule.js";
+import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
 import type { AppPreferences, AppSnapshot, PreferenceKey, CheckRunRow, ObservationRow, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
+import { getJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -147,11 +148,15 @@ function relativeTime(when: Date, now = new Date()): string {
   return `${day} at ${clockFormat.format(when)}`;
 }
 
+function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
+  return (snapshot && normalizeCheckTimes(snapshot.checkTimes)) ?? DEFAULT_CHECK_TIMES;
+}
+
 function nextCheckSummary(snapshot: AppSnapshot): string {
   if (snapshot.monitoring !== "scheduled") return "";
   const now = new Date();
   const times = snapshot.permits.filter((permit) => permit.monitoringEnabled && !permit.checking)
-    .map((permit) => effectiveRunTime(new Date(permit.nextDueAt ?? now.toISOString()), now).getTime());
+    .map((permit) => effectiveRunTime(new Date(permit.nextDueAt ?? now.toISOString()), now, checkTimes(snapshot)).getTime());
   if (times.length === 0) return "";
   const next = relativeTime(new Date(Math.min(...times)), now);
   return next === "now" ? "Next check now" : `Next check ${next}`;
@@ -163,8 +168,10 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
 
   const identity = make("td");
   const open = actionButton(permit.permitNumber, "details", permit, "permit-link");
-  open.setAttribute("aria-label", `${permit.permitNumber}, details`);
+  const jurisdiction = getJurisdiction(permit.jurisdictionId);
+  open.setAttribute("aria-label", `${permit.permitNumber}, ${jurisdiction?.label ?? permit.jurisdictionId}, details`);
   identity.append(open);
+  identity.append(make("span", "cell-sub", jurisdiction?.label ?? permit.jurisdictionId));
   if (monitoring === "scheduled" && !permit.monitoringEnabled) {
     const tag = make("span", "tag", "Not scheduled");
     identity.append(tag);
@@ -186,8 +193,8 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
   const controls = make("td");
   const actions = make("div", "row-actions");
   actions.append(permit.checking
-    ? actionButton("Cancel", "cancel", permit, "button button-secondary")
-    : actionButton("Check now", "check", permit, "button button-secondary"));
+    ? actionButton("Cancel", "cancel", permit, "btn btn-secondary")
+    : actionButton("Check now", "check", permit, "btn btn-secondary"));
   const record = actionButton("", "open", permit, "icon-button");
   record.append(icon("external"));
   record.disabled = !permit.lastRecordUrl;
@@ -218,7 +225,7 @@ function renderKey(state: AppSnapshot["keyState"]): void {
   element<HTMLInputElement>("key-input").placeholder = state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
   const save = element<HTMLButtonElement>("key-save");
   save.textContent = state === "configured" ? "Replace" : "Save";
-  save.className = `button ${state === "configured" ? "button-secondary" : "button-primary"}`;
+  save.className = `btn btn-sm ${state === "configured" ? "btn-secondary" : "btn-primary"}`;
   element<HTMLButtonElement>("key-remove").hidden = state !== "configured";
 }
 
@@ -237,20 +244,71 @@ function renderPreferences(preferences: AppPreferences): void {
   hint("openAtLogin", preferences.openAtLoginAvailable, "Available in the installed app.");
 }
 
+const timeLabelFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+function renderCheckTimeRows(times: readonly string[]): void {
+  const rows = times.map((value, index) => {
+    const row = document.createElement("li");
+    const input = document.createElement("input");
+    input.type = "time";
+    input.required = true;
+    input.value = value;
+    input.setAttribute("aria-label", `Check time ${index + 1}`);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button";
+    remove.dataset.removeTime = String(index);
+    remove.disabled = times.length === 1;
+    const time = parseCheckTime(value);
+    remove.setAttribute("aria-label", time ? `Remove ${timeLabelFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
+    remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>';
+    row.append(input, remove);
+    return row;
+  });
+  element<HTMLUListElement>("check-time-list").replaceChildren(...rows);
+  element<HTMLButtonElement>("add-check-time").disabled = times.length >= MAX_CHECK_TIMES;
+}
+
+function editedCheckTimes(): string[] {
+  return [...element<HTMLUListElement>("check-time-list").querySelectorAll("input")].map((input) => input.value).filter(Boolean);
+}
+
+function renderSchedule(snapshot: AppSnapshot): void {
+  const scheduled = snapshot.monitoring === "scheduled";
+  element<HTMLElement>("schedule-help").textContent = scheduled
+    ? `Checks run at ${describeCheckTimes(checkTimes(snapshot))} each day.`
+    : "Checks only run when you click Check now.";
+  element<HTMLElement>("check-times").hidden = !scheduled;
+  // Leave the rows alone while someone is editing them; they re-sort when focus leaves.
+  const list = element<HTMLUListElement>("check-time-list");
+  if (list.contains(document.activeElement)) return;
+  const saved = checkTimes(snapshot).map(formatCheckTime);
+  if (saved.join() !== editedCheckTimes().join() || list.children.length !== saved.length) renderCheckTimeRows(saved);
+}
+
+async function saveCheckTimes(times: string[]): Promise<void> {
+  const result = await api.setCheckTimes(times);
+  if (!result.ok) {
+    notice(result.error);
+    if (currentSnapshot) renderCheckTimeRows(checkTimes(currentSnapshot).map(formatCheckTime));
+  }
+}
+
 function render(snapshot: AppSnapshot): void {
   currentSnapshot = snapshot;
   renderKey(snapshot.keyState);
   renderPreferences(snapshot.preferences);
   element<HTMLSelectElement>("monitoring-mode").value = snapshot.monitoring;
+  renderSchedule(snapshot);
   element<HTMLElement>("next-check").textContent = nextCheckSummary(snapshot);
   element<HTMLElement>("version").textContent = `Version ${snapshot.appVersion}`;
 
   const total = snapshot.permits.length;
   const failed = snapshot.permits.filter((permit) => !permit.checking && outcomeKind(permit.latestOutcome) === "failed").length;
   const unverified = snapshot.permits.filter((permit) => !permit.lastStatus).length;
-  for (const node of document.querySelectorAll<HTMLElement>("[data-count]")) {
-    const count = node.dataset.count === "all" ? total : node.dataset.count === "failed" ? failed : unverified;
-    node.textContent = count > 0 ? String(count) : "";
+  for (const option of element<HTMLSelectElement>("permit-filter").options) {
+    const count = option.value === "all" ? total : option.value === "failed" ? failed : unverified;
+    option.textContent = count > 0 ? `${option.dataset.label} (${count})` : option.dataset.label ?? "";
   }
 
   const visible = snapshot.permits.filter(matchesFilter);
@@ -270,6 +328,8 @@ function render(snapshot: AppSnapshot): void {
 
 function renderDetailsSummary(permit: PermitRow): void {
   element<HTMLElement>("details-title").textContent = permit.permitNumber;
+  const jurisdictionLabel = element<HTMLElement>("details-jurisdiction");
+  jurisdictionLabel.textContent = getJurisdiction(permit.jurisdictionId)?.label ?? permit.jurisdictionId;
   const status = element<HTMLElement>("details-status");
   status.textContent = permit.lastStatus ?? "No status yet";
   status.classList.toggle("muted", !permit.lastStatus);
@@ -285,9 +345,27 @@ function renderDetailsSummary(permit: PermitRow): void {
   element<HTMLButtonElement>("details-open").disabled = !permit.lastRecordUrl;
   element<HTMLInputElement>("details-daily").checked = permit.monitoringEnabled;
   const next = currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
-    ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date())) : null;
+    ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;
   element<HTMLElement>("details-daily-help").textContent = next ? `Next: ${next}` : "";
   element<HTMLButtonElement>("details-remove").disabled = permit.checking;
+}
+
+function renderJurisdictionOptions(): void {
+  const select = element<HTMLSelectElement>("jurisdiction");
+  select.replaceChildren(...JURISDICTIONS.map((profile) => {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.label;
+    return option;
+  }));
+  renderJurisdictionHelp();
+}
+
+function renderJurisdictionHelp(): void {
+  const profile = getJurisdiction(element<HTMLSelectElement>("jurisdiction").value);
+  element<HTMLElement>("jurisdiction-help").textContent = profile?.coverageNote ?? "";
+  element<HTMLInputElement>("permit-number").placeholder = profile?.portalFamily === "click2gov"
+    ? "25-05001277" : "Full permit number";
 }
 
 function renderHistory(history: PermitHistory): void {
@@ -407,12 +485,48 @@ element<HTMLFormElement>("key-form").addEventListener("submit", async (event) =>
   notice("Key saved.", "info");
   render(await api.snapshot());
 });
+renderJurisdictionOptions();
+element<HTMLSelectElement>("jurisdiction").addEventListener("change", renderJurisdictionHelp);
+
 element<HTMLButtonElement>("key-remove").addEventListener("click", async () => {
   if (!(await confirmAction("Remove your TypeSafe key?", "Checks stop until you add a key.", "Remove"))) return;
   const result = await api.removeKey();
   if (!result.ok) { notice(result.error); return; }
   notice("Key removed.", "info");
   render(await api.snapshot());
+});
+
+// Schedule
+element<HTMLUListElement>("check-time-list").addEventListener("change", (event) => {
+  const list = event.currentTarget as HTMLUListElement;
+  // A half-cleared field reads as empty; wait until every row holds a full time.
+  if ([...list.querySelectorAll("input")].some((input) => !input.value)) return;
+  void saveCheckTimes(editedCheckTimes());
+});
+element<HTMLUListElement>("check-time-list").addEventListener("focusout", (event) => {
+  const list = event.currentTarget as HTMLUListElement;
+  if (list.contains(event.relatedTarget as Node | null)) return;
+  if (currentSnapshot) renderCheckTimeRows(checkTimes(currentSnapshot).map(formatCheckTime));
+});
+element<HTMLUListElement>("check-time-list").addEventListener("click", (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-remove-time]");
+  if (!target) return;
+  const times = editedCheckTimes();
+  times.splice(Number(target.dataset.removeTime), 1);
+  if (times.length === 0) return;
+  // Focus leaves the row being removed so the refreshed list can replace it.
+  element<HTMLButtonElement>("add-check-time").focus();
+  void saveCheckTimes(times);
+});
+element<HTMLButtonElement>("add-check-time").addEventListener("click", () => {
+  const times = editedCheckTimes();
+  const taken = new Set(times);
+  const last = parseCheckTime(times[times.length - 1] ?? "") ?? { hour: 8, minute: 0 };
+  // Suggest an hour after the latest time, wrapping to the first free hour of the day.
+  for (let step = 1; step <= 24; step += 1) {
+    const candidate = formatCheckTime({ hour: (last.hour + step) % 24, minute: last.minute });
+    if (!taken.has(candidate)) { void saveCheckTimes([...times, candidate]); return; }
+  }
 });
 
 // Monitoring and filters
@@ -425,14 +539,12 @@ element<HTMLSelectElement>("monitoring-mode").addEventListener("change", async (
 
 function setFilter(next: Filter): void {
   filter = next;
-  for (const node of document.querySelectorAll<HTMLButtonElement>("[data-filter]")) {
-    node.setAttribute("aria-pressed", String(node.dataset.filter === next));
-  }
+  element<HTMLSelectElement>("permit-filter").value = next;
   if (currentSnapshot) render(currentSnapshot);
 }
-for (const node of document.querySelectorAll<HTMLButtonElement>("[data-filter]")) {
-  node.addEventListener("click", () => setFilter(node.dataset.filter as Filter));
-}
+element<HTMLSelectElement>("permit-filter").addEventListener("change", (event) => {
+  setFilter((event.currentTarget as HTMLSelectElement).value as Filter);
+});
 
 // Table actions
 element<HTMLElement>("permit-list").addEventListener("click", (event) => {
@@ -551,7 +663,6 @@ for (const input of document.querySelectorAll<HTMLInputElement>("input[data-pref
     if (!result.ok) { input.checked = !input.checked; notice(result.error); }
   });
 }
-element<HTMLSelectElement>("monitoring-mode").title = `${describeCheckTimes()}, business hours only`;
 // Keeps the "Next check" time current between snapshots.
 setInterval(() => { if (currentSnapshot) element<HTMLElement>("next-check").textContent = nextCheckSummary(currentSnapshot); }, 60_000);
 void api.snapshot().then(render);

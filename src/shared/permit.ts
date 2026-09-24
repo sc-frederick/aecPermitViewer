@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getJurisdiction, JURISDICTIONS, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
 
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 export const JEV_MODEL = "jev-1.13.0" as const;
@@ -22,7 +23,7 @@ export type RunOutcome =
 
 export interface PermitRow {
   id: string;
-  jurisdictionId: typeof HILLSBOROUGH_ID;
+  jurisdictionId: JurisdictionId;
   permitNumber: string;
   monitoringEnabled: boolean;
   lastStatus: string | null;
@@ -81,6 +82,8 @@ export interface AppSnapshot {
   appVersion: string;
   browserVersion: string;
   monitoring: "manual" | "scheduled";
+  /** Daily scheduled check times as sorted "HH:MM" strings. */
+  checkTimes: string[];
 }
 
 export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "Use the full permit number with its hyphens and zeros.");
@@ -90,42 +93,97 @@ export const addPermitSchema = z.object({
   permitNumber: permitNumberSchema,
 });
 
-export function resolveJurisdiction(input: string): typeof HILLSBOROUGH_ID | null {
+/** Resolve a selected authority without confusing a county with a city inside it. */
+export function resolveJurisdiction(input: string): JurisdictionId | null {
   const name = input.trim().toLocaleLowerCase("en-US");
   if (name === HILLSBOROUGH_LABEL.toLocaleLowerCase("en-US") ||
     name === "hillsborough county government" || name === "hillsborough county, florida") return HILLSBOROUGH_ID;
-  return null;
+  return JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ?? null;
 }
 
 export function samePermitNumber(requested: string, displayed: string): boolean {
   return requested.trim() === displayed.trim();
 }
 
-export function parsePortalUrl(value: string, page: "search" | "detail"): URL | null {
+/** Split a Click2Gov application number such as "25-05001277" into its two-digit year and serial. */
+export function parseApplicationNumber(value: string): { year: string; serial: string } | null {
+  const parts = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim());
+  return parts ? { year: parts[1]!, serial: parts[2]! } : null;
+}
+
+function usesApplicationNumber(jurisdictionId: JurisdictionId): boolean {
+  return getJurisdiction(jurisdictionId)?.portalFamily === "click2gov";
+}
+
+/** Click2Gov removes leading zeros from the displayed application serial. */
+export function sameJurisdictionPermitNumber(requested: string, displayed: string, jurisdictionId: JurisdictionId): boolean {
+  if (!usesApplicationNumber(jurisdictionId)) return samePermitNumber(requested, displayed);
+  const input = parseApplicationNumber(requested);
+  const shown = parseApplicationNumber(displayed);
+  return Boolean(input && shown && input.year === shown.year && Number(input.serial) === Number(shown.serial));
+}
+
+/** Store Click2Gov's zero-padded and displayed serial forms as one permit. */
+export function permitComparisonValue(number: string, jurisdictionId: JurisdictionId): string {
+  const parts = usesApplicationNumber(jurisdictionId) ? parseApplicationNumber(number) : null;
+  return parts ? `${parts.year}-${Number(parts.serial)}` : number;
+}
+
+/** Accept only pages on the chosen authority's public permit portal. */
+export function parsePortalUrl(value: string, page: "search" | "detail", jurisdictionId: JurisdictionId): URL | null {
+  const profile = getJurisdiction(jurisdictionId);
+  if (!profile) return null;
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     return null;
   }
-  if (url.protocol !== "https:" || url.host !== "aca-prod.accela.com" || url.username || url.password || url.hash) return null;
-  const path = page === "search" ? "/HCFL/Cap/CapHome.aspx" : "/HCFL/Cap/CapDetail.aspx";
+  const start = new URL(profile.startUrl);
+  if (url.protocol !== "https:" || url.host !== start.host || url.username || url.password) return null;
+  if (profile.portalFamily !== "accela") {
+    const path = url.pathname.toLowerCase();
+    if (profile.portalFamily === "click2gov") {
+      if (!path.startsWith("/click2govbp/")) return null;
+      if (!path.endsWith("/selectpermit.html")) return null;
+      const detail = url.searchParams.get("validatePermitView") === "true" &&
+        Boolean(url.searchParams.get("permit.appYear")) && Boolean(url.searchParams.get("permit.appNumber"));
+      return page === "search" ? (!detail ? url : null) : (detail ? url : null);
+    }
+    if (profile.portalFamily === "tyler-civic-access") {
+      if (!path.startsWith("/apps/selfservice")) return null;
+      return page === "search" ? (url.hash === "" || /home|search/i.test(url.hash) ? url : null)
+        : (/permit|case|plan/i.test(url.hash) ? url : null);
+    }
+    return null;
+  }
+  if (url.hash) return null;
+  const path = page === "search" ? `/${profile.tenant}/Cap/CapHome.aspx` : `/${profile.tenant}/Cap/CapDetail.aspx`;
   if (url.pathname.toLowerCase() !== path.toLowerCase()) return null;
   const values = (name: string): string[] => [...url.searchParams.entries()]
     .filter(([key]) => key.toLowerCase() === name.toLowerCase()).map(([, entry]) => entry);
-  if (values("TabName").length !== 1 || values("TabName")[0]?.toLowerCase() !== "building") return null;
+  const allowedModules = jurisdictionId === "pasco-county-building" ? ["building", "permits"] : [profile.module.toLowerCase()];
+  if (values("TabName").length !== 1 || !allowedModules.includes(values("TabName")[0]?.toLowerCase() ?? "")) return null;
   const moduleValues = values("Module");
   if (moduleValues.length !== 1) return null;
   const moduleValue = moduleValues[0];
-  if (moduleValue?.toLowerCase() !== "building") return null;
+  if (moduleValue?.toLowerCase() !== values("TabName")[0]?.toLowerCase()) return null;
   if (page === "detail") {
-    if (values("agencyCode").length !== 1 || values("agencyCode")[0] !== "HCFL") return null;
+    if (values("agencyCode").length !== 1 || values("agencyCode")[0]?.toLowerCase() !== profile.tenant.toLowerCase()) return null;
     if (!["capID1", "capID2", "capID3"].every((key) => values(key).length === 1 && Boolean(values(key)[0]))) return null;
   }
   return url;
 }
 
+/** The record-level status field each portal family labels on its detail page. */
+export const STATUS_LABELS: Record<JurisdictionProfile["portalFamily"], string> = {
+  "accela": "Record Status",
+  "click2gov": "Application Status",
+  "tyler-civic-access": "Status",
+};
+
 export function parseDisplayedStatus(input: {
+  jurisdictionId: JurisdictionId;
   requestedNumber: string;
   displayedNumber: string;
   statusLabel: string;
@@ -133,11 +191,21 @@ export function parseDisplayedStatus(input: {
   recordUrl: string;
   observedAt: string;
 }): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: RunOutcome } {
-  if (!samePermitNumber(input.requestedNumber, input.displayedNumber)) return { _tag: "err", outcome: "identity_mismatch" };
-  if (input.statusLabel.trim().replace(/:$/, "") !== "Record Status") return { _tag: "err", outcome: "status_unavailable" };
+  const { jurisdictionId } = input;
+  const profile = getJurisdiction(jurisdictionId);
+  if (!profile) return { _tag: "err", outcome: "unsupported_page" };
+  if (!sameJurisdictionPermitNumber(input.requestedNumber, input.displayedNumber, jurisdictionId)) return { _tag: "err", outcome: "identity_mismatch" };
+  if (input.statusLabel.trim().replace(/:$/, "") !== STATUS_LABELS[profile.portalFamily]) return { _tag: "err", outcome: "status_unavailable" };
   const status = input.statusValue.trim();
   if (!status || /[\u0000-\u001f]/.test(status)) return { _tag: "err", outcome: "status_unavailable" };
-  if (!parsePortalUrl(input.recordUrl, "detail")) return { _tag: "err", outcome: "record_link_unavailable" };
+  const recordUrl = parsePortalUrl(input.recordUrl, "detail", jurisdictionId);
+  if (!recordUrl) return { _tag: "err", outcome: "record_link_unavailable" };
+  if (usesApplicationNumber(jurisdictionId)) {
+    const linkedNumber = `${recordUrl.searchParams.get("permit.appYear")}-${recordUrl.searchParams.get("permit.appNumber")}`;
+    if (!sameJurisdictionPermitNumber(input.requestedNumber, linkedNumber, jurisdictionId)) {
+      return { _tag: "err", outcome: "record_link_unavailable" };
+    }
+  }
   if (Number.isNaN(Date.parse(input.observedAt)) || new Date(input.observedAt).toISOString() !== input.observedAt) {
     return { _tag: "err", outcome: "status_unavailable" };
   }

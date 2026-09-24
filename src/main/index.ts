@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell, session } from "electron";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -14,8 +14,9 @@ import { verifyBrowserPayload } from "./browser-integrity.js";
 import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openAtLoginAvailable, setOpenAtLogin } from "./background.js";
 import { describeCheckEvent, type CheckEvent } from "./notifications.js";
 import { isFailure } from "../shared/outcomes.js";
-import { withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
+import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
+import { addPermitSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
+import { getJurisdiction } from "../shared/jurisdictions.js";
 import type { BridgeResult } from "../shared/bridge.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
@@ -127,6 +128,7 @@ async function snapshot(): Promise<AppSnapshot> {
       ? `Playwright 1.63.0 · Chromium ${store.latestBrowserVersion()}`
       : "Playwright 1.63.0 · bundled Chromium",
     monitoring: store.getMonitoring(),
+    checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
       notifyStatusChanges: store.getFlag(PREF_FLAGS.notifyStatusChanges, true),
       notifyFailures: store.getFlag(PREF_FLAGS.notifyFailures, true),
@@ -147,6 +149,7 @@ async function broadcast(): Promise<void> {
       checking: current.permits.filter((permit) => permit.checking).length,
       failing: current.permits.filter((permit) => !permit.checking && isFailure(permit.latestOutcome)).length,
       scheduled: current.monitoring === "scheduled",
+      checkTimes: describeCheckTimes(store.getCheckTimes()),
     });
     mainWindow.webContents.send("permit:snapshot-changed", current);
   } catch {
@@ -172,7 +175,9 @@ function handle<T>(channel: string, callback: (raw: unknown) => Promise<BridgeRe
 
 function scheduleCheck(permitId: string): void {
   if (shuttingDown || active?.permitId === permitId || pendingPermitId === permitId || queue.includes(permitId)) return;
-  if (!store.getPermit(permitId)) return;
+  const permit = store.getPermit(permitId);
+  // A permit saved under a jurisdiction the app no longer supports stays visible but is never checked.
+  if (!permit || !getJurisdiction(permit.jurisdictionId)) return;
   queue.push(permitId);
   void broadcast();
   kickQueue();
@@ -264,8 +269,8 @@ async function stopChecks(): Promise<boolean> {
 async function scheduleDue(): Promise<void> {
   if (store.getMonitoring() !== "scheduled") return;
   const now = new Date();
-  // Scheduled checks stay inside business hours; anything missed overnight runs at the first morning slot.
-  if (!withinCheckWindow(now)) return;
+  // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
+  if (!withinCheckWindow(now, store.getCheckTimes())) return;
   for (const id of store.duePermitIds(now.toISOString())) scheduleCheck(id);
 }
 
@@ -297,13 +302,14 @@ async function startApp(): Promise<void> {
     quit: () => app.quit(),
   });
   background.start();
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 760,
     minWidth: 820,
     minHeight: 600,
     show: false,
-    backgroundColor: "#f3f5f7",
+    backgroundColor: "#f1ede4",
     icon: path.join(__dirname, "assets", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -333,11 +339,16 @@ async function startApp(): Promise<void> {
   handle("permit:add-and-check", (raw) => {
     const parsed = addPermitSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: "Enter a permit number." };
-    if (!resolveJurisdiction(parsed.data.jurisdiction)) {
-      return { ok: false, error: "Only Hillsborough County Building permits are supported." };
+    const jurisdictionId = resolveJurisdiction(parsed.data.jurisdiction);
+    if (!jurisdictionId) {
+      return { ok: false, error: "Choose a supported jurisdiction." };
+    }
+    const profile = getJurisdiction(jurisdictionId);
+    if (profile?.portalFamily === "click2gov" && !parseApplicationNumber(parsed.data.permitNumber)) {
+      return { ok: false, error: `Use the ${profile.label} application number as YY-serial, for example 25-05001277.` };
     }
     try {
-      const id = store.addPermit(parsed.data.permitNumber);
+      const id = store.addPermit(parsed.data.permitNumber, jurisdictionId);
       scheduleCheck(id);
       return { ok: true, value: id };
     } catch (error) {
@@ -392,7 +403,7 @@ async function startApp(): Promise<void> {
   handle("permit:open-record", async (raw) => {
     const id = permitIdSchema.safeParse(raw);
     const permit = id.success ? store.getPermit(id.data) : null;
-    if (!permit?.lastRecordUrl || !parsePortalUrl(permit.lastRecordUrl, "detail")) {
+    if (!permit?.lastRecordUrl || !parsePortalUrl(permit.lastRecordUrl, "detail", permit.jurisdictionId)) {
       return { ok: false, error: "No record link yet." };
     }
     await shell.openExternal(permit.lastRecordUrl);
@@ -401,7 +412,8 @@ async function startApp(): Promise<void> {
   handle("permit:open-observation-record", async (raw) => {
     const id = permitIdSchema.safeParse(raw);
     const observation = id.success ? store.getObservation(id.data) : null;
-    if (!observation || !parsePortalUrl(observation.recordUrl, "detail")) {
+    const jurisdictionId = id.success ? store.getObservationJurisdictionId(id.data) : null;
+    if (!observation || !jurisdictionId || !parsePortalUrl(observation.recordUrl, "detail", jurisdictionId)) {
       return { ok: false, error: "No record link for this entry." };
     }
     await shell.openExternal(observation.recordUrl);
@@ -423,6 +435,15 @@ async function startApp(): Promise<void> {
     const mode = z.enum(["manual", "scheduled"]).safeParse(raw);
     if (!mode.success) return { ok: false, error: "Invalid monitoring mode." };
     store.setMonitoring(mode.data);
+    void scheduleDue();
+    void broadcast();
+    return { ok: true, value: null };
+  });
+  handle("permit:set-check-times", (raw) => {
+    const times = z.array(z.string()).safeParse(raw);
+    const normalized = times.success ? normalizeCheckTimes(times.data) : null;
+    if (!normalized) return { ok: false, error: `Choose between 1 and ${MAX_CHECK_TIMES} check times.` };
+    store.setCheckTimes(normalized, new Date());
     void scheduleDue();
     void broadcast();
     return { ok: true, value: null };

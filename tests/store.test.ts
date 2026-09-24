@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
+import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
+import { JURISDICTIONS } from "../src/shared/jurisdictions.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -90,6 +92,48 @@ describe("permit removal", () => {
   });
 });
 
+describe("jurisdiction persistence", () => {
+  it("seeds each supported profile and associates permits and run metadata with their profile", () => {
+    const store = newStore();
+    try {
+      const profile = JURISDICTIONS.find((entry) => entry.id !== HILLSBOROUGH_ID);
+      expect(profile).toBeDefined();
+      const permitId = store.addPermit("TEST-123", profile!.id);
+      expect(store.getPermit(permitId)?.jurisdictionId).toBe(profile!.id);
+      const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0,
+        actualModel: null, browserVersion: null });
+      const db = (store as unknown as { db: { prepare(sql: string): { get(...args: unknown[]): unknown } } }).db;
+      expect(db.prepare("SELECT adapter_version AS version FROM check_runs WHERE id = ?").get(runId))
+        .toEqual({ version: profile!.adapterVersion });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
+        .toEqual({ count: JURISDICTIONS.length });
+    } finally {
+      store.close();
+    }
+  });
+
+  it.each([1, 2])("restores missing profiles when opening a version %i database", (version) => {
+    const store = newStore();
+    const directory = directories[directories.length - 1]!;
+    const filePath = path.join(directory, "data.sqlite");
+    try {
+      (store as unknown as { db: { exec(sql: string): void } }).db.exec("DELETE FROM jurisdiction_profiles");
+      (store as unknown as { db: { exec(sql: string): void } }).db.exec(`PRAGMA user_version = ${version}`);
+    } finally {
+      store.close();
+    }
+    const migrated = new PermitStore(filePath);
+    try {
+      expect((migrated as unknown as { db: { prepare(sql: string): { get(): unknown } } }).db
+        .prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
+        .toEqual({ count: JURISDICTIONS.length });
+    } finally {
+      migrated.close();
+    }
+  });
+});
+
 describe("scheduled checks", () => {
   it("includes new permits, defaults to scheduled mode, and reads the earlier 'daily' setting", () => {
     const store = newStore();
@@ -122,6 +166,21 @@ describe("scheduled checks", () => {
         .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId);
       store.alignSchedule(now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 12, 30).toISOString());
+    } finally {
+      store.close();
+    }
+  });
+
+  it("stores custom check times and pulls due times forward to the new schedule", () => {
+    const store = newStore();
+    try {
+      expect(store.getCheckTimes()).toEqual([{ hour: 8, minute: 30 }, { hour: 12, minute: 30 }, { hour: 16, minute: 30 }]);
+      const permitId = store.addPermit("HC-BLD-26-0087599");
+      (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
+        .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId);
+      store.setCheckTimes([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }], new Date(2026, 8, 24, 9, 0));
+      expect(store.getCheckTimes()).toEqual([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }]);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 10, 15).toISOString());
     } finally {
       store.close();
     }

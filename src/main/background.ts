@@ -1,6 +1,5 @@
 import { app, Menu, nativeImage, Notification, Tray, type NativeImage } from "electron";
 import path from "node:path";
-import { describeCheckTimes } from "../shared/schedule.js";
 
 // Squirrel.Windows registers shortcuts under com.squirrel.<maker name>.<executable name>.
 // Windows only delivers toast notifications for an app whose ID matches its Start menu shortcut.
@@ -20,6 +19,8 @@ export interface TrayState {
   checking: number;
   failing: number;
   scheduled: boolean;
+  /** The check times in words, e.g. "8:30 AM, 12:30 PM, and 4:30 PM". */
+  checkTimes: string;
 }
 
 export class Background {
@@ -52,7 +53,7 @@ export class Background {
     const summary = state.checking > 0 ? `${state.checking} check${state.checking === 1 ? "" : "s"} running`
       : state.failing > 0 ? `${state.failing} latest check${state.failing === 1 ? "" : "s"} failed`
         : `${state.permits} permit${state.permits === 1 ? "" : "s"} tracked`;
-    this.tray.setToolTip(`Permit Monitor\n${summary}\nScheduled checks ${state.scheduled ? `at ${describeCheckTimes()}` : "off"}`);
+    this.tray.setToolTip(`Permit Monitor\n${summary}\nScheduled checks ${state.scheduled ? `at ${state.checkTimes}` : "off"}`);
     const attention = state.failing > 0;
     if (attention !== this.attention) {
       this.attention = attention;
@@ -62,7 +63,7 @@ export class Background {
       { label: "Open Permit Monitor", click: () => this.hooks.showWindow() },
       { label: "Check all permits now", enabled: state.permits > 0, click: () => this.hooks.checkAll() },
       { type: "separator" },
-      { label: `Scheduled checks (${describeCheckTimes()})`, type: "checkbox", checked: state.scheduled, click: (item) => this.hooks.setScheduled(item.checked) },
+      { label: `Scheduled checks (${state.checkTimes})`, type: "checkbox", checked: state.scheduled, click: (item) => this.hooks.setScheduled(item.checked) },
       { type: "separator" },
       { label: "Quit Permit Monitor", click: () => this.hooks.quit() },
     ]));

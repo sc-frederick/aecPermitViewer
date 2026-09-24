@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Small-size cut of icon.svg (16-32px): heavier P, rule snapped to the pixel grid. -->
+  <rect x="4" y="4" width="56" height="56" rx="2" fill="#141312"/>
+  <path fill="#f8f5ec" stroke="#f8f5ec" stroke-width="25" stroke-linejoin="round" transform="translate(21.12 44) scale(0.04722 -0.04722)" d="M34 0Q19 0 19 11Q19 20 32 23L55 27Q76 31 82.5 38.0Q89 45 89 66V654Q89 675 82.5 682.0Q76 689 55 693L32 697Q19 700 19 709Q19 720 34 720H243Q302 720 347.0 694.5Q392 669 417.0 624.0Q442 579 442 520Q442 463 417.0 419.0Q392 375 348.0 350.5Q304 326 246 326H174Q160 326 160 312V70Q160 49 168.0 41.5Q176 34 204 29L241 23Q252 21 252 12Q252 0 237 0ZM160 406Q160 351 227 351Q292 351 329.5 397.0Q367 443 367 523Q367 605 329.0 650.0Q291 695 221 695Q160 695 160 655Z"/>
+  <rect x="18" y="48" width="28" height="4" fill="#f8f5ec"/>
+</svg>

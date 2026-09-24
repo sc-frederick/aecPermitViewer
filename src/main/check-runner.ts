@@ -108,6 +108,7 @@ export function runCheck(input: {
         case "verified": {
           browserVersion = message.browserVersion;
           const parsed = parseDisplayedStatus({
+            jurisdictionId: input.permit.jurisdictionId,
             requestedNumber: input.permit.permitNumber,
             displayedNumber: message.displayedNumber,
             statusLabel: message.statusLabel,
@@ -133,6 +134,7 @@ export function runCheck(input: {
           decisionPending = true;
           const decision = await chooseNavigation({
             key: input.key,
+            jurisdictionId: input.permit.jurisdictionId,
             observation,
             requestedNumber: input.permit.permitNumber,
             signal: controller.signal,
@@ -178,6 +180,7 @@ export function runCheck(input: {
     worker.postMessage({
       kind: "start",
       runId: input.runId,
+      jurisdictionId: input.permit.jurisdictionId,
       permitNumber: input.permit.permitNumber,
       previousRecordUrl: input.permit.lastRecordUrl,
       browserPath: input.browserPath,

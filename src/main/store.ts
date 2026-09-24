@@ -4,19 +4,19 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   HILLSBOROUGH_ID,
-  HILLSBOROUGH_LABEL,
-  START_URL,
+  permitComparisonValue,
   type CheckRunRow,
   type ObservationRow,
   type PermitHistory,
   type PermitRow,
   type RunOutcome,
 } from "../shared/permit.js";
-import { nextDueAfter, nextSlotAfter } from "../shared/schedule.js";
+import { getJurisdiction, JURISDICTIONS, type JurisdictionId } from "../shared/jurisdictions.js";
+import { DEFAULT_CHECK_TIMES, formatCheckTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
 interface StoredPermit {
   id: string;
-  jurisdiction_id: typeof HILLSBOROUGH_ID;
+  jurisdiction_id: JurisdictionId;
   permit_number: string;
   monitoring_enabled: number;
   last_status: string | null;
@@ -56,20 +56,20 @@ export class PermitStore {
       const prior = new DatabaseSync(filePath, { readOnly: true });
       const version = userVersion(prior);
       prior.close();
-      if (version < 1) copyFileSync(filePath, `${filePath}.before-v1-${Date.now()}.bak`);
+      if (version < 2) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
     }
     this.db = new DatabaseSync(filePath);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.migrate();
+    this.syncProfiles();
     this.recoverInterruptedRuns();
   }
 
   private migrate(): void {
     const version = userVersion(this.db);
-    if (version > 1) throw new Error("Database was created by a newer app version.");
-    if (version === 1) return;
-    this.transaction(() => {
+    if (version > 2) throw new Error("Database was created by a newer app version.");
+    if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
           id TEXT PRIMARY KEY,
@@ -131,13 +131,30 @@ export class PermitStore {
         CREATE INDEX idx_runs_permit_started ON check_runs(permit_id, started_at DESC);
         CREATE INDEX idx_observations_permit_observed ON status_observations(permit_id, observed_at DESC);
       `);
-      this.db.prepare(`INSERT INTO jurisdiction_profiles
-        (id, display_name, authority_type, portal_family, official_start_url,
-        tenant, supported_module, coverage_note, adapter_version, matching_rule_version)
-        VALUES (?, ?, 'county-government', 'accela-hillsgovhub', ?, 'HCFL', 'Building',
-        'Public HillsGovHub records from January 20, 2021 onward; some exempt records are not public.',
-        'hillsborough-1', 'exact-1')`).run(HILLSBOROUGH_ID, HILLSBOROUGH_LABEL, START_URL);
       this.db.exec("PRAGMA user_version = 1");
+    });
+    // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
+    if (version < 2) this.db.exec("PRAGMA user_version = 2");
+  }
+
+  /**
+   * Upserts the built-in jurisdiction profiles so permits can reference any supported authority.
+   * A profile removed from the app keeps its row, because saved permits and history still point to it.
+   */
+  private syncProfiles(): void {
+    const seed = this.db.prepare(`INSERT INTO jurisdiction_profiles
+      (id, display_name, authority_type, portal_family, official_start_url,
+      tenant, supported_module, coverage_note, adapter_version, matching_rule_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name,
+        authority_type = excluded.authority_type, portal_family = excluded.portal_family,
+        official_start_url = excluded.official_start_url, tenant = excluded.tenant,
+        supported_module = excluded.supported_module, coverage_note = excluded.coverage_note,
+        adapter_version = excluded.adapter_version, matching_rule_version = excluded.matching_rule_version`);
+    this.transaction(() => {
+      for (const profile of JURISDICTIONS) seed.run(profile.id, profile.label, profile.authorityType,
+        profile.portalFamily, profile.startUrl, profile.tenant, profile.module, profile.coverageNote, profile.adapterVersion,
+        profile.portalFamily === "click2gov" ? "click2gov-serial-1" : "exact-1");
     });
   }
 
@@ -162,11 +179,13 @@ export class PermitStore {
       .run(new Date().toISOString());
   }
 
-  addPermit(permitNumber: string): string {
+  addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): string {
+    if (!getJurisdiction(jurisdictionId)) throw new Error("Unsupported jurisdiction");
     const id = randomUUID();
     // New permits join the scheduled checks by default; each can be excluded from its details.
     this.db.prepare(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
-      VALUES (?, ?, ?, ?, ?, 1)`).run(id, HILLSBOROUGH_ID, permitNumber, permitNumber, new Date().toISOString());
+      VALUES (?, ?, ?, ?, ?, 1)`).run(id, jurisdictionId, permitNumber,
+        permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString());
     return id;
   }
 
@@ -192,12 +211,16 @@ export class PermitStore {
     appVersion: string;
     playwrightVersion: string;
   }): string {
+    const permit = this.db.prepare("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
+      .get(input.permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+    const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
+    if (!profile) throw new Error("Permit jurisdiction is not configured");
     const id = randomUUID();
     this.transaction(() => {
       this.db.prepare(`INSERT INTO check_runs
         (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
-        VALUES (?, ?, ?, ?, 'hillsborough-1', 'navigation-1', 'jev-1.13.0', ?)`)
-        .run(id, input.permitId, new Date().toISOString(), input.appVersion, input.playwrightVersion);
+        VALUES (?, ?, ?, ?, ?, 'navigation-2', 'jev-1.13.0', ?)`)
+        .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.playwrightVersion);
       this.db.prepare("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });
     return id;
@@ -229,15 +252,16 @@ export class PermitStore {
         const observation = input.observation;
         this.db.prepare(`INSERT INTO status_observations
           (id, run_id, permit_id, verified_permit_number, status_label, status_value, observed_at, record_url, extractor_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'hillsborough-1')`)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(observationId, input.runId, input.permitId, observation.verifiedPermitNumber,
-            observation.statusLabel, observation.statusValue, observation.observedAt, observation.recordUrl);
+            observation.statusLabel, observation.statusValue, observation.observedAt, observation.recordUrl,
+            this.jurisdictionAdapterVersion(input.permitId));
         this.db.prepare(`UPDATE permits SET last_observation_id = ?, last_record_url = ?,
           next_due_at = ? WHERE id = ?`).run(observationId, observation.recordUrl,
-            nextDueAfter(new Date(), "success").toISOString(), input.permitId);
+            nextDueAfter(new Date(), "success", this.getCheckTimes()).toISOString(), input.permitId);
       } else {
         this.db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?")
-          .run(nextDueAfter(new Date(), input.outcome).toISOString(), input.permitId);
+          .run(nextDueAfter(new Date(), input.outcome, this.getCheckTimes()).toISOString(), input.permitId);
       }
     });
   }
@@ -262,6 +286,20 @@ export class PermitStore {
       FROM status_observations WHERE id = ?`).get(id) as unknown as ObservationRow | undefined ?? null;
   }
 
+  getObservationJurisdictionId(id: string): JurisdictionId | null {
+    const row = this.db.prepare(`SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
+      JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`).get(id) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+    return row?.jurisdictionId ?? null;
+  }
+
+  private jurisdictionAdapterVersion(permitId: string): string {
+    const row = this.db.prepare("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
+      .get(permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+    const profile = row ? getJurisdiction(row.jurisdictionId) : null;
+    if (!profile) throw new Error("Permit jurisdiction is not configured");
+    return profile.adapterVersion;
+  }
+
   setMonitoring(mode: "manual" | "scheduled"): void {
     this.db.prepare("INSERT INTO settings(key, value) VALUES ('monitoring', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(mode);
   }
@@ -270,6 +308,19 @@ export class PermitStore {
     const row = this.db.prepare("SELECT value FROM settings WHERE key = 'monitoring'").get() as unknown as { value: string } | undefined;
     // Scheduled checks are the default. "daily" is how earlier versions stored the same choice.
     return row?.value === "manual" ? "manual" : "scheduled";
+  }
+
+  getCheckTimes(): CheckTimes {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'check_times'").get() as unknown as { value: string } | undefined;
+    const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
+    return stored ?? DEFAULT_CHECK_TIMES;
+  }
+
+  /** Saves the times and pulls any due time later than the new next slot forward to it. */
+  setCheckTimes(times: CheckTimes, now: Date): void {
+    this.db.prepare("INSERT INTO settings(key, value) VALUES ('check_times', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(times.map(formatCheckTime).join(","));
+    this.alignSchedule(now);
   }
 
   getFlag(key: string, fallback: boolean): boolean {
@@ -297,9 +348,9 @@ export class PermitStore {
     return this.db.prepare("DELETE FROM permits WHERE id = ?").run(id).changes === 1;
   }
 
-  /** Pulls due times set under the old 24-hour rule forward to the next business-hours slot. */
+  /** Pulls due times later than the next slot (old 24-hour rule, or a changed schedule) forward to it. */
   alignSchedule(now: Date): void {
-    const slot = nextSlotAfter(now).toISOString();
+    const slot = nextSlotAfter(now, this.getCheckTimes()).toISOString();
     this.db.prepare("UPDATE permits SET next_due_at = ? WHERE next_due_at > ?").run(slot, slot);
   }
 

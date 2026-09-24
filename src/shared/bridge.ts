@@ -21,6 +21,8 @@ export interface PermitBridge {
   openObservationRecord(observationId: string): Promise<BridgeResult<null>>;
   removePermit(permitId: string): Promise<BridgeResult<null>>;
   setMonitoring(mode: "manual" | "scheduled"): Promise<BridgeResult<null>>;
+  /** Replaces the daily check times ("HH:MM", 1–8 of them). */
+  setCheckTimes(times: string[]): Promise<BridgeResult<null>>;
   setPermitMonitoring(permitId: string, enabled: boolean): Promise<BridgeResult<null>>;
   setPreference(key: PreferenceKey, value: boolean): Promise<BridgeResult<null>>;
   checkForUpdate(): Promise<BridgeResult<UpdateCheck>>;

@@ -1,4 +1,5 @@
 import type { RunOutcome } from "./permit.js";
+import type { JurisdictionId } from "./jurisdictions.js";
 
 export interface Candidate {
   id: string;
@@ -7,7 +8,7 @@ export interface Candidate {
 
 export interface PageObservation {
   phase: "search" | "results" | "detail" | "challenge" | "unknown";
-  location: "hillsborough-building-search" | "hillsborough-building-detail" | "other";
+  location: "permit-search" | "permit-detail" | "other";
   fingerprint: string;
   headings: string[];
   formLabels: string[];
@@ -18,7 +19,7 @@ export interface PageObservation {
 }
 
 export type MainToWorker =
-  | { kind: "start"; runId: string; permitNumber: string; previousRecordUrl: string | null; browserPath: string }
+  | { kind: "start"; runId: string; jurisdictionId: JurisdictionId; permitNumber: string; previousRecordUrl: string | null; browserPath: string }
   | { kind: "choose"; runId: string; fingerprint: string; candidateId: string }
   | { kind: "reobserve"; runId: string }
   | { kind: "cancel"; runId: string };
