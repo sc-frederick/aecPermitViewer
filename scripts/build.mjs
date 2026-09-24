@@ -7,8 +7,9 @@ const updateConfig = {
   publicKeySpkiBase64: process.env.UPDATE_PUBLIC_KEY_SPKI_BASE64 ?? "",
   expectedPublisher: process.env.UPDATE_EXPECTED_PUBLISHER ?? "",
 };
-if (process.env.RELEASE_BUILD === "1" && Object.values(updateConfig).some((value) => !value)) {
-  throw new Error("A release build requires update feed URL, public key, and expected publisher.");
+// expectedPublisher stays empty for unsigned builds; the signed manifest is then the only update check.
+if (process.env.RELEASE_BUILD === "1" && (!updateConfig.feedUrl || !updateConfig.publicKeySpkiBase64)) {
+  throw new Error("A release build requires the update feed URL and public key.");
 }
 await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 

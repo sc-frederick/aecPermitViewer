@@ -11,7 +11,8 @@ const payloadSchema = z.object({
   url: z.url(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   size: z.number().int().positive().max(1_000_000_000),
-  publisher: z.string().min(1).max(200),
+  // Empty until releases are Authenticode-signed; the Ed25519 manifest is then the only trust anchor.
+  publisher: z.string().max(200),
 });
 type UpdatePayload = z.infer<typeof payloadSchema>;
 const envelopeSchema = z.object({
@@ -55,10 +56,10 @@ function safeHttpsUrl(value: string): URL | null {
   }
 }
 
-async function fetchHttps(url: URL, timeoutMs: number): Promise<Response> {
+async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
   let current = url;
   for (let redirects = 0; redirects < 4; redirects += 1) {
-    const response = await fetch(current, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(current, { redirect: "manual", signal });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("location");
     if (!location) throw new Error("Update redirect missing location");
@@ -113,8 +114,8 @@ export class UpdateManager {
     this.available = null;
     this.downloadedPath = null;
     const feed = safeHttpsUrl(this.config.feedUrl);
-    if (!feed || !this.config.publicKeySpkiBase64 || !this.config.expectedPublisher) return { state: "unavailable" };
-    const response = await fetchHttps(feed, 10_000);
+    if (!feed || !this.config.publicKeySpkiBase64) return { state: "unavailable" };
+    const response = await fetchHttps(feed, AbortSignal.timeout(10_000));
     if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 32_768) throw new Error("Update manifest unavailable");
     const text = await boundedText(response, 32_768);
     const payload = verifyReleaseEnvelope(text, this.config.publicKeySpkiBase64, this.config.expectedPublisher);
@@ -132,8 +133,17 @@ export class UpdateManager {
     const final = path.join(updateDir, `PermitMonitorSetup-${payload.version}.exe`);
     const installerUrl = safeHttpsUrl(payload.url);
     if (!installerUrl) throw new Error("Update URL invalid");
-    const response = await fetchHttps(installerUrl, 180_000);
-    if (!response.ok || !response.body) throw new Error("Update download failed");
+    // The installer is large, so abort on a stalled connection rather than a fixed total time.
+    const stall = new AbortController();
+    let stallTimer = setTimeout(() => stall.abort(), 60_000);
+    const response = await fetchHttps(installerUrl, stall.signal).catch((error: unknown) => {
+      clearTimeout(stallTimer);
+      throw error;
+    });
+    if (!response.ok || !response.body) {
+      clearTimeout(stallTimer);
+      throw new Error("Update download failed");
+    }
     const file = await open(temporary, "wx", 0o600);
     let bytes = 0;
     const hash = createHash("sha256");
@@ -141,6 +151,8 @@ export class UpdateManager {
       const reader = response.body.getReader();
       while (true) {
         const { done, value: chunk } = await reader.read();
+        clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => stall.abort(), 60_000);
         if (done) break;
         bytes += chunk.byteLength;
         if (bytes > payload.size || bytes > 1_000_000_000) throw new Error("Update size exceeded");
@@ -156,6 +168,8 @@ export class UpdateManager {
       await file.close();
       await rm(temporary, { force: true });
       throw error;
+    } finally {
+      clearTimeout(stallTimer);
     }
     await file.close();
     if (bytes !== payload.size || !sameHex(hash.digest("hex"), payload.sha256)) {
@@ -190,6 +204,9 @@ export class UpdateManager {
   }
 
   private async verifyPublisher(file: string, publisher: string): Promise<void> {
+    // verifyReleaseEnvelope already required publisher === config.expectedPublisher, so an empty value
+    // only reaches here from an unsigned-build configuration.
+    if (!publisher) return;
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");
     await new Promise<void>((resolve, reject) => {
       const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", this.scriptPath,
