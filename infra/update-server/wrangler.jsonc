@@ -2,7 +2,10 @@
   "name": "permitmon-updates",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
-  "workers_dev": false,
+  // The app and CI use workers.dev: aeccloud.io has Bot Fight Mode on, which challenges
+  // non-browser clients. The custom domain is the human download link.
+  "workers_dev": true,
+  "preview_urls": false,
   "routes": [{ "pattern": "permitmon-updates.aeccloud.io", "custom_domain": true }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "permitmon-updates" }]
   // Secret: UPLOAD_TOKEN (also stored as the UPDATE_UPLOAD_TOKEN GitHub Actions secret).
