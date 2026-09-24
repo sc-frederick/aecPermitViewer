@@ -1,0 +1,35 @@
+# Windows release qualification
+
+The release target is a signed, per-user Squirrel.Windows installer for currently serviced Windows 11 x64 Home and Pro releases. Build on native Windows. The source tree does not contain signing credentials or an update feed.
+
+## Build inputs
+
+- `WINDOWS_CERTIFICATE_BASE64`: base64 PFX for the publisher certificate.
+- `WINDOWS_CERTIFICATE_PASSWORD`: PFX password.
+- `UPDATE_FEED_URL`: stable HTTPS URL for `release-manifest.json`.
+- `UPDATE_PUBLIC_KEY_SPKI_BASE64`: Ed25519 public key in DER SPKI, base64 encoded.
+- `UPDATE_EXPECTED_PUBLISHER`: exact signer certificate simple name.
+- `UPDATE_INSTALLER_URL`: version-specific HTTPS URL for the complete `PermitMonitorSetup.exe`.
+- `UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64`: base64 PEM private key for release manifests.
+
+The GitHub Actions workflow accepts the two key values and PFX material as secrets, and the feed URL, public key, publisher, and installer URL as repository variables. Use protected release environments or equivalent release controls before enabling tag builds. `vX.Y.Z` must match `package.json` exactly.
+
+The workflow stages and hashes the pinned browser, packages the app, signs its executables, preserves upstream browser signatures, signs and timestamps the installer, creates a signed update manifest, and runs a packaged browser smoke check. It uploads candidate artifacts; publishing the installer and manifest to the configured HTTPS locations is a separate release operation. Publish the installer first and the manifest last. Keep old installer URLs available while their manifests may still be cached.
+
+## Required checks before distribution
+
+1. Repeat the public HillsGovHub Building workflow on native Windows with the pinned Playwright revision and actual launch mode. Verify full identifier equality, the record-level `Record Status:` element, and a detail link that opens in a fresh session. Save sanitized fixtures. The September 24, 2026 observation of `HC-BLD-26-0087599` as “In Process” is historical; live tests must accept the current displayed wording.
+2. Run the TypeSafe-key-driven app flow with a real key. Confirm Jev selects only current approved actions, records its actual model, and stops on malformed, low-confidence, or unsafe choices. Calibrate the current confidence and margin thresholds against the fixture set before release.
+3. Install the **actual signed `Setup.exe`** as a standard user on clean Windows 11 x64 VMs covering the oldest and newest supported feature releases. No WSL, Node, npm, Python, Git, Visual Studio, or Playwright cache may be present. Verify the app launches its own bundled browser.
+4. Exercise in-app key entry (save, replace, remove), a live check, record opening, restart and history persistence, cancellation, sleep and resume, failed checks preserving prior observations, corrupt-update rejection, upgrade, uninstall, and reinstall. Include paths with spaces and non-ASCII characters, Defender enabled, offline installation, and network or proxy failure.
+5. Audit a canary key across renderer state, IPC, worker environment, logs, crash reports, and exports. Verify no prohibited portal actions, no false-positive identifier or status observations in adversarial fixtures, bounded runs, and no orphaned browser processes.
+6. Download the release through the intended public route with Windows download-origin marking intact. Verify the publisher and timestamp on the installer and app binaries, then test the user-approved full-installer update and database migration recovery.
+7. Review third-party notices and licenses in the installer, then re-audit build tooling and production dependencies. The production dependency audit passed locally, but current development tooling still reports advisories that require release-time review.
+
+The release is blocked until all checks pass. CI package success alone is not clean-machine qualification.
+
+## Update trust
+
+The app accepts only an HTTPS feed with an Ed25519-signed payload containing version, installer URL, SHA-256, size, and expected publisher. It downloads to a temporary file, enforces size, checks the hash and Authenticode publisher, then offers an explicit installation. The installer is rechecked before handoff. Updates replace the tested app, Playwright library, browser revision, adapter, and prompt together.
+
+The browser hash manifest detects packaged-payload corruption at app startup. The signed installer and release metadata are the distribution trust anchors; a local attacker who can modify the app's own files is outside this check's guarantee.

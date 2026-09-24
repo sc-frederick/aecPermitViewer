@@ -1,0 +1,37 @@
+{
+  "name": "hillsborough-permit-monitor",
+  "productName": "Permit Monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Windows permit status monitor for supported Hillsborough County building records",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke:portal": "npm run build && node scripts/smoke-portal.mjs",
+    "browser:stage": "node scripts/stage-browsers.mjs",
+    "start": "npm run build && electron .",
+    "package:win": "npm run build && electron-forge package --platform win32 --arch x64",
+    "make:win": "npm run build && electron-forge make --platform win32 --arch x64",
+    "dev": "npm run build && electron .",
+    "sync:windows": "bash scripts/sync-windows.sh"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0",
+    "electron-squirrel-startup": "1.0.1",
+    "playwright": "1.63.0",
+    "zod": "4.1.11"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron/windows-sign": "1.2.2",
+    "@types/node": "24.10.1",
+    "electron": "44.4.5",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "vite": "7.3.5",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,96 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - run: npm ci --allow-git=all
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run browser:stage
+      - run: npm run make:win
+      - name: Test packaged browser HTTPS path
+        shell: pwsh
+        run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-qualification-build
+          path: out/make/squirrel.windows/x64/*
+          retention-days: 7
+
+  signed-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_BUILD: '1'
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
+      UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
+      UPDATE_EXPECTED_PUBLISHER: ${{ vars.UPDATE_EXPECTED_PUBLISHER }}
+      UPDATE_INSTALLER_URL: ${{ vars.UPDATE_INSTALLER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+        run: |
+          if (-not $env:CERTIFICATE_BASE64) { throw 'Signing certificate is required.' }
+          $path = Join-Path $env:RUNNER_TEMP 'permit-monitor-signing.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          "WINDOWS_CERTIFICATE_FILE=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: npm ci --allow-git=all
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run browser:stage
+      - run: npm run make:win
+      - name: Write manifest signing key
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64 }}
+        run: |
+          if (-not $env:UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64) { throw 'Manifest signing key is required.' }
+          $path = Join-Path $env:RUNNER_TEMP 'permit-monitor-update-key.pem'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64))
+          "UPDATE_SIGNING_PRIVATE_KEY_FILE=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: node scripts/sign-release-manifest.mjs
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $files = @(
+            'out/Permit Monitor-win32-x64/PermitMonitor.exe',
+            'out/make/squirrel.windows/x64/PermitMonitorSetup.exe'
+          )
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file
+            if ($signature.Status -ne 'Valid') { throw "Invalid signature: $file" }
+            $publisher = $signature.SignerCertificate.GetNameInfo(
+              [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            if ($publisher -cne $env:UPDATE_EXPECTED_PUBLISHER) { throw "Unexpected publisher: $file" }
+            if ($null -eq $signature.TimeStamperCertificate) { throw "Missing timestamp: $file" }
+          }
+      - name: Test packaged browser HTTPS path
+        shell: pwsh
+        run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-candidate
+          path: out/make/squirrel.windows/x64/*
+          retention-days: 30
