@@ -17,6 +17,18 @@ describe("signed update metadata", () => {
     expect(verifyReleaseEnvelope(envelope(payload), publicKey, "Permit Monitor LLC")).toEqual(payload);
   });
 
+  it("accepts an unsigned-build manifest only when no publisher is expected", () => {
+    const unsigned = { ...payload, publisher: "" };
+    expect(verifyReleaseEnvelope(envelope(unsigned), publicKey, "")).toEqual(unsigned);
+    expect(() => verifyReleaseEnvelope(envelope(unsigned), publicKey, "Permit Monitor LLC")).toThrow();
+    expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "")).toThrow();
+  });
+
+  it("rejects a manifest signed by another key", () => {
+    const other = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    expect(() => verifyReleaseEnvelope(envelope(payload), other, "Permit Monitor LLC")).toThrow();
+  });
+
   it("rejects altered metadata, wrong publisher, and non-HTTPS installer", () => {
     const valid = JSON.parse(envelope(payload));
     valid.signed = Buffer.from(JSON.stringify({ ...payload, sha256: "b".repeat(64) })).toString("base64");

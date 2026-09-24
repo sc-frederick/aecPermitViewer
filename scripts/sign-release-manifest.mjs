@@ -5,10 +5,10 @@ import path from "node:path";
 const setupPath = path.resolve("out/make/squirrel.windows/x64/PermitMonitorSetup.exe");
 const outputPath = path.resolve("out/make/squirrel.windows/x64/release-manifest.json");
 const installerUrl = process.env.UPDATE_INSTALLER_URL;
-const publisher = process.env.UPDATE_EXPECTED_PUBLISHER;
+const publisher = process.env.UPDATE_EXPECTED_PUBLISHER ?? "";
 const privateKeyPath = process.env.UPDATE_SIGNING_PRIVATE_KEY_FILE;
 const publicKeyBase64 = process.env.UPDATE_PUBLIC_KEY_SPKI_BASE64;
-if (!installerUrl || !publisher || !privateKeyPath || !publicKeyBase64 || new URL(installerUrl).protocol !== "https:") {
+if (!installerUrl || !privateKeyPath || !publicKeyBase64 || new URL(installerUrl).protocol !== "https:") {
   throw new Error("Release manifest signing configuration is incomplete.");
 }
 const { version } = JSON.parse(await readFile("package.json", "utf8"));
