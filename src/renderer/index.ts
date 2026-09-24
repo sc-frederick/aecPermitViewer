@@ -624,7 +624,7 @@ element<HTMLButtonElement>("check-update").addEventListener("click", async (even
 
 element<HTMLButtonElement>("download-update").addEventListener("click", async () => {
   const control = element<HTMLButtonElement>("download-update");
-  element<HTMLElement>("update-status").textContent = "Downloading…";
+  element<HTMLElement>("update-status").textContent = "Downloading… This can take a few minutes.";
   const result = await busy(control, () => api.downloadUpdate());
   if (!result.ok) { element<HTMLElement>("update-status").textContent = result.error; return; }
   control.hidden = true;
