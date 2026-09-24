@@ -54,6 +54,7 @@ module.exports = {
       name: "@electron-forge/maker-squirrel",
       config: {
         name: "PermitMonitor",
+        authors: "Permit Monitor",
         setupExe: "PermitMonitorSetup.exe",
         setupIcon: path.resolve(__dirname, "assets/icon.ico"),
         ...(windowsSign ? { windowsSign } : {}),

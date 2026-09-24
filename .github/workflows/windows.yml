@@ -17,6 +17,12 @@ jobs:
         with:
           node-version: 24.21.0
           cache: npm
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match package version $version." }
       - run: npm ci --allow-git=all
       - run: npm run typecheck
       - run: npm test
@@ -27,70 +33,40 @@ jobs:
         run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-windows-qualification-build
+          name: windows-installer
           path: out/make/squirrel.windows/x64/*
           retention-days: 7
 
-  signed-release:
+  release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
-    timeout-minutes: 45
-    env:
-      RELEASE_BUILD: '1'
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
-      UPDATE_PUBLIC_KEY_SPKI_BASE64: ${{ vars.UPDATE_PUBLIC_KEY_SPKI_BASE64 }}
-      UPDATE_EXPECTED_PUBLISHER: ${{ vars.UPDATE_EXPECTED_PUBLISHER }}
-      UPDATE_INSTALLER_URL: ${{ vars.UPDATE_INSTALLER_URL }}
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: 24.21.0
-          cache: npm
-      - shell: pwsh
+          name: windows-installer
+          path: installer
+      - name: Publish GitHub release
         env:
-          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if (-not $env:CERTIFICATE_BASE64) { throw 'Signing certificate is required.' }
-          $path = Join-Path $env:RUNNER_TEMP 'permit-monitor-signing.pfx'
-          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
-          "WINDOWS_CERTIFICATE_FILE=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - run: npm ci --allow-git=all
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run browser:stage
-      - run: npm run make:win
-      - name: Write manifest signing key
-        shell: pwsh
-        env:
-          UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64 }}
-        run: |
-          if (-not $env:UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64) { throw 'Manifest signing key is required.' }
-          $path = Join-Path $env:RUNNER_TEMP 'permit-monitor-update-key.pem'
-          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:UPDATE_SIGNING_PRIVATE_KEY_PEM_BASE64))
-          "UPDATE_SIGNING_PRIVATE_KEY_FILE=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - run: node scripts/sign-release-manifest.mjs
-      - name: Verify Authenticode signatures
-        shell: pwsh
-        run: |
-          $files = @(
-            'out/Permit Monitor-win32-x64/PermitMonitor.exe',
-            'out/make/squirrel.windows/x64/PermitMonitorSetup.exe'
-          )
-          foreach ($file in $files) {
-            $signature = Get-AuthenticodeSignature $file
-            if ($signature.Status -ne 'Valid') { throw "Invalid signature: $file" }
-            $publisher = $signature.SignerCertificate.GetNameInfo(
-              [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-            if ($publisher -cne $env:UPDATE_EXPECTED_PUBLISHER) { throw "Unexpected publisher: $file" }
-            if ($null -eq $signature.TimeStamperCertificate) { throw "Missing timestamp: $file" }
-          }
-      - name: Test packaged browser HTTPS path
-        shell: pwsh
-        run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: signed-windows-candidate
-          path: out/make/squirrel.windows/x64/*
-          retention-days: 30
+          cd installer
+          sha256sum PermitMonitorSetup.exe > PermitMonitorSetup.exe.sha256
+          cat > notes.md <<'EOF'
+          ## Install
+
+          Download `PermitMonitorSetup.exe` and run it. It installs for the current user only and doesn't need admin rights.
+
+          This installer isn't code-signed, so Windows SmartScreen will say **"Windows protected your PC."** Click **More info**, then **Run anyway**. If your browser flags the download, choose **Keep**.
+
+          To confirm the download, compare `Get-FileHash PermitMonitorSetup.exe` in PowerShell with the `.sha256` file.
+
+          ## Updating
+
+          Unsigned builds can't update themselves in the app. To update, download the newer installer and run it over the current install. Your permits and history are kept.
+          EOF
+          gh release create "$GITHUB_REF_NAME" PermitMonitorSetup.exe PermitMonitorSetup.exe.sha256 \
+            --title "Permit Monitor $GITHUB_REF_NAME" --notes-file notes.md --prerelease --verify-tag

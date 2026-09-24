@@ -4,3 +4,4 @@ out/
 vendor/playwright-browsers/
 .impeccable/review/
 *.log
+*:Zone.Identifier
