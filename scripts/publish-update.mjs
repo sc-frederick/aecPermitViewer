@@ -1,8 +1,9 @@
 import { open, readFile } from "node:fs/promises";
 import path from "node:path";
 
-// Uploads the installer and then the signed manifest through the update server Worker
-// (infra/update-server). Run after sign-release-manifest.mjs.
+// Manual publishing path: uploads the installer and then the signed manifest through the update
+// server Worker (infra/update-server). Run after sign-release-manifest.mjs, from a network that
+// Cloudflare doesn't challenge (GitHub's runners are challenged; CI writes to R2 directly).
 const setupPath = path.resolve("out/make/squirrel.windows/x64/PermitMonitorSetup.exe");
 const manifestPath = path.resolve("out/make/squirrel.windows/x64/release-manifest.json");
 const server = process.env.UPDATE_SERVER_URL;

@@ -69,10 +69,30 @@ jobs:
             UPDATE_INSTALLER_URL="$UPDATE_SERVER_URL/PermitMonitorSetup-${GITHUB_REF_NAME#v}.exe" \
             node scripts/sign-release-manifest.mjs
           rm -f "$key_file"
+      # Cloudflare challenges GitHub runner IPs on the Worker hosts, so CI writes to R2's S3 endpoint
+      # directly. Installer first, manifest last.
       - name: Publish to update feed
         env:
-          UPDATE_UPLOAD_TOKEN: ${{ secrets.UPDATE_UPLOAD_TOKEN }}
-        run: node scripts/publish-update.mjs
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+          R2_ENDPOINT: https://838798e8498ddea23910e8e812f26c17.r2.cloudflarestorage.com
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::warning::R2 credentials are not set; publish this release to the update feed with scripts/publish-update.mjs (docs/RELEASE.md)."
+            exit 0
+          fi
+          cd out/make/squirrel.windows/x64
+          key="PermitMonitorSetup-${GITHUB_REF_NAME#v}.exe"
+          aws s3 cp PermitMonitorSetup.exe "s3://permitmon-updates/$key" --endpoint-url "$R2_ENDPOINT" \
+            --content-type application/vnd.microsoft.portable-executable --only-show-errors
+          size=$(aws s3api head-object --bucket permitmon-updates --key "$key" --endpoint-url "$R2_ENDPOINT" --query ContentLength --output text)
+          [ "$size" = "$(stat -c %s PermitMonitorSetup.exe)" ] || { echo "Uploaded installer size mismatch"; exit 1; }
+          aws s3 cp release-manifest.json s3://permitmon-updates/release-manifest.json --endpoint-url "$R2_ENDPOINT" \
+            --content-type application/json --only-show-errors
+          echo "Published $key to the update feed."
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
