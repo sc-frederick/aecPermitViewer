@@ -16,7 +16,7 @@ Unsigned installers trigger SmartScreen's "Windows protected your PC." on first 
 
 ## Update feed
 
-The feed is the `permitmon-updates` Worker (`infra/update-server`) on `https://permitmon-updates.aeccloud.io`, backed by the `permitmon-updates` R2 bucket in the Surfside Software Cloudflare account.
+The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by the `permitmon-updates` R2 bucket in the Surfside Software Cloudflare account. The app and CI use `https://permitmon-updates.sc-frederick.workers.dev`. People use `https://permitmon-updates.aeccloud.io`. Both hosts serve the same routes, but `aeccloud.io` has Bot Fight Mode on, which challenges non-browser clients, so the app must not use it.
 
 - `/` and `/PermitMonitorSetup.exe` redirect to the current installer. This is the link to send to new users.
 - `/release-manifest.json` is the signed manifest the app checks.
