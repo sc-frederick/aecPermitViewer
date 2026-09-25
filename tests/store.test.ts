@@ -260,3 +260,41 @@ describe("project numbers", () => {
     }
   });
 });
+
+describe("lookups", () => {
+  it("reads one permit exactly as the list shows it", () => {
+    const store = newStore();
+    try {
+      const first = store.addPermit("HC-BLD-26-0087599");
+      const second = store.addPermit("HC-BLD-26-0087600");
+      store.setProjectNumber(second, "28069");
+      const runId = store.startRun({ permitId: second, appVersion: "test", playwrightVersion: "test" });
+      store.finishRun({ runId, permitId: second, outcome: "blocked", actionCount: 0, requestCount: 0,
+        actualModel: null, browserVersion: null });
+      for (const permit of store.listPermits()) expect(store.getPermit(permit.id)).toEqual(permit);
+      expect(store.getPermit(first)?.permitNumber).toBe("HC-BLD-26-0087599");
+      expect(store.getPermit("00000000-0000-4000-8000-000000000000")).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("reports the browser version from the most recent run that recorded one", () => {
+    const store = newStore();
+    try {
+      const permitId = store.addPermit("HC-BLD-26-0087599");
+      expect(store.latestBrowserVersion()).toBeNull();
+      for (const browserVersion of ["139.0", "140.0", null]) {
+        const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+        store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion });
+      }
+      expect(store.latestBrowserVersion()).toBe("140.0");
+      const db = (store as unknown as { db: { prepare(sql: string): { all(): Array<{ detail: string }> } } }).db;
+      const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
+        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all();
+      expect(plan.map((step) => step.detail).join(" ")).toContain("idx_runs_started");
+    } finally {
+      store.close();
+    }
+  });
+});
