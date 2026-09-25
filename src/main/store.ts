@@ -160,6 +160,13 @@ export class PermitStore {
    * A profile removed from the app keeps its row, because saved permits and history still point to it.
    */
   private syncProfiles(): void {
+    /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
+    const MATCHING_RULES: Partial<Record<string, string>> = {
+      "click2gov": "click2gov-serial-1",
+      "wmis": "wmis-serial-1",
+      "epermit": "epermit-number-sequence-1",
+      "regpermitting": "exact-uppercase-1",
+    };
     const seed = this.db.prepare(`INSERT INTO jurisdiction_profiles
       (id, display_name, authority_type, portal_family, official_start_url,
       tenant, supported_module, coverage_note, adapter_version, matching_rule_version)
@@ -172,7 +179,7 @@ export class PermitStore {
     this.transaction(() => {
       for (const profile of JURISDICTIONS) seed.run(profile.id, profile.label, profile.authorityType,
         profile.portalFamily, profile.startUrl, profile.tenant, profile.module, profile.coverageNote, profile.adapterVersion,
-        profile.portalFamily === "click2gov" ? "click2gov-serial-1" : "exact-1");
+        MATCHING_RULES[profile.portalFamily] ?? "exact-1");
     });
   }
 
@@ -243,7 +250,7 @@ export class PermitStore {
     this.transaction(() => {
       this.sql(`INSERT INTO check_runs
         (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
-        VALUES (?, ?, ?, ?, ?, 'navigation-2', 'jev-1.13.0', ?)`)
+        VALUES (?, ?, ?, ?, ?, 'navigation-3', 'jev-1.13.0', ?)`)
         .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.playwrightVersion);
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });

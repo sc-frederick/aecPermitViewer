@@ -1,16 +1,16 @@
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { build } from "esbuild";
 
 const require = createRequire(import.meta.url);
 const permitNumber = process.argv[2] ?? "HC-BLD-26-0087599";
 const jurisdictionId = process.argv[3] ?? "hillsborough-county-building";
-const sameNumber = (displayed) => {
-  if (jurisdictionId !== "st-petersburg-building") return displayed === permitNumber;
-  const requested = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(permitNumber);
-  const shown = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(displayed);
-  return Boolean(requested && shown && requested[1] === shown[1] && Number(requested[2]) === Number(shown[2]));
-};
+// A record link from an earlier check, which the worker opens instead of searching where the record page allows.
+const previousRecordUrl = process.argv[4] ?? null;
+// Verify the worker's result the way main does before it saves an observation.
+const shared = await build({ entryPoints: ["src/shared/permit.ts"], bundle: true, write: false, format: "esm", platform: "node", target: "node24" });
+const { parseDisplayedStatus } = await import(`data:text/javascript;base64,${Buffer.from(shared.outputFiles[0].text).toString("base64")}`);
 const port = new EventEmitter();
 let settled = false;
 let actions = 0;
@@ -21,7 +21,7 @@ const deadline = setTimeout(() => {
     process.exitCode = 1;
     port.emit("message", { data: { kind: "cancel", runId: "portal-smoke" } });
   }
-}, 45_000);
+}, 180_000);
 
 port.postMessage = (message) => {
   if (settled) return;
@@ -52,8 +52,10 @@ port.postMessage = (message) => {
   } else if (message.kind === "verified") {
     settled = true;
     clearTimeout(deadline);
-    if (!sameNumber(message.displayedNumber) || !message.statusValue.trim()) {
-      process.stderr.write("Identity or status verification failed.\n");
+    const parsed = parseDisplayedStatus({ jurisdictionId, requestedNumber: permitNumber, displayedNumber: message.displayedNumber,
+      statusLabel: message.statusLabel, statusValue: message.statusValue, recordUrl: message.recordUrl, observedAt: message.observedAt });
+    if (parsed._tag !== "ok") {
+      process.stderr.write(`Verification failed: ${parsed.outcome} (displayed ${JSON.stringify(message.displayedNumber)}).\n`);
       process.exitCode = 1;
       return;
     }
@@ -78,6 +80,6 @@ require("../dist/worker.cjs");
 port.emit("message", { data: {
   kind: "start", runId: "portal-smoke", permitNumber,
   jurisdictionId,
-  previousRecordUrl: null,
+  previousRecordUrl,
   browserPath: path.resolve("vendor/playwright-browsers"),
 } });

@@ -5,7 +5,7 @@ import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckT
 import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
 import { dailyHistory } from "../shared/history.js";
 import { groupByProject, recentProjects, type ProjectGroup } from "../shared/projects.js";
-import { getJurisdiction, isManualJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
+import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -415,11 +415,16 @@ function renderDetailsSummary(permit: PermitRow): void {
 
 function renderJurisdictionOptions(): void {
   const select = element<HTMLSelectElement>("jurisdiction");
-  select.replaceChildren(...JURISDICTIONS.map((profile) => {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    option.textContent = profile.label;
-    return option;
+  select.replaceChildren(...JURISDICTION_GROUPS.map((group) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    optgroup.append(...JURISDICTIONS.filter(group.includes).map((profile) => {
+      const option = document.createElement("option");
+      option.value = profile.id;
+      option.textContent = profile.label;
+      return option;
+    }));
+    return optgroup;
   }));
   renderJurisdictionHelp();
 }
@@ -427,8 +432,7 @@ function renderJurisdictionOptions(): void {
 function renderJurisdictionHelp(): void {
   const profile = getJurisdiction(element<HTMLSelectElement>("jurisdiction").value);
   element<HTMLElement>("jurisdiction-help").textContent = profile?.coverageNote ?? "";
-  element<HTMLInputElement>("permit-number").placeholder = profile?.portalFamily === "click2gov"
-    ? "25-05001277" : "Full permit number";
+  element<HTMLInputElement>("permit-number").placeholder = (profile && numberExample(profile)) ?? "Full permit number";
 }
 
 function renderHistory(history: PermitHistory): void {
