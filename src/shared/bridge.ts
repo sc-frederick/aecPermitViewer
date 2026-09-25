@@ -28,6 +28,8 @@ export interface PermitBridge {
   /** Replaces the daily check times ("HH:MM", 1–8 of them). */
   setCheckTimes(times: string[]): Promise<BridgeResult<null>>;
   setPermitMonitoring(permitId: string, enabled: boolean): Promise<BridgeResult<null>>;
+  /** Sets the permit's project number; an empty string clears it. */
+  setProjectNumber(permitId: string, projectNumber: string): Promise<BridgeResult<null>>;
   setPreference(key: PreferenceKey, value: boolean): Promise<BridgeResult<null>>;
   checkForUpdate(): Promise<BridgeResult<UpdateCheck>>;
   downloadUpdate(): Promise<BridgeResult<string>>;

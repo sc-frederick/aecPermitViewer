@@ -68,7 +68,6 @@
       <section class="card table-card" aria-label="Permits">
         <table id="permit-table" class="table">
           <thead><tr><th scope="col">Permit</th><th scope="col">Status</th><th scope="col">Verified</th><th scope="col">Last check</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-          <tbody id="permit-list"></tbody>
         </table>
         <p id="empty-state" class="empty-state">No permits yet.</p>
       </section>
@@ -93,6 +92,11 @@
         <div class="detail-actions">
           <button id="details-check" class="btn btn-primary" type="button">Check now</button>
           <button id="details-open" class="btn btn-secondary" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-external"/></svg>Open record</button>
+        </div>
+        <div class="field detail-project">
+          <label class="field-label" for="details-project">Project number</label>
+          <input id="details-project" class="field-control mono-input" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="None" aria-describedby="details-project-error">
+          <p id="details-project-error" class="field-error" hidden></p>
         </div>
         <label class="checkbox"><input id="details-daily" class="checkbox-input" type="checkbox"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Include in scheduled checks</strong><small id="details-daily-help"></small></span></label>
       </div>
@@ -190,6 +194,26 @@
       <div class="confirm-actions">
         <button id="manual-cancel" class="btn btn-secondary" type="button">Cancel</button>
         <button id="manual-save" class="btn btn-primary" type="submit">Save status</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="project-dialog" class="confirm project" aria-labelledby="project-title">
+    <form id="project-form" novalidate>
+      <p id="project-permit" class="coord"></p>
+      <h2 id="project-title" class="confirm-title">Add a project number?</h2>
+      <div class="field">
+        <label class="field-label" for="project-input">Project number</label>
+        <input id="project-input" class="field-control mono-input" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="28069" aria-describedby="project-error">
+      </div>
+      <div id="project-recent" class="project-recent" hidden>
+        <span class="field-label" id="project-recent-label">Recent</span>
+        <ul id="project-recent-list" class="project-recent-list" aria-labelledby="project-recent-label"></ul>
+      </div>
+      <p id="project-error" class="field-error" hidden></p>
+      <div class="confirm-actions">
+        <button id="project-skip" class="btn btn-secondary" type="button">Skip</button>
+        <button id="project-save" class="btn btn-primary" type="submit">Add</button>
       </div>
     </form>
   </dialog>

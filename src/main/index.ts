@@ -15,7 +15,7 @@ import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openA
 import { describeCheckEvent, type CheckEvent } from "./notifications.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, manualStatusSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
+import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
 import { getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import type { BridgeResult } from "../shared/bridge.js";
 
@@ -480,6 +480,16 @@ async function startApp(): Promise<void> {
     if (!parsed.success || !store.getPermit(parsed.data.permitId)) return { ok: false, error: "Permit not found." };
     store.setPermitMonitoring(parsed.data.permitId, parsed.data.enabled);
     void scheduleDue();
+    void broadcast();
+    return { ok: true, value: null };
+  });
+  handle("permit:set-project-number", (raw) => {
+    const parsed = setProjectNumberSchema.safeParse(raw);
+    if (!parsed.success) {
+      const permitProblem = parsed.error.issues.some((issue) => issue.path[0] === "permitId");
+      return { ok: false, error: permitProblem ? "Permit not found." : "Use letters, numbers, spaces, and - . _ / only (40 at most)." };
+    }
+    if (!store.setProjectNumber(parsed.data.permitId, parsed.data.projectNumber)) return { ok: false, error: "Permit not found." };
     void broadcast();
     return { ok: true, value: null };
   });

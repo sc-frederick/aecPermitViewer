@@ -25,6 +25,8 @@ export interface PermitRow {
   id: string;
   jurisdictionId: JurisdictionId;
   permitNumber: string;
+  /** The user's own job or project number, used to group permits. */
+  projectNumber: string | null;
   monitoringEnabled: boolean;
   lastStatus: string | null;
   lastObservedAt: string | null;
@@ -97,6 +99,10 @@ export const manualStatusSchema = z.object({
 
 export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "Use the full permit number with its hyphens and zeros.");
 export const permitIdSchema = z.uuid();
+/** An empty value clears the project number. */
+export const projectNumberSchema = z.string().trim().max(40)
+  .regex(/^(?:[A-Za-z0-9][A-Za-z0-9 ._/-]*)?$/, "Use letters, numbers, spaces, and - . _ / only.");
+export const setProjectNumberSchema = z.object({ permitId: permitIdSchema, projectNumber: projectNumberSchema });
 export const addPermitSchema = z.object({
   jurisdiction: z.string().trim().min(1).max(100),
   permitNumber: permitNumberSchema,

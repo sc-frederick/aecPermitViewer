@@ -19,6 +19,7 @@ interface StoredPermit {
   id: string;
   jurisdiction_id: JurisdictionId;
   permit_number: string;
+  project_number: string | null;
   monitoring_enabled: number;
   last_status: string | null;
   last_observed_at: string | null;
@@ -37,6 +38,7 @@ function mapPermit(row: StoredPermit, checking: boolean): PermitRow {
     id: row.id,
     jurisdictionId: row.jurisdiction_id,
     permitNumber: row.permit_number,
+    projectNumber: row.project_number,
     monitoringEnabled: row.monitoring_enabled === 1,
     lastStatus: row.last_status,
     lastObservedAt: row.last_observed_at,
@@ -57,7 +59,7 @@ export class PermitStore {
       const prior = new DatabaseSync(filePath, { readOnly: true });
       const version = userVersion(prior);
       prior.close();
-      if (version < 2) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+      if (version < 3) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
     }
     this.db = new DatabaseSync(filePath);
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -69,7 +71,7 @@ export class PermitStore {
 
   private migrate(): void {
     const version = userVersion(this.db);
-    if (version > 2) throw new Error("Database was created by a newer app version.");
+    if (version > 3) throw new Error("Database was created by a newer app version.");
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
@@ -136,6 +138,10 @@ export class PermitStore {
     });
     // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
+    // Version 3 added the user's project number for grouping permits.
+    const columns = this.db.prepare("PRAGMA table_info(permits)").all() as unknown as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
+    if (version < 3) this.db.exec("PRAGMA user_version = 3");
   }
 
   /**
@@ -194,7 +200,7 @@ export class PermitStore {
 
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     const rows = this.db.prepare(`
-      SELECT p.id, p.jurisdiction_id, p.permit_number, p.monitoring_enabled,
+      SELECT p.id, p.jurisdiction_id, p.permit_number, p.project_number, p.monitoring_enabled,
         o.status_value AS last_status, o.observed_at AS last_observed_at,
         p.last_record_url, r.started_at AS latest_attempt_at, r.outcome AS latest_outcome, p.next_due_at
       FROM permits p
@@ -377,6 +383,12 @@ export class PermitStore {
   alignSchedule(now: Date): void {
     const slot = nextSlotAfter(now, this.getCheckTimes()).toISOString();
     this.db.prepare("UPDATE permits SET next_due_at = ? WHERE next_due_at > ?").run(slot, slot);
+  }
+
+  /** Saves the permit's project number; null or blank clears it. */
+  setProjectNumber(id: string, projectNumber: string | null): boolean {
+    return this.db.prepare("UPDATE permits SET project_number = ? WHERE id = ?")
+      .run(projectNumber?.trim() || null, id).changes === 1;
   }
 
   setPermitMonitoring(id: string, enabled: boolean): void {
