@@ -25,4 +25,16 @@ describe("bundled browser integrity", () => {
     await writeFile(path.join(directory, "extra.dll"), "unexpected");
     await expect(verifyBrowserPayload(directory)).rejects.toThrow("file list");
   });
+
+  it("checks every file when there are more files than parallel readers", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-test-"));
+    temporary.push(directory);
+    const names = Array.from({ length: 12 }, (_, index) => `file-${String(index).padStart(2, "0")}.bin`);
+    for (const name of names) await writeFile(path.join(directory, name), name);
+    const manifest = { version: 1, files: names.map((name) => ({ path: name, sha256: createHash("sha256").update(name).digest("hex") })) };
+    await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify(manifest));
+    await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
+    await writeFile(path.join(directory, names[10]!), "changed");
+    await expect(verifyBrowserPayload(directory)).rejects.toThrow("integrity");
+  });
 });

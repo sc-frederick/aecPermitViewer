@@ -16,6 +16,10 @@ const api = window.permitMonitor;
 let currentSnapshot: AppSnapshot | null = null;
 let detailsPermitId: string | null = null;
 let historyGeneration = 0;
+/** The check state the displayed history reflects, so snapshots about other permits don't refetch it. */
+let historyShown: string | null = null;
+/** What the permit table was last built from; an unchanged table is left alone. */
+let tableSource = "";
 let noticeTimer: number | null = null;
 let filter: Filter = "all";
 const knownPermitIds = new Set<string>();
@@ -167,8 +171,9 @@ function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
 function nextCheckSummary(snapshot: AppSnapshot): string {
   if (snapshot.monitoring !== "scheduled") return "";
   const now = new Date();
+  const schedule = checkTimes(snapshot);
   const times = snapshot.permits.filter((permit) => permit.monitoringEnabled && !permit.checking)
-    .map((permit) => effectiveRunTime(new Date(permit.nextDueAt ?? now.toISOString()), now, checkTimes(snapshot)).getTime());
+    .map((permit) => effectiveRunTime(new Date(permit.nextDueAt ?? now.toISOString()), now, schedule).getTime());
   if (times.length === 0) return "";
   const next = relativeTime(new Date(Math.min(...times)), now);
   return next === "now" ? "Next check now" : `Next check ${next}`;
@@ -351,12 +356,16 @@ function render(snapshot: AppSnapshot): void {
 
   const visible = snapshot.permits.filter(matchesFilter);
   const table = element<HTMLTableElement>("permit-table");
-  for (const body of [...table.tBodies]) body.remove();
-  // Group only once a project number is in use; until then the table stays one plain list.
-  if (visible.some((permit) => permit.projectNumber)) {
-    table.append(...groupByProject(visible).map((group) => renderGroup(group, group.permits, snapshot.monitoring)));
-  } else if (visible.length > 0) {
-    table.append(renderGroup(null, visible, snapshot.monitoring));
+  const source = JSON.stringify([snapshot.monitoring, visible]);
+  if (source !== tableSource) {
+    tableSource = source;
+    for (const body of [...table.tBodies]) body.remove();
+    // Group only once a project number is in use; until then the table stays one plain list.
+    if (visible.some((permit) => permit.projectNumber)) {
+      table.append(...groupByProject(visible).map((group) => renderGroup(group, group.permits, snapshot.monitoring)));
+    } else if (visible.length > 0) {
+      table.append(renderGroup(null, visible, snapshot.monitoring));
+    }
   }
   table.hidden = visible.length === 0;
   element<HTMLElement>("empty-state").hidden = visible.length > 0;
@@ -450,11 +459,23 @@ function renderHistory(history: PermitHistory): void {
   else list.replaceChildren(...items);
 }
 
+/** A permit's history only changes when its latest attempt or verified status does. */
+function historyKey(permit: PermitRow): string {
+  return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
+}
+
 async function loadHistory(permitId: string): Promise<void> {
   const generation = ++historyGeneration;
+  const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
+  const key = permit ? historyKey(permit) : null;
   const result = await api.history(permitId);
   if (generation !== historyGeneration || detailsPermitId !== permitId) return;
-  if (result.ok) renderHistory(result.value); else notice(result.error);
+  if (result.ok) {
+    renderHistory(result.value);
+    historyShown = key;
+  } else {
+    notice(result.error);
+  }
 }
 
 function openDetails(permitId: string): void {
@@ -465,6 +486,7 @@ function openDetails(permitId: string): void {
   if (switching) setInlineError("details-project", "details-project-error", null);
   renderDetailsSummary(permit);
   element<HTMLOListElement>("history-list").replaceChildren();
+  historyShown = null;
   const sheet = element<HTMLDialogElement>("details-sheet");
   if (!sheet.open) sheet.showModal();
   void loadHistory(permitId);
@@ -752,7 +774,7 @@ const detailsSheet = element<HTMLDialogElement>("details-sheet");
 
 function closeSheet(dialog: HTMLDialogElement): void {
   if (dialog.open) dialog.close();
-  if (dialog === detailsSheet) { detailsPermitId = null; historyGeneration += 1; }
+  if (dialog === detailsSheet) { detailsPermitId = null; historyGeneration += 1; historyShown = null; }
 }
 element<HTMLButtonElement>("details-check").addEventListener("click", (event) => {
   const action = (event.currentTarget as HTMLButtonElement).dataset.action;
@@ -859,7 +881,8 @@ element<HTMLButtonElement>("delete-local-data").addEventListener("click", async 
 
 api.onSnapshot((snapshot) => {
   render(snapshot);
-  if (detailsPermitId) void loadHistory(detailsPermitId);
+  const permit = detailsPermitId ? snapshot.permits.find((entry) => entry.id === detailsPermitId) : undefined;
+  if (permit && historyKey(permit) !== historyShown) void loadHistory(permit.id);
 });
 api.onLocalError((message) => notice(message));
 api.onOpenDetails((permitId) => {
