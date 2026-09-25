@@ -4,7 +4,7 @@ import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
 import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
 import { dailyHistory } from "../shared/history.js";
-import { groupByProject, recentProjects, type ProjectGroup } from "../shared/projects.js";
+import { groupByProject, PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN, recentProjects, type ProjectGroup } from "../shared/projects.js";
 import { getJurisdiction, isManualJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
@@ -191,8 +191,7 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
   identity.append(open);
   identity.append(make("span", "cell-sub", jurisdiction?.label ?? permit.jurisdictionId));
   if (monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId)) {
-    const tag = make("span", "tag", "Not scheduled");
-    identity.append(tag);
+    identity.append(make("span", "tag", "Not scheduled"));
   }
 
   const status = make("td");
@@ -287,24 +286,21 @@ function renderPreferences(preferences: AppPreferences): void {
   hint("openAtLogin", preferences.openAtLoginAvailable, "Available in the installed app.");
 }
 
-const timeLabelFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-
 function renderCheckTimeRows(times: readonly string[]): void {
   const rows = times.map((value, index) => {
-    const row = document.createElement("li");
-    const input = document.createElement("input");
+    const row = make("li");
+    const input = make("input");
     input.type = "time";
     input.required = true;
     input.value = value;
     input.setAttribute("aria-label", `Check time ${index + 1}`);
-    const remove = document.createElement("button");
+    const remove = make("button", "icon-button");
     remove.type = "button";
-    remove.className = "icon-button";
     remove.dataset.removeTime = String(index);
     remove.disabled = times.length === 1;
     const time = parseCheckTime(value);
-    remove.setAttribute("aria-label", time ? `Remove ${timeLabelFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
-    remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>';
+    remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
+    remove.append(icon("close"));
     row.append(input, remove);
     return row;
   });
@@ -416,9 +412,8 @@ function renderDetailsSummary(permit: PermitRow): void {
 function renderJurisdictionOptions(): void {
   const select = element<HTMLSelectElement>("jurisdiction");
   select.replaceChildren(...JURISDICTIONS.map((profile) => {
-    const option = document.createElement("option");
+    const option = make("option", "", profile.label);
     option.value = profile.id;
-    option.textContent = profile.label;
     return option;
   }));
   renderJurisdictionHelp();
@@ -507,14 +502,6 @@ async function runPermitAction(action: string, permitId: string): Promise<void> 
 let manualPermitId: string | null = null;
 const manualDialog = element<HTMLDialogElement>("manual-dialog");
 
-function setManualError(message: string | null): void {
-  const error = element<HTMLElement>("manual-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-  const input = element<HTMLInputElement>("manual-status");
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 async function startManualCheck(permit: PermitRow): Promise<void> {
   const result = await api.openPortal(permit.id);
   if (!result.ok) { notice(result.error); return; }
@@ -526,7 +513,7 @@ async function startManualCheck(permit: PermitRow): Promise<void> {
   status.value = permit.lastStatus ?? "";
   element<HTMLInputElement>("manual-link").value = permit.lastRecordUrl && permit.lastRecordUrl !== profile?.startUrl
     ? permit.lastRecordUrl : "";
-  setManualError(null);
+  setInlineError("manual-status", "manual-error", null);
   if (!manualDialog.open) manualDialog.showModal();
   status.focus();
   status.select();
@@ -537,23 +524,23 @@ function closeManual(): void {
   if (manualDialog.open) manualDialog.close();
 }
 
-element<HTMLInputElement>("manual-status").addEventListener("input", () => setManualError(null));
+element<HTMLInputElement>("manual-status").addEventListener("input", () => setInlineError("manual-status", "manual-error", null));
 element<HTMLButtonElement>("manual-cancel").addEventListener("click", closeManual);
 manualDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeManual(); });
 element<HTMLButtonElement>("manual-reopen").addEventListener("click", async () => {
   if (!manualPermitId) return;
   const result = await api.openPortal(manualPermitId);
-  if (!result.ok) setManualError(result.error);
+  if (!result.ok) setInlineError("manual-status", "manual-error", result.error);
 });
 element<HTMLFormElement>("manual-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const permitId = manualPermitId;
   if (!permitId) return;
   const status = element<HTMLInputElement>("manual-status").value.trim();
-  if (!status) { setManualError("Enter the status shown on the portal."); element<HTMLInputElement>("manual-status").focus(); return; }
+  if (!status) { setInlineError("manual-status", "manual-error", "Enter the status shown on the portal."); element<HTMLInputElement>("manual-status").focus(); return; }
   const recordUrl = element<HTMLInputElement>("manual-link").value.trim();
   const result = await busy(element<HTMLButtonElement>("manual-save"), () => api.recordManualStatus({ permitId, status, recordUrl }));
-  if (!result.ok) { setManualError(result.error); return; }
+  if (!result.ok) { setInlineError("manual-status", "manual-error", result.error); return; }
   closeManual();
   notice("Status saved.", "info");
 });
@@ -566,12 +553,9 @@ function setInlineError(inputId: string, errorId: string, message: string | null
   if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
 }
 
-const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._/-]*$/;
-
 function projectProblem(value: string): string | null {
-  if (!value) return null;
-  if (value.length > 40) return "Use 40 characters or fewer.";
-  return PROJECT_PATTERN.test(value) ? null : "Use letters, numbers, spaces, and - . _ / only.";
+  if (value.length > PROJECT_NUMBER_MAX) return `Use ${PROJECT_NUMBER_MAX} characters or fewer.`;
+  return PROJECT_NUMBER_PATTERN.test(value) ? null : "Use letters, numbers, spaces, and - . _ / only.";
 }
 
 // Project number: asked once after a permit is added, editable later from its details.
@@ -638,31 +622,23 @@ element<HTMLFormElement>("project-form").addEventListener("submit", async (event
   finishProject(value);
 });
 
-function setFieldError(message: string | null): void {
-  const input = element<HTMLInputElement>("permit-number");
-  const error = element<HTMLElement>("permit-number-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 // Add form
-element<HTMLInputElement>("permit-number").addEventListener("input", () => setFieldError(null));
+element<HTMLInputElement>("permit-number").addEventListener("input", () => setInlineError("permit-number", "permit-number-error", null));
 element<HTMLFormElement>("add-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = element<HTMLInputElement>("permit-number");
   const number = input.value.trim();
-  if (!number) { setFieldError("Enter a permit number."); input.focus(); return; }
+  if (!number) { setInlineError("permit-number", "permit-number-error", "Enter a permit number."); input.focus(); return; }
   if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(number) || number.length < 3) {
-    setFieldError("Use letters, numbers, and hyphens only.");
+    setInlineError("permit-number", "permit-number-error", "Use letters, numbers, and hyphens only.");
     input.focus();
     return;
   }
   const jurisdiction = element<HTMLSelectElement>("jurisdiction").value;
   const result = await busy(element<HTMLButtonElement>("add-button"), () => api.addAndCheck({ jurisdiction, permitNumber: number }));
-  if (!result.ok) { setFieldError(result.error); input.focus(); return; }
+  if (!result.ok) { setInlineError("permit-number", "permit-number-error", result.error); input.focus(); return; }
   input.value = "";
-  setFieldError(null);
+  setInlineError("permit-number", "permit-number-error", null);
   if (filter !== "all") setFilter("all");
   render(await api.snapshot());
   const added = currentSnapshot?.permits.find((entry) => entry.id === result.value);
@@ -672,14 +648,6 @@ element<HTMLFormElement>("add-form").addEventListener("submit", async (event) =>
 });
 
 // Key
-function setKeyError(message: string | null): void {
-  const error = element<HTMLElement>("key-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-  const input = element<HTMLInputElement>("key-input");
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 function openKeySettings(): void {
   const sheet = element<HTMLDialogElement>("settings-sheet");
   if (!sheet.open) sheet.showModal();
@@ -687,18 +655,18 @@ function openKeySettings(): void {
 }
 
 element<HTMLButtonElement>("banner-add-key").addEventListener("click", openKeySettings);
-element<HTMLInputElement>("key-input").addEventListener("input", () => setKeyError(null));
+element<HTMLInputElement>("key-input").addEventListener("input", () => setInlineError("key-input", "key-error", null));
 element<HTMLFormElement>("key-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = element<HTMLInputElement>("key-input");
   const problem = keyProblem(input.value.trim());
-  if (problem) { setKeyError(problem); input.focus(); return; }
+  if (problem) { setInlineError("key-input", "key-error", problem); input.focus(); return; }
   // Clear the field before sending so the key does not linger in the window.
   const key = input.value.trim();
   input.value = "";
   const result = await busy(element<HTMLButtonElement>("key-save"), () => api.saveKey(key));
-  if (!result.ok) { setKeyError(result.error); input.focus(); return; }
-  setKeyError(null);
+  if (!result.ok) { setInlineError("key-input", "key-error", result.error); input.focus(); return; }
+  setInlineError("key-input", "key-error", null);
   notice("Key saved.", "info");
   render(await api.snapshot());
 });

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
@@ -17,6 +18,17 @@ function newStore(): PermitStore {
   return new PermitStore(path.join(directory, "data.sqlite"));
 }
 
+/** The store's private connection, for arranging old schemas and inspecting columns the API doesn't expose. */
+function rawDb(store: PermitStore): DatabaseSync {
+  return (store as unknown as { db: DatabaseSync }).db;
+}
+
+const RECORD_URL = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
+
+function inProcess(observedAt: string) {
+  return { verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:", statusValue: "In Process", observedAt, recordUrl: RECORD_URL };
+}
+
 describe("observation history", () => {
   it("keeps a prior verified status and timestamp after a failed attempt", () => {
     const store = newStore();
@@ -27,11 +39,7 @@ describe("observation history", () => {
       store.finishRun({
         runId: successId, permitId, outcome: "success", actionCount: 2, requestCount: 2,
         actualModel: "jev-1.13.0", browserVersion: "test",
-        observation: {
-          verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-          statusValue: "In Process", observedAt,
-          recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL",
-        },
+        observation: inProcess(observedAt),
       });
       const failureId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
       store.finishRun({ runId: failureId, permitId, outcome: "blocked", actionCount: 0,
@@ -55,9 +63,7 @@ describe("observation history", () => {
         const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
         store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
           actualModel: "jev-1.13.0", browserVersion: "test",
-          observation: { verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-            statusValue: "In Process", observedAt,
-            recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL" },
+          observation: inProcess(observedAt),
         });
       }
       expect(store.history(permitId).observations).toHaveLength(2);
@@ -75,9 +81,7 @@ describe("permit removal", () => {
       const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
       store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
         actualModel: "jev-1.13.0", browserVersion: "test",
-        observation: { verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-          statusValue: "In Process", observedAt: "2026-09-24T12:00:00.000Z",
-          recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL" },
+        observation: inProcess("2026-09-24T12:00:00.000Z"),
       });
       const observationId = store.history(permitId).observations[0]!.id;
       expect(store.removePermit(permitId)).toBe(true);
@@ -103,7 +107,7 @@ describe("jurisdiction persistence", () => {
       const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
-      const db = (store as unknown as { db: { prepare(sql: string): { get(...args: unknown[]): unknown } } }).db;
+      const db = rawDb(store);
       expect(db.prepare("SELECT adapter_version AS version FROM check_runs WHERE id = ?").get(runId))
         .toEqual({ version: profile!.adapterVersion });
       expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
@@ -118,15 +122,14 @@ describe("jurisdiction persistence", () => {
     const directory = directories[directories.length - 1]!;
     const filePath = path.join(directory, "data.sqlite");
     try {
-      (store as unknown as { db: { exec(sql: string): void } }).db.exec("DELETE FROM jurisdiction_profiles");
-      (store as unknown as { db: { exec(sql: string): void } }).db.exec(`PRAGMA user_version = ${version}`);
+      rawDb(store).exec("DELETE FROM jurisdiction_profiles");
+      rawDb(store).exec(`PRAGMA user_version = ${version}`);
     } finally {
       store.close();
     }
     const migrated = new PermitStore(filePath);
     try {
-      expect((migrated as unknown as { db: { prepare(sql: string): { get(): unknown } } }).db
-        .prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
+      expect(rawDb(migrated).prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
         .toEqual({ count: JURISDICTIONS.length });
     } finally {
       migrated.close();
@@ -143,8 +146,7 @@ describe("scheduled checks", () => {
       expect(store.getMonitoring()).toBe("scheduled");
       store.setMonitoring("manual");
       expect(store.getMonitoring()).toBe("manual");
-      (store as unknown as { db: { prepare(sql: string): { run(): void } } }).db
-        .prepare("UPDATE settings SET value = 'daily' WHERE key = 'monitoring'").run();
+      rawDb(store).prepare("UPDATE settings SET value = 'daily' WHERE key = 'monitoring'").run();
       expect(store.getMonitoring()).toBe("scheduled");
     } finally {
       store.close();
@@ -162,8 +164,7 @@ describe("scheduled checks", () => {
 
       const now = new Date(2026, 8, 24, 10, 0);
       store.setPermitMonitoring(permitId, true);
-      (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
-        .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId);
+      rawDb(store).prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId);
       store.alignSchedule(now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 12, 30).toISOString());
     } finally {
@@ -176,8 +177,7 @@ describe("scheduled checks", () => {
     try {
       expect(store.getCheckTimes()).toEqual([{ hour: 8, minute: 30 }, { hour: 12, minute: 30 }, { hour: 16, minute: 30 }]);
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
-        .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId);
+      rawDb(store).prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId);
       store.setCheckTimes([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }], new Date(2026, 8, 24, 9, 0));
       expect(store.getCheckTimes()).toEqual([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }]);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 10, 15).toISOString());
@@ -244,7 +244,7 @@ describe("project numbers", () => {
     let permitId = "";
     try {
       permitId = store.addPermit("HC-BLD-26-0087599");
-      const db = (store as unknown as { db: { exec(sql: string): void } }).db;
+      const db = rawDb(store);
       db.exec("ALTER TABLE permits DROP COLUMN project_number");
       db.exec("PRAGMA user_version = 2");
     } finally {

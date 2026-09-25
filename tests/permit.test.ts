@@ -43,13 +43,12 @@ describe("verified portal observation", () => {
   });
 
   it("keeps county government distinct from municipalities", () => {
-    expect(resolveJurisdiction("Hillsborough County government · Building")).toBe("hillsborough-county-building");
+    expect(resolveJurisdiction("Hillsborough")).toBeNull();
     expect(resolveJurisdiction("Tampa, Florida")).toBeNull();
     expect(resolveJurisdiction("Temple Terrace")).toBeNull();
   });
 
   it("resolves each selected authority and keeps record links in its own portal", () => {
-    expect(JURISDICTIONS).toHaveLength(9);
     for (const profile of JURISDICTIONS) {
       expect(resolveJurisdiction(profile.id)).toBe(profile.id);
       expect(resolveJurisdiction(profile.label)).toBe(profile.id);

@@ -287,7 +287,7 @@ async function stopChecks(): Promise<boolean> {
   return active === null;
 }
 
-async function scheduleDue(): Promise<void> {
+function scheduleDue(): void {
   if (store.getMonitoring() !== "scheduled") return;
   const now = new Date();
   // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
@@ -308,9 +308,6 @@ async function startApp(): Promise<void> {
     failStartup();
     return false;
   });
-  if (process.platform !== "win32") {
-    // Development on other platforms is permitted; the packaged release is Windows-only.
-  }
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
   store.alignSchedule(new Date());
   keys = new KeyStore(dataRoot());
@@ -324,7 +321,7 @@ async function startApp(): Promise<void> {
     checkAll: () => { for (const permit of store.listPermits()) scheduleCheck(permit.id); },
     setScheduled: (enabled) => {
       store.setMonitoring(enabled ? "scheduled" : "manual");
-      void scheduleDue();
+      scheduleDue();
       void broadcast();
     },
     quit: () => app.quit(),
@@ -489,7 +486,7 @@ async function startApp(): Promise<void> {
     const mode = z.enum(["manual", "scheduled"]).safeParse(raw);
     if (!mode.success) return { ok: false, error: "Invalid monitoring mode." };
     store.setMonitoring(mode.data);
-    void scheduleDue();
+    scheduleDue();
     void broadcast();
     return { ok: true, value: null };
   });
@@ -498,7 +495,7 @@ async function startApp(): Promise<void> {
     const normalized = times.success ? normalizeCheckTimes(times.data) : null;
     if (!normalized) return { ok: false, error: `Choose between 1 and ${MAX_CHECK_TIMES} check times.` };
     store.setCheckTimes(normalized, new Date());
-    void scheduleDue();
+    scheduleDue();
     void broadcast();
     return { ok: true, value: null };
   });
@@ -506,7 +503,7 @@ async function startApp(): Promise<void> {
     const parsed = z.object({ permitId: permitIdSchema, enabled: z.boolean() }).safeParse(raw);
     if (!parsed.success || !store.getPermit(parsed.data.permitId)) return { ok: false, error: "Permit not found." };
     store.setPermitMonitoring(parsed.data.permitId, parsed.data.enabled);
-    void scheduleDue();
+    scheduleDue();
     void broadcast();
     return { ok: true, value: null };
   });
@@ -596,9 +593,9 @@ async function startApp(): Promise<void> {
   if (!(process.argv.includes(HIDDEN_LAUNCH_ARG) && background.available)) mainWindow.show();
   await broadcast(); // Populates the tray menu and tooltip before anything changes.
 
-  setInterval(() => { void scheduleDue(); }, 60_000).unref();
-  powerMonitor.on("resume", () => { void scheduleDue(); });
-  await scheduleDue();
+  setInterval(scheduleDue, 60_000).unref();
+  powerMonitor.on("resume", scheduleDue);
+  scheduleDue();
 }
 
 app.on("before-quit", (event) => {

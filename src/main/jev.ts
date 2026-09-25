@@ -1,11 +1,4 @@
-import {
-  APIConnectionError,
-  APIError,
-  AuthenticationError,
-  RateLimitError,
-  TypeSafeClient,
-  choice,
-} from "@typesafe-ai/sdk";
+import { AuthenticationError, RateLimitError, TypeSafeClient, choice } from "@typesafe-ai/sdk";
 import { JEV_MODEL } from "../shared/permit.js";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
@@ -107,7 +100,6 @@ export async function chooseNavigation(input: {
         try { await delay(wait, input.signal); } catch { return { _tag: "api_unavailable", attempts }; }
         continue;
       }
-      if (error instanceof APIConnectionError || error instanceof APIError) return { _tag: "api_unavailable", attempts };
       return { _tag: "api_unavailable", attempts };
     }
   }

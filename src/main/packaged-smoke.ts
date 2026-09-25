@@ -1,17 +1,13 @@
 import { app, utilityProcess } from "electron";
 import path from "node:path";
+import { workerEnvironment } from "./check-runner.js";
 import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
 
 export async function runPackagedBrowserSmoke(): Promise<void> {
   const runId = "packaged-browser-smoke";
   const permitNumber = "HC-BLD-26-0087599";
   const browserPath = path.join(process.resourcesPath, "playwright-browsers");
-  const environment: NodeJS.ProcessEnv = {};
-  for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"]) {
-    if (process.env[name]) environment[name] = process.env[name];
-  }
-  environment.PLAYWRIGHT_BROWSERS_PATH = browserPath;
-  const worker = utilityProcess.fork(path.join(__dirname, "worker.cjs"), [], { env: environment, serviceName: "Permit Browser Smoke" });
+  const worker = utilityProcess.fork(path.join(__dirname, "worker.cjs"), [], { env: workerEnvironment(browserPath), serviceName: "Permit Browser Smoke" });
   let finished = false;
   const finish = (passed: boolean): void => {
     if (finished) return;

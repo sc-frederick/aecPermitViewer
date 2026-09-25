@@ -1,10 +1,9 @@
 import { z } from "zod";
+import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, type AutomatedJurisdictionProfile, type JurisdictionId } from "./jurisdictions.js";
 
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 export const JEV_MODEL = "jev-1.13.0" as const;
-export const START_URL = "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx?module=Building&TabName=Building";
-export const HILLSBOROUGH_LABEL = "Hillsborough County government · Building";
 
 export type RunOutcome =
   | "success"
@@ -100,19 +99,17 @@ export const manualStatusSchema = z.object({
 export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "Use the full permit number with its hyphens and zeros.");
 export const permitIdSchema = z.uuid();
 /** An empty value clears the project number. */
-export const projectNumberSchema = z.string().trim().max(40)
-  .regex(/^(?:[A-Za-z0-9][A-Za-z0-9 ._/-]*)?$/, "Use letters, numbers, spaces, and - . _ / only.");
+export const projectNumberSchema = z.string().trim().max(PROJECT_NUMBER_MAX)
+  .regex(PROJECT_NUMBER_PATTERN, "Use letters, numbers, spaces, and - . _ / only.");
 export const setProjectNumberSchema = z.object({ permitId: permitIdSchema, projectNumber: projectNumberSchema });
 export const addPermitSchema = z.object({
   jurisdiction: z.string().trim().min(1).max(100),
   permitNumber: permitNumberSchema,
 });
 
-/** Resolve a selected authority without confusing a county with a city inside it. */
+/** Resolve a selected authority by its id or exact label, so a county is never confused with a city inside it. */
 export function resolveJurisdiction(input: string): JurisdictionId | null {
   const name = input.trim().toLocaleLowerCase("en-US");
-  if (name === HILLSBOROUGH_LABEL.toLocaleLowerCase("en-US") ||
-    name === "hillsborough county government" || name === "hillsborough county, florida") return HILLSBOROUGH_ID;
   return JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ?? null;
 }
 

@@ -6,10 +6,14 @@ export interface ProjectGroup {
   permits: PermitRow[];
 }
 
+/** A job number as typed; empty clears it. */
+export const PROJECT_NUMBER_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9 ._/-]*)?$/;
+export const PROJECT_NUMBER_MAX = 40;
+
 const projectOrder = new Intl.Collator("en-US", { numeric: true, sensitivity: "base" });
 
 /** The same project typed in a different case or with stray spaces is one group. */
-export function projectKey(projectNumber: string): string {
+function projectKey(projectNumber: string): string {
   return projectNumber.trim().toLocaleUpperCase("en-US");
 }
 

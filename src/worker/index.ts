@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, STATUS_LABELS } from "../shared/permit.js";
+import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, STATUS_LABELS, type RunOutcome } from "../shared/permit.js";
 import { getAutomatedJurisdiction, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
 
@@ -50,8 +50,8 @@ async function closeAll(): Promise<void> {
   setTimeout(() => process.exit(process.exitCode ?? 0), 50);
 }
 
-function fail(outcome: WorkerToMain & { kind: "failed" }): void {
-  send(outcome);
+function fail(runId: string, outcome: RunOutcome): void {
+  send({ kind: "failed", runId, outcome });
   void closeAll();
 }
 
@@ -201,11 +201,11 @@ async function sendObservationOrResult(): Promise<void> {
   const observation = await observe();
   lastObservation = observation;
   if (observation.phase === "challenge") {
-    fail({ kind: "failed", runId: currentRun, outcome: "blocked" });
+    fail(currentRun, "blocked");
     return;
   }
   if (observation.phase === "results" && observation.resultNumbers.length > 1) {
-    fail({ kind: "failed", runId: currentRun, outcome: "ambiguous" });
+    fail(currentRun, "ambiguous");
     return;
   }
   if (observation.phase === "search" && recentActions.includes("search_record_number")) {
@@ -214,12 +214,12 @@ async function sendObservationOrResult(): Promise<void> {
       const input = page.locator(SEARCH_FIELD);
       if (await message.count() === 1 && await message.isVisible() &&
         await input.count() === 1 && await input.inputValue() === requestedNumber) {
-        fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+        fail(currentRun, "not_found_in_supported_search");
         return;
       }
     } else if (jurisdiction?.portalFamily === "tyler-civic-access" &&
       /Found 0 results/i.test((await page.locator("body").innerText()).slice(0, 1000))) {
-      fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+      fail(currentRun, "not_found_in_supported_search");
       return;
     }
   }
@@ -231,16 +231,16 @@ async function sendObservationOrResult(): Promise<void> {
     const labelText = jurisdiction.portalFamily === "accela" ? await visibleText(DETAIL_STATUS_TITLE)
       : `${STATUS_LABELS[jurisdiction.portalFamily]}:`;
     if (!displayedNumber || !sameJurisdictionPermitNumber(requestedNumber, displayedNumber, jurisdiction.id)) {
-      fail({ kind: "failed", runId: currentRun, outcome: "identity_mismatch" });
+      fail(currentRun, "identity_mismatch");
       return;
     }
     if (!statusValue || !labelText) {
-      fail({ kind: "failed", runId: currentRun, outcome: "status_unavailable" });
+      fail(currentRun, "status_unavailable");
       return;
     }
     const recordUrl = jurisdiction.portalFamily === "click2gov" ? stPeteRecordUrl(requestedNumber) : page.url();
     if (!recordUrl || !parsePortalUrl(recordUrl, "detail", jurisdiction.id)) {
-      fail({ kind: "failed", runId: currentRun, outcome: "record_link_unavailable" });
+      fail(currentRun, "record_link_unavailable");
       return;
     }
     send({
@@ -257,7 +257,7 @@ async function sendObservationOrResult(): Promise<void> {
     return;
   }
   if (observation.phase === "unknown" || observation.candidates.length === 0) {
-    fail({ kind: "failed", runId: currentRun, outcome: "unsupported_page" });
+    fail(currentRun, "unsupported_page");
     return;
   }
   send({ kind: "observation", runId: currentRun, observation });
@@ -266,7 +266,7 @@ async function sendObservationOrResult(): Promise<void> {
 async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise<void> {
   currentRun = message.runId;
   jurisdiction = getAutomatedJurisdiction(message.jurisdictionId);
-  if (!jurisdiction) { fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" }); return; }
+  if (!jurisdiction) { fail(message.runId, "unsupported_page"); return; }
   requestedNumber = message.permitNumber;
   stopped = false;
   process.env.PLAYWRIGHT_BROWSERS_PATH = message.browserPath;
@@ -277,7 +277,7 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   page.on("popup", (popup) => { void popup.close(); });
   page.on("framenavigated", (frame) => {
     if (frame === page?.mainFrame() && frame.url() !== "about:blank" && locationOf(frame.url()) === "other") {
-      fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
+      fail(message.runId, "unsupported_page");
     }
   });
   const startUrl = jurisdiction.id === "pasco-county-building" && /^\d{2}[A-Z]\d{5,}$/i.test(requestedNumber)
@@ -310,7 +310,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
     return;
   }
   if (!fresh.candidates.some((candidate) => candidate.id === message.candidateId)) {
-    fail({ kind: "failed", runId: currentRun, outcome: "unsupported_page" });
+    fail(currentRun, "unsupported_page");
     return;
   }
   switch (message.candidateId) {
@@ -381,16 +381,13 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
 process.parentPort?.on("message", (event: { data: MainToWorker }) => {
   const message = event.data;
   if (message.kind === "cancel") {
-    if (message.runId === currentRun) {
-      send({ kind: "failed", runId: message.runId, outcome: "cancelled" });
-      void closeAll();
-    }
+    if (message.runId === currentRun) fail(message.runId, "cancelled");
     return;
   }
   const task = message.kind === "start" ? start(message)
     : message.kind === "reobserve" ? sendObservationOrResult() : choose(message);
   void task.catch((error: unknown) => {
     if (process.env.PERMIT_PORTAL_SMOKE === "1") process.stderr.write(`Worker smoke error: ${String(error)}\n`);
-    if (currentRun && !stopped) fail({ kind: "failed", runId: currentRun, outcome: "browser_error" });
+    if (currentRun && !stopped) fail(currentRun, "browser_error");
   });
 });

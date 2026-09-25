@@ -105,8 +105,6 @@ main { flex: 1; padding-bottom: 32px; }
 .btn-ghost:hover:not(:disabled) { text-decoration: underline; }
 .btn-sm { height: 36px; padding: 0 16px; font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); }
 .btn:disabled { opacity: .45; }
-.btn-arrow { font-weight: 400; transition: transform var(--duration-fast) var(--ease-out); }
-.btn:hover:not(:disabled) .btn-arrow { transform: translateX(3px); }
 .btn[aria-busy="true"] { opacity: 1; }
 .btn[aria-busy="true"]::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; }
 .icon-button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-micro); background: transparent; color: var(--color-ink); transition: border-color var(--duration-fast) var(--ease-out); }

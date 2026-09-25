@@ -25,6 +25,16 @@ const MAX_ACTIONS = 20;
 const MAX_REQUESTS = 20;
 const DEADLINE_MS = 180_000;
 
+/** The browser worker gets only the Windows basics it needs, never the app's full environment. */
+export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"]) {
+    if (process.env[name]) environment[name] = process.env[name];
+  }
+  environment.PLAYWRIGHT_BROWSERS_PATH = browserPath;
+  return environment;
+}
+
 export function runCheck(input: {
   runId: string;
   permit: PermitRow;
@@ -50,11 +60,7 @@ export function runCheck(input: {
     let decisionPending = false;
     let forceKillTimer: NodeJS.Timeout | null = null;
     const repeated = new Map<string, number>();
-    const environment: NodeJS.ProcessEnv = {};
-    for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"]) {
-      if (process.env[name]) environment[name] = process.env[name];
-    }
-    environment.PLAYWRIGHT_BROWSERS_PATH = input.browserPath;
+    const environment = workerEnvironment(input.browserPath);
     environment.TEMP = cachePath;
     environment.TMP = cachePath;
     let worker: Electron.UtilityProcess;
@@ -127,10 +133,6 @@ export function runCheck(input: {
             return;
           }
           const observation = message.observation;
-          if (observation.candidates.length === 0 || observation.candidates.length > 30) {
-            finish("unsupported_page");
-            return;
-          }
           decisionPending = true;
           const decision = await chooseNavigation({
             key: input.key,

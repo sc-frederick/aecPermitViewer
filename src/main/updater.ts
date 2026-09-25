@@ -155,7 +155,7 @@ export class UpdateManager {
         stallTimer = setTimeout(() => stall.abort(), 60_000);
         if (done) break;
         bytes += chunk.byteLength;
-        if (bytes > payload.size || bytes > 1_000_000_000) throw new Error("Update size exceeded");
+        if (bytes > payload.size) throw new Error("Update size exceeded");
         hash.update(chunk);
         let offset = 0;
         while (offset < chunk.byteLength) {
