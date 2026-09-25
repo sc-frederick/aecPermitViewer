@@ -33,7 +33,12 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   void app.whenReady().then(startApp).catch(failStartup);
 }
 
+let startupFailed = false;
+
+/** Both startup and the deferred browser check can fail; the user sees one dialog. */
 function failStartup(): void {
+  if (startupFailed) return;
+  startupFailed = true;
   if (!process.argv.includes("--smoke-browser")) {
     dialog.showErrorBox("Permit Monitor could not start", "The local application or bundled browser could not be verified. Reinstall the app from a trusted release.");
   }
