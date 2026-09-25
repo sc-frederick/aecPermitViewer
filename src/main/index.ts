@@ -254,8 +254,9 @@ async function runNext(): Promise<void> {
       requestCount: 0, actualModel: null, browserVersion: null });
     return;
   }
-  // Already shown as checking while pending, so there is nothing new to broadcast here.
   active = { permitId, check };
+  // The row already shows checking, but an open history now has a started run to show.
+  void broadcast();
   const result = await check.result;
   await check.closed;
   try {
