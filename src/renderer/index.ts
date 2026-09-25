@@ -653,8 +653,8 @@ element<HTMLFormElement>("add-form").addEventListener("submit", async (event) =>
   const input = element<HTMLInputElement>("permit-number");
   const number = input.value.trim();
   if (!number) { setFieldError("Enter a permit number."); input.focus(); return; }
-  if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(number) || number.length < 3) {
-    setFieldError("Use letters, numbers, and hyphens only.");
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(number) || number.length < 3) {
+    setFieldError("Use letters, numbers, hyphens, and dots only.");
     input.focus();
     return;
   }
