@@ -1,18 +1,11 @@
 import type { Page } from "playwright";
 import { expectedStatusLabel, parsePortalUrl, parseWmisNumber, sameJurisdictionPermitNumber, wmisRecordUrl } from "../shared/permit.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import type { Candidate, PageObservation } from "../shared/worker-protocol.js";
+import type { Candidate } from "../shared/worker-protocol.js";
+import type { DisplayedRecord, PortalAdapter, SearchObservation } from "./adapter.js";
 
 /** An SWFWMD permit program searched through its public WMIS page. */
-export type WmisProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "wmis" }>;
-
-/** What a record showed: its identity, record-level status and label, and the record page link to save. */
-export interface DisplayedRecord {
-  displayedNumber: string | null;
-  statusLabel: string | null;
-  statusValue: string | null;
-  recordUrl: string | null;
-}
+type WmisProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "wmis" }>;
 
 const ERP = "#TabContainer1_TabPanel1_SearchERPInfo_";
 const WUP = "#TabContainer1_TabPanel1_SearchWupInfo1_";
@@ -68,8 +61,8 @@ function rowIdentity(row: ResultRow, profile: WmisProfile): string | null {
     : `Application: ${application}${prefix}`;
 }
 
-async function exactRows(page: Page, profile: WmisProfile, requested: string): Promise<ResultRow[]> {
-  return ((await resultRows(page)) ?? []).filter((row) => {
+function exactRows(rows: ResultRow[] | null, profile: WmisProfile, requested: string): ResultRow[] {
+  return (rows ?? []).filter((row) => {
     const identity = rowIdentity(row, profile);
     return identity !== null && sameJurisdictionPermitNumber(requested, identity, profile.id);
   });
@@ -98,20 +91,13 @@ async function criteriaEntered(page: Page, profile: WmisProfile, requested: stri
 }
 
 /** Offer the next step on a search page, or report that its results hold the record itself (water use). */
-export async function observeWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<{
-  phase: PageObservation["phase"];
-  inputValue: string;
-  formLabels: string[];
-  visibleControls: string[];
-  resultNumbers: string[];
-  candidates: Candidate[];
-}> {
+async function observeWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<SearchObservation> {
   const wanted = parseWmisNumber(requested, profile.module);
   const entered = await criteriaEntered(page, profile, requested);
   const inputValue = entered ? requested : "";
-  const rows = await resultRows(page);
-  if (entered && rows) {
-    const exact = await exactRows(page, profile, requested);
+  const rows = entered ? await resultRows(page) : null;
+  if (rows) {
+    const exact = exactRows(rows, profile, requested);
     const resultNumbers = exact.map((row) => rowIdentity(row, profile)!);
     const visibleControls = ["Search results"];
     // Water use record pages don't show a status, so the matching result row is the record.
@@ -143,15 +129,15 @@ export async function observeWmisSearch(page: Page, profile: WmisProfile, reques
  * True once a search for exactly the requested number returned the portal's no-records message, or only rows
  * whose numbers were read and differ (an ERP permit under another type prefix). Unreadable rows don't count.
  */
-export async function wmisSearchFoundNothing(page: Page, profile: WmisProfile, requested: string): Promise<boolean> {
+async function wmisSearchFoundNothing(page: Page, profile: WmisProfile, requested: string): Promise<boolean> {
   if (!(await criteriaEntered(page, profile, requested))) return false;
   if (await page.getByText(NO_RECORDS, { exact: true }).isVisible().catch(() => false)) return true;
   const rows = await resultRows(page);
   return Boolean(rows && rows.length > 0 && rows.every((row) => rowIdentity(row, profile) !== null) &&
-    (await exactRows(page, profile, requested)).length === 0);
+    exactRows(rows, profile, requested).length === 0);
 }
 
-export async function fillWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<void> {
+async function fillWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<void> {
   const wanted = parseWmisNumber(requested, profile.module);
   if (!wanted) return;
   if (wanted.kind === "well") {
@@ -178,7 +164,7 @@ export async function fillWmisSearch(page: Page, profile: WmisProfile, requested
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
 }
 
-export async function submitWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<void> {
+async function submitWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<void> {
   if (!(await criteriaEntered(page, profile, requested))) return;
   await page.locator(FORMS[profile.module].search).click({ noWaitAfter: true });
   await Promise.any([
@@ -188,14 +174,17 @@ export async function submitWmisSearch(page: Page, profile: WmisProfile, request
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
 }
 
-/** The record page for the one result row that exactly matches, built on HTTPS from the row's numbers. */
-export async function exactWmisRecordUrl(page: Page, profile: WmisProfile, requested: string): Promise<string | null> {
-  const exact = await exactRows(page, profile, requested);
-  if (exact.length !== 1) return null;
+/**
+ * Open the record page for the one result row that exactly matches. Result rows link to plain HTTP, so the page is
+ * opened on HTTPS from the row's numbers.
+ */
+async function openWmisResult(page: Page, profile: WmisProfile, requested: string): Promise<void> {
+  const exact = exactRows(await resultRows(page), profile, requested);
+  if (exact.length !== 1) return;
   const row = exact[0]!;
   const url = profile.module === "ERP" ? wmisRecordUrl(profile, { id: Number(row["ERP App ID"]) })
     : wmisRecordUrl(profile, { permit: Number(row["Permit #"]) });
-  return url && parsePortalUrl(url, "detail", profile.id) ? url : null;
+  if (url && parsePortalUrl(url, "detail", profile.id)) await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
 }
 
 async function selectedText(page: Page, selector: string): Promise<string | null> {
@@ -210,9 +199,9 @@ async function labelBefore(page: Page, selector: string): Promise<string | null>
 }
 
 /** Read the record's displayed identity and record-level status: a record page, or water use's result row. */
-export async function readWmisRecord(page: Page, profile: WmisProfile, requested: string): Promise<DisplayedRecord> {
+async function readWmisRecord(page: Page, profile: WmisProfile, requested: string): Promise<DisplayedRecord> {
   if (profile.module === "WUP") {
-    const exact = await exactRows(page, profile, requested);
+    const exact = exactRows(await resultRows(page), profile, requested);
     const row = exact.length === 1 ? exact[0]! : null;
     const label = expectedStatusLabel(profile);
     return {
@@ -243,7 +232,13 @@ export async function readWmisRecord(page: Page, profile: WmisProfile, requested
   };
 }
 
-/** Water use record pages have no status, so a saved record link can't stand in for a search. */
-export function wmisRecordPageShowsStatus(profile: WmisProfile): boolean {
-  return profile.module !== "WUP";
+export function wmisAdapter(page: Page, profile: WmisProfile, requested: string): PortalAdapter {
+  return {
+    observe: () => observeWmisSearch(page, profile, requested),
+    foundNothing: () => wmisSearchFoundNothing(page, profile, requested),
+    fill: () => fillWmisSearch(page, profile, requested),
+    submit: () => submitWmisSearch(page, profile, requested),
+    openResult: () => openWmisResult(page, profile, requested),
+    read: () => readWmisRecord(page, profile, requested),
+  };
 }

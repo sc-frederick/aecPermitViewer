@@ -201,16 +201,25 @@ export function parseEpermitNumber(value: string): { prefix: string | null; perm
 }
 
 /**
+ * True when an ePermit result row shows the requested number. A number entered without its prefix matches on the
+ * number and sequence, which identify the record by themselves.
+ */
+export function sameEpermitRowNumber(requested: string, shown: string): boolean {
+  const input = parseEpermitNumber(requested);
+  const row = parseEpermitNumber(shown);
+  return Boolean(input && row && (input.prefix === null || row.prefix === input.prefix) && row.permit === input.permit &&
+    row.sequence === input.sequence);
+}
+
+/**
  * The worker reports the exactly matching result row's number and the record's own Project Number together,
  * such as "ERP-123-255799-1 · Project Number 255799 - 1", because the record page omits the prefix.
  */
 function sameEpermitNumber(requested: string, displayed: string): boolean {
   const input = parseEpermitNumber(requested);
   const shown = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim());
-  const row = shown ? parseEpermitNumber(shown[1]!) : null;
-  // A number entered without its prefix matches on the number and sequence, which identify the record by themselves.
-  return Boolean(input && shown && row && (input.prefix === null || row.prefix === input.prefix) && row.permit === input.permit &&
-    row.sequence === input.sequence && Number(shown[2]) === input.permit && Number(shown[3]) === input.sequence);
+  return Boolean(input && shown && sameEpermitRowNumber(requested, shown[1]!) &&
+    Number(shown[2]) === input.permit && Number(shown[3]) === input.sequence);
 }
 
 /** The ePermit record link the portal's own Copy Link gives, keyed by permit number and sequence. */

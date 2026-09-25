@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { epermitRecordUrl, HILLSBOROUGH_ID, parseDisplayedStatus, parseEpermitNumber, parseRegPermittingNumber, parseWmisNumber, permitComparisonValue, permitNumberProblem, permitNumberSchema, parsePortalUrl, regPermittingRecordUrl, resolveJurisdiction, sameJurisdictionPermitNumber, samePermitNumber } from "../src/shared/permit.js";
-import { getJurisdiction } from "../src/shared/jurisdictions.js";
-import { JURISDICTIONS } from "../src/shared/jurisdictions.js";
+import { getJurisdiction, JURISDICTIONS } from "../src/shared/jurisdictions.js";
 
 const detailUrl = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
 const candidate = {
