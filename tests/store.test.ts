@@ -186,3 +186,37 @@ describe("scheduled checks", () => {
     }
   });
 });
+
+describe("hand-checked permits", () => {
+  it("stay out of scheduled checks and record entered statuses as observations", () => {
+    const store = newStore();
+    try {
+      const permitId = store.addPermit("BLD2024-01234", "orange-county-building");
+      expect(store.getPermit(permitId)?.monitoringEnabled).toBe(false);
+      expect(store.duePermitIds(new Date().toISOString())).not.toContain(permitId);
+      expect(() => store.setPermitMonitoring(permitId, true)).toThrow();
+
+      store.recordManualStatus({ permitId, status: "Issued", appVersion: "test",
+        recordUrl: "https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx" });
+      const permit = store.getPermit(permitId);
+      expect(permit).toMatchObject({ lastStatus: "Issued", latestOutcome: "success",
+        lastRecordUrl: "https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx" });
+      const history = store.history(permitId);
+      expect(history.runs).toHaveLength(1);
+      expect(history.observations[0]).toMatchObject({ statusValue: "Issued", verifiedPermitNumber: "BLD2024-01234" });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("refuses an entered status for an automated permit", () => {
+    const store = newStore();
+    try {
+      const permitId = store.addPermit("HC-BLD-26-0087599");
+      expect(() => store.recordManualStatus({ permitId, status: "Issued", appVersion: "test",
+        recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx" })).toThrow();
+    } finally {
+      store.close();
+    }
+  });
+});

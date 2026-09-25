@@ -49,7 +49,7 @@ describe("verified portal observation", () => {
   });
 
   it("resolves each selected authority and keeps record links in its own portal", () => {
-    expect(JURISDICTIONS).toHaveLength(7);
+    expect(JURISDICTIONS).toHaveLength(9);
     for (const profile of JURISDICTIONS) {
       expect(resolveJurisdiction(profile.id)).toBe(profile.id);
       expect(resolveJurisdiction(profile.label)).toBe(profile.id);
@@ -91,5 +91,15 @@ describe("verified portal observation", () => {
     expect(parsePortalUrl(recordUrl, "detail", "st-petersburg-building")).not.toBeNull();
     expect(parsePortalUrl("https://stpe-egov.aspgov.com/Click2GovBP/selectpermit.html?initialSearchView=true",
       "detail", "st-petersburg-building")).toBeNull();
+  });
+});
+
+describe("hand-checked portal links", () => {
+  it("accept only HTTPS pages on the authority's own portal host", () => {
+    expect(parsePortalUrl("https://fasttrack.ocfl.net/OnlineServices/permit-building.aspx?id=1", "detail", "orange-county-building")).not.toBeNull();
+    expect(parsePortalUrl("https://ims.palmbayfl.gov/ims/Find?bNewSearch=true&cat=Permit", "detail", "palm-bay-building")).not.toBeNull();
+    expect(parsePortalUrl("http://fasttrack.ocfl.net/OnlineServices/", "detail", "orange-county-building")).toBeNull();
+    expect(parsePortalUrl("https://evil.example/fasttrack.ocfl.net", "detail", "orange-county-building")).toBeNull();
+    expect(parsePortalUrl("https://ims.palmbayfl.gov/ims/", "detail", "orange-county-building")).toBeNull();
   });
 });

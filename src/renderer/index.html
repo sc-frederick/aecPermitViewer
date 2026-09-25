@@ -172,6 +172,28 @@
     </form>
   </dialog>
 
+  <dialog id="manual-dialog" class="confirm manual" aria-labelledby="manual-title" aria-describedby="manual-body">
+    <form id="manual-form" novalidate>
+      <p id="manual-jurisdiction" class="coord"></p>
+      <h2 id="manual-title" class="confirm-title manual-title"></h2>
+      <p id="manual-body">The portal opened in your browser and the permit number is on your clipboard. Look it up, then enter the status the portal shows.</p>
+      <button id="manual-reopen" class="link-button manual-reopen" type="button">Open portal again<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></button>
+      <div class="field">
+        <label class="field-label" for="manual-status">Status</label>
+        <input id="manual-status" class="field-control" type="text" maxlength="200" autocomplete="off" required aria-describedby="manual-error">
+      </div>
+      <div class="field">
+        <label class="field-label" for="manual-link">Record link (optional)</label>
+        <input id="manual-link" class="field-control mono-input" type="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste the permit page's address">
+      </div>
+      <p id="manual-error" class="field-error" hidden></p>
+      <div class="confirm-actions">
+        <button id="manual-cancel" class="btn btn-secondary" type="button">Cancel</button>
+        <button id="manual-save" class="btn btn-primary" type="submit">Save status</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="notice" class="notice" role="status" aria-live="polite" hidden><svg class="icon icon-sm" aria-hidden="true"><use id="notice-icon" href="#i-check"/></svg><span id="notice-text"></span></div>
 </body>
 </html>

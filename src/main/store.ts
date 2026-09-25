@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   HILLSBOROUGH_ID,
+  MANUAL_STATUS_LABEL,
   permitComparisonValue,
   type CheckRunRow,
   type ObservationRow,
@@ -11,7 +12,7 @@ import {
   type PermitRow,
   type RunOutcome,
 } from "../shared/permit.js";
-import { getJurisdiction, JURISDICTIONS, type JurisdictionId } from "../shared/jurisdictions.js";
+import { getJurisdiction, isManualJurisdiction, JURISDICTIONS, type JurisdictionId } from "../shared/jurisdictions.js";
 import { DEFAULT_CHECK_TIMES, formatCheckTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
 interface StoredPermit {
@@ -183,9 +184,11 @@ export class PermitStore {
     if (!getJurisdiction(jurisdictionId)) throw new Error("Unsupported jurisdiction");
     const id = randomUUID();
     // New permits join the scheduled checks by default; each can be excluded from its details.
+    // Hand-checked permits never do, because a scheduled check can't read their portal.
     this.db.prepare(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
-      VALUES (?, ?, ?, ?, ?, 1)`).run(id, jurisdictionId, permitNumber,
-        permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString());
+      VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
+        permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
+        isManualJurisdiction(jurisdictionId) ? 0 : 1);
     return id;
   }
 
@@ -266,6 +269,27 @@ export class PermitStore {
     });
   }
 
+  /** Saves a status the user read on a hand-checked portal as a completed check. */
+  recordManualStatus(input: { permitId: string; status: string; recordUrl: string; appVersion: string }): void {
+    const permit = this.getPermit(input.permitId);
+    if (!permit || !isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is not checked by hand");
+    const runId = randomUUID();
+    const now = new Date().toISOString();
+    this.transaction(() => {
+      this.db.prepare(`INSERT INTO check_runs
+        (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
+        VALUES (?, ?, ?, ?, 'manual-1', 'manual', 'manual', 'none')`)
+        .run(runId, input.permitId, now, input.appVersion);
+      this.db.prepare("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(runId, input.permitId);
+    });
+    this.finishRun({
+      runId, permitId: input.permitId, outcome: "success", actionCount: 0, requestCount: 0,
+      actualModel: null, browserVersion: null,
+      observation: { verifiedPermitNumber: permit.permitNumber, statusLabel: MANUAL_STATUS_LABEL,
+        statusValue: input.status, observedAt: now, recordUrl: input.recordUrl },
+    });
+  }
+
   history(permitId: string): PermitHistory {
     const runs = this.db.prepare(`SELECT id, permit_id AS permitId, started_at AS startedAt,
       finished_at AS finishedAt, outcome, action_count AS actionCount,
@@ -340,8 +364,9 @@ export class PermitStore {
   }
 
   duePermitIds(now: string): string[] {
-    return (this.db.prepare(`SELECT id FROM permits WHERE monitoring_enabled = 1
-      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`).all(now) as unknown as Array<{ id: string }>).map((row) => row.id);
+    return (this.db.prepare(`SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
+      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`).all(now) as unknown as Array<{ id: string; jurisdictionId: string }>)
+      .filter((row) => !isManualJurisdiction(row.jurisdictionId)).map((row) => row.id);
   }
 
   removePermit(id: string): boolean {
@@ -355,6 +380,8 @@ export class PermitStore {
   }
 
   setPermitMonitoring(id: string, enabled: boolean): void {
+    const permit = this.getPermit(id);
+    if (enabled && permit && isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is checked by hand");
     this.db.prepare("UPDATE permits SET monitoring_enabled = ?, next_due_at = ? WHERE id = ?")
       .run(enabled ? 1 : 0, enabled ? new Date().toISOString() : null, id);
   }

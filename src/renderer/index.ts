@@ -2,8 +2,9 @@ import type { PermitBridge } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
-import type { AppPreferences, AppSnapshot, PreferenceKey, CheckRunRow, ObservationRow, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
-import { getJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
+import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
+import { dailyHistory } from "../shared/history.js";
+import { getJurisdiction, isManualJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -28,6 +29,8 @@ function element<T extends HTMLElement>(id: string): T {
 const stampFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const stampFormatWithYear = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const fullFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" });
+const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const dateFormatWithYear = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
 /** "Sep 24, 12:17 PM", adding the year only for earlier years. */
 function stamp(value: string): string {
@@ -35,9 +38,15 @@ function stamp(value: string): string {
   return (date.getFullYear() === new Date().getFullYear() ? stampFormat : stampFormatWithYear).format(date);
 }
 
-function timeNode(value: string | null, fallback = "—"): HTMLElement {
+/** "Sep 24", adding the year only for earlier years. */
+function dateOnly(value: string): string {
+  const date = new Date(value);
+  return (date.getFullYear() === new Date().getFullYear() ? dateFormat : dateFormatWithYear).format(date);
+}
+
+function timeNode(value: string | null, fallback = "—", format: (value: string) => string = stamp): HTMLElement {
   if (!value) return make("span", "muted", fallback);
-  const node = make("time", "", stamp(value));
+  const node = make("time", "", format(value));
   node.dateTime = value;
   node.title = fullFormat.format(new Date(value));
   return node;
@@ -116,7 +125,9 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   if (permit.checking) {
     text.append(make("span", "outcome-label", "Checking…"));
   } else if (permit.latestOutcome) {
-    text.append(make("span", "outcome-label", outcomeText[permit.latestOutcome]));
+    const label = permit.latestOutcome === "success" && isManualJurisdiction(permit.jurisdictionId)
+      ? "Checked by hand" : outcomeText[permit.latestOutcome];
+    text.append(make("span", "outcome-label", label));
     const when = timeNode(permit.latestAttemptAt);
     when.classList.add("cell-sub");
     text.append(when);
@@ -172,7 +183,7 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
   open.setAttribute("aria-label", `${permit.permitNumber}, ${jurisdiction?.label ?? permit.jurisdictionId}, details`);
   identity.append(open);
   identity.append(make("span", "cell-sub", jurisdiction?.label ?? permit.jurisdictionId));
-  if (monitoring === "scheduled" && !permit.monitoringEnabled) {
+  if (monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId)) {
     const tag = make("span", "tag", "Not scheduled");
     identity.append(tag);
   }
@@ -333,7 +344,9 @@ function renderDetailsSummary(permit: PermitRow): void {
   const status = element<HTMLElement>("details-status");
   status.textContent = permit.lastStatus ?? "No status yet";
   status.classList.toggle("muted", !permit.lastStatus);
-  element<HTMLElement>("details-observed").textContent = permit.lastObservedAt ? `Verified ${stamp(permit.lastObservedAt)}` : "";
+  const manual = isManualJurisdiction(permit.jurisdictionId);
+  element<HTMLElement>("details-observed").textContent = permit.lastObservedAt
+    ? `${manual ? "Entered" : "Verified"} ${stamp(permit.lastObservedAt)}` : "";
   const failure = element<HTMLElement>("details-failure");
   const failed = !permit.checking && permit.latestOutcome !== null && outcomeKind(permit.latestOutcome) === "failed";
   failure.hidden = !failed;
@@ -343,7 +356,10 @@ function renderDetailsSummary(permit: PermitRow): void {
   check.textContent = permit.checking ? "Cancel" : "Check now";
   check.dataset.action = permit.checking ? "cancel" : "check";
   element<HTMLButtonElement>("details-open").disabled = !permit.lastRecordUrl;
-  element<HTMLInputElement>("details-daily").checked = permit.monitoringEnabled;
+  const daily = element<HTMLInputElement>("details-daily");
+  daily.checked = permit.monitoringEnabled;
+  // Scheduled checks can't read a hand-checked portal, so the option isn't offered.
+  daily.closest<HTMLElement>("label")!.hidden = manual;
   const next = currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
     ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;
   element<HTMLElement>("details-daily-help").textContent = next ? `Next: ${next}` : "";
@@ -369,8 +385,7 @@ function renderJurisdictionHelp(): void {
 }
 
 function renderHistory(history: PermitHistory): void {
-  const items = history.runs.map((run: CheckRunRow) => {
-    const observation: ObservationRow | undefined = history.observations.find((entry) => entry.runId === run.id);
+  const items = dailyHistory(history).map(({ run, observation }) => {
     const item = make("li");
     const kind = run.outcome ? outcomeKind(run.outcome) : "checking";
     item.dataset.kind = kind;
@@ -378,7 +393,7 @@ function renderHistory(history: PermitHistory): void {
     const body = make("div");
     if (observation) {
       body.append(make("strong", "", observation.statusValue));
-      body.append(timeNode(observation.observedAt));
+      body.append(timeNode(observation.observedAt, undefined, dateOnly));
       const link = make("button", "link-button", "Open record");
       link.type = "button";
       link.dataset.observationId = observation.id;
@@ -386,7 +401,7 @@ function renderHistory(history: PermitHistory): void {
       body.append(link);
     } else {
       body.append(make("strong", "", run.outcome ? outcomeText[run.outcome] : "Checking…"));
-      body.append(timeNode(run.finishedAt ?? run.startedAt));
+      body.append(timeNode(run.finishedAt ?? run.startedAt, undefined, dateOnly));
       const help = run.outcome ? outcomeHelp[run.outcome] : undefined;
       if (help) body.append(make("p", "", help));
     }
@@ -418,11 +433,68 @@ function openDetails(permitId: string): void {
 
 async function runPermitAction(action: string, permitId: string): Promise<void> {
   if (action === "details") { openDetails(permitId); return; }
+  const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
+  if (action === "check" && permit && isManualJurisdiction(permit.jurisdictionId)) { await startManualCheck(permit); return; }
   const result = action === "check" ? await api.checkNow(permitId)
     : action === "cancel" ? await api.cancel(permitId)
       : action === "open" ? await api.openRecord(permitId) : null;
   if (result && !result.ok) notice(result.error);
 }
+
+// Hand-checked permits: open the portal, then record what the user reads there.
+let manualPermitId: string | null = null;
+const manualDialog = element<HTMLDialogElement>("manual-dialog");
+
+function setManualError(message: string | null): void {
+  const error = element<HTMLElement>("manual-error");
+  error.hidden = !message;
+  error.textContent = message ?? "";
+  const input = element<HTMLInputElement>("manual-status");
+  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+}
+
+async function startManualCheck(permit: PermitRow): Promise<void> {
+  const result = await api.openPortal(permit.id);
+  if (!result.ok) { notice(result.error); return; }
+  const profile = getJurisdiction(permit.jurisdictionId);
+  manualPermitId = permit.id;
+  element<HTMLElement>("manual-jurisdiction").textContent = profile?.label ?? "";
+  element<HTMLElement>("manual-title").textContent = permit.permitNumber;
+  const status = element<HTMLInputElement>("manual-status");
+  status.value = permit.lastStatus ?? "";
+  element<HTMLInputElement>("manual-link").value = permit.lastRecordUrl && permit.lastRecordUrl !== profile?.startUrl
+    ? permit.lastRecordUrl : "";
+  setManualError(null);
+  if (!manualDialog.open) manualDialog.showModal();
+  status.focus();
+  status.select();
+}
+
+function closeManual(): void {
+  manualPermitId = null;
+  if (manualDialog.open) manualDialog.close();
+}
+
+element<HTMLInputElement>("manual-status").addEventListener("input", () => setManualError(null));
+element<HTMLButtonElement>("manual-cancel").addEventListener("click", closeManual);
+manualDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeManual(); });
+element<HTMLButtonElement>("manual-reopen").addEventListener("click", async () => {
+  if (!manualPermitId) return;
+  const result = await api.openPortal(manualPermitId);
+  if (!result.ok) setManualError(result.error);
+});
+element<HTMLFormElement>("manual-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const permitId = manualPermitId;
+  if (!permitId) return;
+  const status = element<HTMLInputElement>("manual-status").value.trim();
+  if (!status) { setManualError("Enter the status shown on the portal."); element<HTMLInputElement>("manual-status").focus(); return; }
+  const recordUrl = element<HTMLInputElement>("manual-link").value.trim();
+  const result = await busy(element<HTMLButtonElement>("manual-save"), () => api.recordManualStatus({ permitId, status, recordUrl }));
+  if (!result.ok) { setManualError(result.error); return; }
+  closeManual();
+  notice("Status saved.", "info");
+});
 
 function setFieldError(message: string | null): void {
   const input = element<HTMLInputElement>("permit-number");
@@ -452,6 +524,8 @@ element<HTMLFormElement>("add-form").addEventListener("submit", async (event) =>
   if (filter !== "all") setFilter("all");
   notice(`${number} added.`, "info");
   render(await api.snapshot());
+  const added = currentSnapshot?.permits.find((entry) => entry.id === result.value);
+  if (added && isManualJurisdiction(added.jurisdictionId)) await startManualCheck(added);
 });
 
 // Key
