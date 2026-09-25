@@ -49,8 +49,8 @@ async function resultRows(page: Page): Promise<ResultRow[] | null> {
     const rows = [...table.querySelectorAll<HTMLTableRowElement>(":scope > tbody > tr")];
     const names = [...(rows.find((row) => row.querySelector("th"))?.cells ?? [])].map((cell) => cell.textContent?.trim() ?? "");
 
-    return rows.filter((row) => !row.querySelector("th")).map((row) =>
-      Object.fromEntries([...row.cells].map((cell, index) => [names[index] || `column ${index}`, cell.textContent?.trim() ?? ""])));
+    return rows.flatMap((row) => row.querySelector("th") ? []
+      : [Object.fromEntries([...row.cells].map((cell, index) => [names[index] || `column ${index}`, cell.textContent?.trim() ?? ""]))]);
   });
 }
 

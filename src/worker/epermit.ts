@@ -68,12 +68,12 @@ async function recordFields(page: Page): Promise<Array<[string, string]>> {
 
   if (await frame.count() !== 1 || !(await frame.isVisible())) return [];
 
-  return page.frameLocator(RECORD_FRAME).locator("mat-label.fw-bold").evaluateAll((labels) => labels.map((label) =>
-    [label.textContent?.trim() ?? "", label.nextElementSibling?.textContent?.trim() ?? ""] as [string, string]));
+  return page.frameLocator(RECORD_FRAME).locator("mat-label.fw-bold").evaluateAll((labels) => labels.map((label): [string, string] =>
+    [label.textContent?.trim() ?? "", label.nextElementSibling?.textContent?.trim() ?? ""]));
 }
 
 function field(fields: Array<[string, string]>, name: string): string | null {
-  const values = fields.filter(([label]) => label === name).map(([, value]) => value);
+  const values = fields.flatMap(([label, value]) => label === name ? [value] : []);
 
   return values.length === 1 && values[0] ? values[0] : null;
 }

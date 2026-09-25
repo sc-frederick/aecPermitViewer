@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
@@ -17,6 +18,17 @@ function newStore(): PermitStore {
   directories.push(directory);
 
   return new PermitStore(path.join(directory, "data.sqlite"));
+}
+
+/** Runs raw SQL on the newest store's file over a second connection, for states the store's API never writes. */
+function withDatabase<T>(work: (db: DatabaseSync) => T): T {
+  const db = new DatabaseSync(path.join(directories[directories.length - 1]!, "data.sqlite"));
+
+  try {
+    return work(db);
+  } finally {
+    db.close();
+  }
 }
 
 describe("observation history", () => {
@@ -111,11 +123,12 @@ describe("jurisdiction persistence", () => {
       const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
-      const db = (store as unknown as { db: { prepare(sql: string): { get(...args: unknown[]): unknown } } }).db;
-      expect(db.prepare("SELECT adapter_version AS version FROM check_runs WHERE id = ?").get(runId))
-        .toEqual({ version: profile!.adapterVersion });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
-        .toEqual({ count: JURISDICTIONS.length });
+      withDatabase((db) => {
+        expect(db.prepare("SELECT adapter_version AS version FROM check_runs WHERE id = ?").get(runId))
+          .toEqual({ version: profile!.adapterVersion });
+        expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
+          .toEqual({ count: JURISDICTIONS.length });
+      });
     } finally {
       store.close();
     }
@@ -125,20 +138,16 @@ describe("jurisdiction persistence", () => {
     const store = newStore();
     const directory = directories[directories.length - 1]!;
     const filePath = path.join(directory, "data.sqlite");
-
-    try {
-      (store as unknown as { db: { exec(sql: string): void } }).db.exec("DELETE FROM jurisdiction_profiles");
-      (store as unknown as { db: { exec(sql: string): void } }).db.exec(`PRAGMA user_version = ${version}`);
-    } finally {
-      store.close();
-    }
-
+    store.close();
+    withDatabase((db) => {
+      db.exec("DELETE FROM jurisdiction_profiles");
+      db.exec(`PRAGMA user_version = ${version}`);
+    });
     const migrated = new PermitStore(filePath);
 
     try {
-      expect((migrated as unknown as { db: { prepare(sql: string): { get(): unknown } } }).db
-        .prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
-        .toEqual({ count: JURISDICTIONS.length });
+      withDatabase((db) => expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
+        .toEqual({ count: JURISDICTIONS.length }));
     } finally {
       migrated.close();
     }
@@ -155,8 +164,7 @@ describe("scheduled checks", () => {
       expect(store.getMonitoring()).toBe("scheduled");
       store.setMonitoring("manual");
       expect(store.getMonitoring()).toBe("manual");
-      (store as unknown as { db: { prepare(sql: string): { run(): void } } }).db
-        .prepare("UPDATE settings SET value = 'daily' WHERE key = 'monitoring'").run();
+      withDatabase((db) => db.exec("UPDATE settings SET value = 'daily' WHERE key = 'monitoring'"));
       expect(store.getMonitoring()).toBe("scheduled");
     } finally {
       store.close();
@@ -175,8 +183,8 @@ describe("scheduled checks", () => {
 
       const now = new Date(2026, 8, 24, 10, 0);
       store.setPermitMonitoring(permitId, true);
-      (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
-        .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId);
+      withDatabase((db) => db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?")
+        .run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId));
       store.alignSchedule(now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 12, 30).toISOString());
     } finally {
@@ -190,8 +198,8 @@ describe("scheduled checks", () => {
     try {
       expect(store.getCheckTimes()).toEqual([{ hour: 8, minute: 30 }, { hour: 12, minute: 30 }, { hour: 16, minute: 30 }]);
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
-        .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId);
+      withDatabase((db) => db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?")
+        .run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId));
       store.setCheckTimes([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }], new Date(2026, 8, 24, 9, 0));
       expect(store.getCheckTimes()).toEqual([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }]);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 10, 15).toISOString());
@@ -262,12 +270,14 @@ describe("project numbers", () => {
 
     try {
       permitId = store.addPermit("HC-BLD-26-0087599");
-      const db = (store as unknown as { db: { exec(sql: string): void } }).db;
-      db.exec("ALTER TABLE permits DROP COLUMN project_number");
-      db.exec("PRAGMA user_version = 2");
     } finally {
       store.close();
     }
+
+    withDatabase((db) => {
+      db.exec("ALTER TABLE permits DROP COLUMN project_number");
+      db.exec("PRAGMA user_version = 2");
+    });
 
     const migrated = new PermitStore(filePath);
 
@@ -314,10 +324,9 @@ describe("lookups", () => {
       }
 
       expect(store.latestBrowserVersion()).toBe("140.0");
-      const db = (store as unknown as { db: { prepare(sql: string): { all(): Array<{ detail: string }> } } }).db;
 
-      const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
-        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all();
+      const plan = withDatabase((db) => db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
+        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all());
 
       expect(plan.map((step) => step.detail).join(" ")).toContain("idx_runs_started");
     } finally {

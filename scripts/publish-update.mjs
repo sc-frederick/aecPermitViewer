@@ -25,7 +25,10 @@ const auth = { authorization: `Bearer ${token}` };
 async function call(method, pathname, body, attempts = 4) {
   for (let attempt = 1; ; attempt += 1) {
     try {
-      const response = await fetch(new URL(pathname, server), { method, headers: auth, body });
+      const init = { method, headers: auth };
+
+      if (body !== undefined) init.body = body;
+      const response = await fetch(new URL(pathname, server), init);
 
       if (response.ok) return response;
       const message = `${method} ${pathname} failed: ${response.status} ${await response.text()}`;

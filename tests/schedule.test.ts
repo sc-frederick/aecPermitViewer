@@ -9,6 +9,14 @@ const on = (hour: number, minute = 0, day = 24) => new Date(2026, 8, day, hour, 
 
 const times = DEFAULT_CHECK_TIMES;
 
+function checkTimes(...values: string[]): CheckTimes {
+  const normalized = normalizeCheckTimes(values);
+
+  if (!normalized) throw new Error(`Invalid check times: ${values.join(", ")}`);
+
+  return normalized;
+}
+
 describe("default check schedule", () => {
   it("steps through 8:30, 12:30, and 4:30, then rolls to the next morning", () => {
     expect(nextSlotAfter(on(7, 0), times)).toEqual(on(8, 30));
@@ -55,7 +63,7 @@ describe("custom check times", () => {
   });
 
   it("uses a single time's half-hour as the whole window", () => {
-    const once = normalizeCheckTimes(["10:00"]) as CheckTimes;
+    const once = checkTimes("10:00");
     expect(nextSlotAfter(on(10, 0), once)).toEqual(on(10, 0, 25));
     expect(withinCheckWindow(on(10, 29), once)).toBe(true);
     expect(withinCheckWindow(on(10, 30), once)).toBe(false);
@@ -64,7 +72,7 @@ describe("custom check times", () => {
   });
 
   it("stretches the window from the first time to half an hour after the last", () => {
-    const spread = normalizeCheckTimes(["19:00", "06:00"]) as CheckTimes;
+    const spread = checkTimes("19:00", "06:00");
     expect(withinCheckWindow(on(5, 59), spread)).toBe(false);
     expect(withinCheckWindow(on(12, 0), spread)).toBe(true);
     expect(withinCheckWindow(on(19, 29), spread)).toBe(true);

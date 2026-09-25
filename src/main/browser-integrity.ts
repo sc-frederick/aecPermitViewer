@@ -2,11 +2,12 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 
-interface BrowserManifest {
-  version: number;
-  files: Array<{ path: string; sha256: string }>;
-}
+const browserManifestSchema = z.object({
+  version: z.literal(1),
+  files: z.array(z.object({ path: z.string(), sha256: z.string() })),
+});
 
 /** Files hashed at once; overlapping reads keeps the disk busy while earlier chunks are hashed. */
 const CONCURRENCY = 4;
@@ -29,9 +30,10 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
 }
 
 export async function verifyBrowserPayload(directory: string): Promise<void> {
-  const manifest = JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")) as BrowserManifest;
+  const parsed = browserManifestSchema.safeParse(JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")));
 
-  if (manifest.version !== 1 || !Array.isArray(manifest.files)) throw new Error("Browser payload manifest is invalid");
+  if (!parsed.success) throw new Error("Browser payload manifest is invalid");
+  const manifest = parsed.data;
   const expected = manifest.files.map((entry) => entry.path);
   const actual = (await filesIn(directory)).sort();
 
