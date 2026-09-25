@@ -26,6 +26,7 @@ export interface TrayState {
 export class Background {
   private tray: Tray | null = null;
   private attention = false;
+  private shownState = "";
   private readonly live = new Set<Notification>();
 
   constructor(private readonly assetDir: string, private readonly hooks: BackgroundHooks) {}
@@ -50,6 +51,10 @@ export class Background {
 
   update(state: TrayState): void {
     if (!this.tray) return;
+    // Most snapshots leave the tray as it was; rebuilding the native menu each time is wasted work.
+    const shown = JSON.stringify(state);
+    if (shown === this.shownState) return;
+    this.shownState = shown;
     const summary = state.checking > 0 ? `${state.checking} check${state.checking === 1 ? "" : "s"} running`
       : state.failing > 0 ? `${state.failing} latest check${state.failing === 1 ? "" : "s"} failed`
         : `${state.permits} permit${state.permits === 1 ? "" : "s"} tracked`;
