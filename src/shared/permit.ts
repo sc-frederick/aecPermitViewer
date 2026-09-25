@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getJurisdiction, JURISDICTIONS, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
+import { getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, type AutomatedJurisdictionProfile, type JurisdictionId } from "./jurisdictions.js";
 
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 export const JEV_MODEL = "jev-1.13.0" as const;
@@ -86,6 +86,15 @@ export interface AppSnapshot {
   checkTimes: string[];
 }
 
+/** Label stored on observations the user entered from a hand-checked portal. */
+export const MANUAL_STATUS_LABEL = "Status (entered by hand)";
+
+export const manualStatusSchema = z.object({
+  permitId: z.uuid(),
+  status: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
+  recordUrl: z.string().trim().max(2000),
+});
+
 export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "Use the full permit number with its hyphens and zeros.");
 export const permitIdSchema = z.uuid();
 export const addPermitSchema = z.object({
@@ -141,6 +150,8 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
   }
   const start = new URL(profile.startUrl);
   if (url.protocol !== "https:" || url.host !== start.host || url.username || url.password) return null;
+  // A hand-checked portal's pages are whatever the user linked on the official host.
+  if (profile.portalFamily === "manual") return url;
   if (profile.portalFamily !== "accela") {
     const path = url.pathname.toLowerCase();
     if (profile.portalFamily === "click2gov") {
@@ -176,7 +187,7 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 }
 
 /** The record-level status field each portal family labels on its detail page. */
-export const STATUS_LABELS: Record<JurisdictionProfile["portalFamily"], string> = {
+export const STATUS_LABELS: Record<AutomatedJurisdictionProfile["portalFamily"], string> = {
   "accela": "Record Status",
   "click2gov": "Application Status",
   "tyler-civic-access": "Status",
@@ -192,7 +203,7 @@ export function parseDisplayedStatus(input: {
   observedAt: string;
 }): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: RunOutcome } {
   const { jurisdictionId } = input;
-  const profile = getJurisdiction(jurisdictionId);
+  const profile = getAutomatedJurisdiction(jurisdictionId);
   if (!profile) return { _tag: "err", outcome: "unsupported_page" };
   if (!sameJurisdictionPermitNumber(input.requestedNumber, input.displayedNumber, jurisdictionId)) return { _tag: "err", outcome: "identity_mismatch" };
   if (input.statusLabel.trim().replace(/:$/, "") !== STATUS_LABELS[profile.portalFamily]) return { _tag: "err", outcome: "status_unavailable" };
