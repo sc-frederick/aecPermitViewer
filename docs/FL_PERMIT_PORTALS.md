@@ -29,3 +29,65 @@ The September 24, 2026 worker smoke used the bundled Chromium and each portal's 
 | Polk County | [BR-2026-7675](https://aca-prod.accela.com/POLKCO/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=REC26&capID2=00000&capID3=013DW&agencyCode=POLKCO) | Application Received |
 | Hernando County | [BLDR-004412-2026](https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/permit/d342dc84-196f-4f0e-b14b-1cee8bd7bcc6) | Issued |
 | City of St. Petersburg | [25-05001277](https://stpe-egov.aspgov.com/Click2GovBP/selectpermit.html?permit.appYear=25&permit.appNumber=05001277&searchType=0&validatePermitView=true) | CLOSED |
+
+## Water management districts
+
+Checked September 25, 2026, in the bundled headless Chromium the worker uses. A district's permits are separate from any county or city building permit, and each district covers its own region. Record pages open without a session unless noted.
+
+### Southwest Florida Water Management District (SWFWMD)
+
+SWFWMD's public Water Management Information System (WMIS) has a separate search page for each permit program, and the app treats each as its own selection. Searches run on `www18.swfwmd.state.fl.us`; record pages are on `www38.swfwmd.state.fl.us`. Result rows link to record pages over plain HTTP, so the app opens and saves the HTTPS address of the same page instead. The pages occasionally reset the first connection or take over 20 seconds to load, so the worker retries the first load once.
+
+| Program | Search | Number entered | Record page and status |
+| --- | --- | --- | --- |
+| Environmental Resource Permit (ERP) | [ERP Search](https://www18.swfwmd.state.fl.us/erp/erp/search/ERPSearch.aspx). **Permit** (six digits, no type prefix) and **Rev**, or **ERP App ID**, each added to a search list with **Add** before **Search**. | Permit and revision as the district writes it, `43047590.008`, or as WMIS shows it, `47590.008`; or the application ID, `1001157`. | `ERP/ERP/Entry/ERP.aspx?id=<App ID>`. The heading reads `ERP Permit: 47590.008 (App: 1001157)` (or `ERP Permit Application: 942840`, `Exemption Application: 1000558` before a permit number exists). **Status** is a read-only drop-down, for example `Approved`, `Incomplete`, `Denied`, `Deleted`. The type prefix (for example 43) is a separate field and is checked when entered. |
+| Water Use Permit (WUP) | [Water Use Permit Search](https://www18.swfwmd.state.fl.us/search/search/searchwupsimple.aspx). **Permit #** and **Rev #**. | `1960.023` | `Support/WUP/WupSimple.aspx?st=<permit>&rev=<rev>`, headed `Water Use Permit: 1960.023`. This page has no status field; the search results' **Permit Status** column (for example `Approved`, `Submitted`) is the only record-level status, so the app reads it from the exactly matching result row and saves the record page as the link. |
+| Well Construction Permit (WCP) | [Well Construction Permit Search](https://www18.swfwmd.state.fl.us/search/search/wcpsimple.aspx). **Permit #** (up to seven digits; longer input is cut off silently). | `973309` | `Support/WCP/WcpDetail.aspx?permit=<permit>`, headed `WCP Detail - 973309`. **Application Status** shows, for example, `UNDER REVIEW` or `COMPLETED` (the results grid shows the same value in title case). |
+
+A search for a number that doesn't exist shows `No records matched search criteria. Please try again.` Since July 7, 2026, new ERP applications are filed in SWFWMD's Appian ePermitting system at [swfwmd.watermatters.org](https://swfwmd.watermatters.org/suite/), which requires a sign-in, while water use and well construction stay in WMIS ([district notice](https://www.swfwmd.state.fl.us/business/epermitting/environmental-resource-permit)). The public ERP search still listed applications received in September 2026, including application IDs above 1,000,000. An application that hasn't reached WMIS returns no record, which the app reports as not found.
+
+| Program | Sample record | Displayed status |
+| --- | --- | --- |
+| ERP | [43047590.008 (App 1001157)](https://www38.swfwmd.state.fl.us/ERP/ERP/Entry/ERP.aspx?id=1001157) | Approved |
+| ERP application without a permit number | [942840](https://www38.swfwmd.state.fl.us/ERP/ERP/Entry/ERP.aspx?id=942840) | Incomplete |
+| Water use | [1960.023](https://www38.swfwmd.state.fl.us/Support/WUP/WupSimple.aspx?st=1960&rev=23) | Approved |
+| Well construction | [973309](https://www38.swfwmd.state.fl.us/Support/WCP/WcpDetail.aspx?permit=973309) | UNDER REVIEW |
+
+### South Florida Water Management District (SFWMD)
+
+[RegPermitting](https://www.sfwmd.gov/regpermitting), a Pega application at `apps.sfwmd.gov`, replaced the retired `my.sfwmd.gov/ePermitting`. Its **Search Records** page is open to anyone without an account, and one search covers ERP, water use, well construction, and Works of the District (EAA and C-139) records. Right of way permits use a [separate portal](https://apps.sfwmd.gov/prweb/PRAuth/ROWExternal), whose record view showed `Permanent` for records its results listed as `Resolved-Completed` or `Resolved-Cancelled`, so the app doesn't cover them.
+
+- **Access:** a FortiWeb firewall answers any browser whose user agent contains `HeadlessChrome` with HTTP 500 "Web Page Blocked". With an ordinary Chrome user agent, which the worker uses for this portal only, the search and record pages load with no login, CAPTCHA, or other challenge.
+- **Search:** [the entry page](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal) opens the app, and **Search Records** (in a navigation drawer that starts collapsed) opens a frame with **Search by Application** (`Application No`) and **Search by Permit** (`Permit No`) tabs. Both match any record containing the text, 20 rows a page: `36-00142-S` also returns `36-00142-S-02` and later modifications. So the worker opens only the row whose number matches exactly, and reports "not found" only when every result fits on one page. A search with no match shows `No cases`.
+- **Numbers:** applications are `YYMMDD-NNNNN` (`260901-67337`). Permits are `CC-NNNNN(N)-X`, with `-P`, `-S`, or `-M` for ERP, `-W` for water use, and `-WC` for well construction. Older ERP numbers can carry a modification suffix, such as `36-00142-S-73`. EAA and C-139 permits (`-E`) have no status on their record, so the app doesn't accept them.
+- **Record:** a result opens in its own frame, headed by the record type and `(number, project name)`. An application shows **Application Number** and **Application Status** (water use applications label it **App Status**), plus the permit number it concerns. A permit shows **Permit Number** and **Permit Status**. Statuses read like `Pending-TechnicalReview`, `Resolved-Completed`, `Approved`, `Pending-Expired`, and `Resolved-Expired`.
+- **Record link:** `RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=<class> <number>` opens a record in a fresh browser without a session. The record frame's own address carries that key, with class `SFWMD-REG-PERMIT-WORK` (ERP), `SFWMD-REG-WUPERMIT-WORK` (water use), `SFWMD-REG-WCPERMIT-WORK` (well construction), or `SFWMD-REG-WODPERMIT-WORK` (Works of the District). The address the app settles on after opening a record requires a sign-in, so it is never saved. Search and record views share one address, so the worker tells them apart by what the page shows.
+
+| Record | Sample | Displayed status |
+| --- | --- | --- |
+| ERP permit | [48-112909-P](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-PERMIT-WORK%2048-112909-P) | Permit Status: Approved |
+| ERP permit with later modifications | [36-00142-S](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-PERMIT-WORK%2036-00142-S) | Permit Status: Pending-Expired |
+| ERP application | [260901-67337](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-PERMIT-WORK%20260901-67337) | Application Status: Pending-TechnicalReview |
+| Water use application | [260915-67760](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-WUPERMIT-WORK%20260915-67760) | App Status: Pending-TechnicalReview |
+| Water use permit | [11-02638-W](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-WUPERMIT-WORK%2011-02638-W) | Permit Status: Approved |
+| Well construction permit | [44-117840-WC](https://apps.sfwmd.gov/prweb/PRAuth/RegExternal?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=SFWMD-REG-WCPERMIT-WORK%2044-117840-WC) | Permit Status: Approved |
+
+### St. Johns River (SJRWMD), Suwannee River (SRWMD), and Northwest Florida (NWFWMD)
+
+St. Johns River hosts one Angular ePermit app per district at `permitting.sjrwmd.com`: [SJRWMD](https://permitting.sjrwmd.com/ep/#/ep?target=srch) at `/ep/`, [SRWMD](https://permitting.sjrwmd.com/srep/#/ep?target=srch) at `/srep/`, and [NWFWMD](https://permitting.sjrwmd.com/nwep/#/ep?target=srch) at `/nwep/`. Each district's search covers its ERP, consumptive or water use, and well construction records, and no login or challenge was found. Results carry an "Information as of" time from the previous night, so a status can be up to a day old. SJRWMD's search took from 4 to 54 seconds to answer in these checks.
+
+- **Numbers:** SRWMD and NWFWMD show a type and county prefix, such as `ERP-123-255799-1`, `2-121-222487-2` (water use), `3-023-255802-1` (well), `IND-113-18663-5`, `2E-131-6688-3`, or `DO-C-332829-1`. SJRWMD numbers have no prefix, such as `219072-3`. The search takes only the application or permit number (`255799`) and the sequence (`1`) in separate fields; the portal rejects a full number typed into the first field. The worker splits the entered number, then accepts only the result whose full number matches. A number entered without its prefix matches on the number and sequence, which identify the record by themselves.
+- **Search:** the form renders in an open shadow root, and results appear in the same view with each number as a link. A search with no match shows `No Results Found`. The form clears its fields just after its third lookup list (`lookups/catalogList`) loads, about 3 seconds after it appears. A number entered before then is lost, and the search answers `Not enough criteria provided to search`. The worker waits for those lists before entering a number, and enters it again if it has vanished just before searching.
+- **Record:** opening a result shows the record in a dialog frame with **Project Number** (`255799 - 1`, without the prefix), **Status**, and **Current Process Stage**. The dialog's Status is derived in the browser from the stage, so a withdrawn application reads `Closed` there, while the result row shows the district's own status, `Never Issued`. The app saves the result row's Status and the record's Current Process Stage together, such as `Pending · Review`, `Pending · Pending RAI Response`, `Issued · Compliance`, or `Never Issued · Closed`. It does so because Status stays `Pending` through routing, review, and requests for additional information.
+- **Record link:** the portal's Copy Link format, `#/prmtInfo?curId=&hdr=1&usrId=0&offclId=<number>&seqNo=<sequence>`, opens the record in a fresh browser. The record page omits the prefix, so a saved link can't confirm the full number, and each check searches again.
+
+| District | Sample | Displayed status · stage |
+| --- | --- | --- |
+| SJRWMD | [219072-3](https://permitting.sjrwmd.com/ep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=219072&seqNo=3) | Issued · Compliance |
+| SJRWMD | [10837-9](https://permitting.sjrwmd.com/ep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=10837&seqNo=9) | Pending · Pending RAI Response |
+| SJRWMD | [257469-1](https://permitting.sjrwmd.com/ep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=257469&seqNo=1) | Never Issued · Closed |
+| SRWMD | [ERP-123-255799-1](https://permitting.sjrwmd.com/srep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=255799&seqNo=1) | Pending · Review |
+| SRWMD | [2-121-222487-2](https://permitting.sjrwmd.com/srep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=222487&seqNo=2) | Issued · Compliance |
+| NWFWMD | [2E-131-6688-3](https://permitting.sjrwmd.com/nwep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=6688&seqNo=3) | Pending · Review |
+| NWFWMD | [DO-C-332829-1](https://permitting.sjrwmd.com/nwep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=332829&seqNo=1) | Issued · Compliance |
+| NWFWMD | [PDEX-033-332746-1](https://permitting.sjrwmd.com/nwep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=332746&seqNo=1) | Never Issued · Closed |

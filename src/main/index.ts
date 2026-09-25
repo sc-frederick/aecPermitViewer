@@ -15,7 +15,7 @@ import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openA
 import { describeCheckEvent, type CheckEvent } from "./notifications.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
+import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
 import { getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import type { BridgeResult } from "../shared/bridge.js";
 
@@ -371,10 +371,8 @@ async function startApp(): Promise<void> {
     if (!jurisdictionId) {
       return { ok: false, error: "Choose a supported jurisdiction." };
     }
-    const profile = getJurisdiction(jurisdictionId);
-    if (profile?.portalFamily === "click2gov" && !parseApplicationNumber(parsed.data.permitNumber)) {
-      return { ok: false, error: `Use the ${profile.label} application number as YY-serial, for example 25-05001277.` };
-    }
+    const problem = permitNumberProblem(jurisdictionId, parsed.data.permitNumber);
+    if (problem) return { ok: false, error: problem };
     try {
       const id = store.addPermit(parsed.data.permitNumber, jurisdictionId);
       scheduleCheck(id);
