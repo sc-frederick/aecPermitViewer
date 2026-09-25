@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, STATUS_LABELS } from "../shared/permit.js";
-import { getJurisdiction, type JurisdictionProfile } from "../shared/jurisdictions.js";
+import { getAutomatedJurisdiction, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
@@ -16,7 +16,7 @@ const ST_PETE_NUMBER = '[id="permit.appNumber"]';
 const ST_PETE_SEARCH_BUTTON = 'input[name="finish"]';
 
 /** Where each portal family shows the permit number and record-level status on its detail page. */
-const DETAIL_FIELDS: Record<JurisdictionProfile["portalFamily"], { number: string; status: string }> = {
+const DETAIL_FIELDS: Record<AutomatedJurisdictionProfile["portalFamily"], { number: string; status: string }> = {
   "accela": { number: DETAIL_NUMBER, status: DETAIL_STATUS },
   "tyler-civic-access": { number: "#focusText span.ng-binding", status: "#label-PermitDetail-Status p.form-control-static" },
   "click2gov": {
@@ -26,7 +26,7 @@ const DETAIL_FIELDS: Record<JurisdictionProfile["portalFamily"], { number: strin
 };
 
 let browser: Browser | null = null;
-let jurisdiction: JurisdictionProfile | null = null;
+let jurisdiction: AutomatedJurisdictionProfile | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let currentRun: string | null = null;
@@ -265,7 +265,7 @@ async function sendObservationOrResult(): Promise<void> {
 
 async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise<void> {
   currentRun = message.runId;
-  jurisdiction = getJurisdiction(message.jurisdictionId);
+  jurisdiction = getAutomatedJurisdiction(message.jurisdictionId);
   if (!jurisdiction) { fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" }); return; }
   requestedNumber = message.permitNumber;
   stopped = false;

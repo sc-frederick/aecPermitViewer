@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell, session } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell, session } from "electron";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -15,8 +15,8 @@ import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openA
 import { describeCheckEvent, type CheckEvent } from "./notifications.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
-import { getJurisdiction } from "../shared/jurisdictions.js";
+import { addPermitSchema, manualStatusSchema, parseApplicationNumber, parsePortalUrl, permitIdSchema, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
+import { getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import type { BridgeResult } from "../shared/bridge.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
@@ -176,8 +176,9 @@ function handle<T>(channel: string, callback: (raw: unknown) => Promise<BridgeRe
 function scheduleCheck(permitId: string): void {
   if (shuttingDown || active?.permitId === permitId || pendingPermitId === permitId || queue.includes(permitId)) return;
   const permit = store.getPermit(permitId);
-  // A permit saved under a jurisdiction the app no longer supports stays visible but is never checked.
-  if (!permit || !getJurisdiction(permit.jurisdictionId)) return;
+  // A permit saved under a jurisdiction the app no longer supports stays visible but is never checked,
+  // and a hand-checked permit is never sent to the browser worker.
+  if (!permit || !getAutomatedJurisdiction(permit.jurisdictionId)) return;
   queue.push(permitId);
   void broadcast();
   kickQueue();
@@ -360,8 +361,34 @@ async function startApp(): Promise<void> {
   });
   handle("permit:check", (raw) => {
     const id = permitIdSchema.safeParse(raw);
-    if (!id.success || !store.getPermit(id.data)) return { ok: false, error: "Permit not found." };
-    scheduleCheck(id.data);
+    const permit = id.success ? store.getPermit(id.data) : null;
+    if (!permit) return { ok: false, error: "Permit not found." };
+    if (isManualJurisdiction(permit.jurisdictionId)) return { ok: false, error: "This permit is checked by hand." };
+    scheduleCheck(permit.id);
+    return { ok: true, value: null };
+  });
+  handle("permit:open-portal", async (raw) => {
+    const id = permitIdSchema.safeParse(raw);
+    const permit = id.success ? store.getPermit(id.data) : null;
+    const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
+    if (!permit || !profile || profile.portalFamily !== "manual") return { ok: false, error: "Permit not found." };
+    // The number goes on the clipboard so it can be pasted straight into the portal's search.
+    clipboard.writeText(permit.permitNumber);
+    await shell.openExternal(profile.startUrl);
+    return { ok: true, value: null };
+  });
+  handle("permit:record-manual-status", async (raw) => {
+    const parsed = manualStatusSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "Enter the status shown on the portal." };
+    const permit = store.getPermit(parsed.data.permitId);
+    const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
+    if (!permit || !profile || profile.portalFamily !== "manual") return { ok: false, error: "Permit not found." };
+    const recordUrl = parsed.data.recordUrl || profile.startUrl;
+    if (!parsePortalUrl(recordUrl, "detail", permit.jurisdictionId)) {
+      return { ok: false, error: `Use a link from ${profile.label}'s portal, or leave it blank.` };
+    }
+    store.recordManualStatus({ permitId: permit.id, status: parsed.data.status, recordUrl, appVersion: app.getVersion() });
+    await broadcast();
     return { ok: true, value: null };
   });
   handle("permit:cancel", (raw) => {

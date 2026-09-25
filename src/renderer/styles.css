@@ -279,6 +279,13 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .confirm-title { font-family: var(--font-display); font-size: var(--fs-headline-md); line-height: 1.18; }
 .confirm p { margin: 10px 0 28px; color: var(--color-graphite); }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 20px; border-top: var(--hairline-soft); }
+.manual .coord { margin: 0 0 8px; }
+.manual-title { font-family: var(--font-mono); font-size: 22px; font-weight: 500; letter-spacing: .01em; overflow-wrap: anywhere; }
+.manual .field + .field { margin-top: 20px; }
+.manual .field-error { margin: 12px 0 0; }
+.manual .confirm-actions { margin-top: 28px; }
+.manual #manual-body { margin-bottom: 14px; }
+.manual-reopen { margin-bottom: 28px; }
 
 /* Notice */
 .notice { position: fixed; right: 32px; bottom: 32px; z-index: 10; display: flex; align-items: flex-start; gap: 12px; max-width: 440px; padding: 14px 18px; background: var(--color-ink); color: var(--color-parchment); border: var(--hairline); font-size: var(--fs-body-sm); line-height: 1.5; animation: pop-in var(--duration-base) var(--ease-out); }
