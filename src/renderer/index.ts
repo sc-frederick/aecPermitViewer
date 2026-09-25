@@ -356,7 +356,8 @@ function render(snapshot: AppSnapshot): void {
 
   const visible = snapshot.permits.filter(matchesFilter);
   const table = element<HTMLTableElement>("permit-table");
-  const source = JSON.stringify([snapshot.monitoring, visible]);
+  // The year is part of it because timestamps only show a year when it isn't the current one.
+  const source = JSON.stringify([snapshot.monitoring, new Date().getFullYear(), visible]);
   if (source !== tableSource) {
     tableSource = source;
     for (const body of [...table.tBodies]) body.remove();
