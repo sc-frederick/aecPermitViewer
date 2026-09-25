@@ -1,11 +1,11 @@
-import type { Browser, Frame, Page } from "playwright";
+import type { Browser, Frame, Locator, Page } from "playwright";
 import { parseRegPermittingNumber, regPermittingRecordUrl, statusLabels } from "../shared/permit.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import type { Candidate, PageObservation } from "../shared/worker-protocol.js";
-import type { DisplayedRecord } from "./wmis.js";
+import type { Candidate } from "../shared/worker-protocol.js";
+import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter, type SearchObservation } from "./adapter.js";
 
 /** SFWMD's RegPermitting, a Pega app whose search and record views load in frames under one session address. */
-export type RegPermittingProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "regpermitting" }>;
+type RegPermittingProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "regpermitting" }>;
 
 // The navigation drawer starts collapsed, so the link is present but off screen.
 const SEARCH_RECORDS_LINK = 'a.menu-item-anchor[title="Search Records"]';
@@ -82,26 +82,23 @@ async function criteriaEntered(frame: Frame, requested: string): Promise<boolean
   return Boolean(wanted && value.trim().toUpperCase() === wanted.number);
 }
 
-async function resultNumbers(frame: Frame, requested: string): Promise<string[] | null> {
+/** The number links in the visible results grid, or null when no results are shown. */
+async function resultLinks(frame: Frame, requested: string): Promise<Locator | null> {
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
-  if (await grid.count() === 0) return null;
-  return grid.locator(`${RESULT_ROW} td:first-child a`).allInnerTexts().then((texts) => texts.map((text) => text.trim()));
+  return await grid.count() === 0 ? null : grid.locator(`${RESULT_ROW} td:first-child a`);
 }
 
-async function exactResults(frame: Frame, requested: string): Promise<string[]> {
-  const wanted = parseRegPermittingNumber(requested);
-  return ((await resultNumbers(frame, requested)) ?? []).filter((text) => text.toUpperCase() === wanted?.number);
+async function resultNumbers(frame: Frame, requested: string): Promise<string[] | null> {
+  const links = await resultLinks(frame, requested);
+  return links ? (await links.allInnerTexts()).map((text) => text.trim()) : null;
+}
+
+function isRequested(text: string, requested: string): boolean {
+  return text.toUpperCase() === parseRegPermittingNumber(requested)?.number;
 }
 
 /** Offer the next step, or report that the requested record is open. */
-export async function observeRegPermitting(page: Page, requested: string): Promise<{
-  phase: PageObservation["phase"];
-  inputValue: string;
-  formLabels: string[];
-  visibleControls: string[];
-  resultNumbers: string[];
-  candidates: Candidate[];
-}> {
+async function observeRegPermitting(page: Page, requested: string): Promise<SearchObservation> {
   const wanted = parseRegPermittingNumber(requested);
   const none = { inputValue: "", formLabels: [], visibleControls: [], resultNumbers: [], candidates: [] };
   if (!wanted) return { phase: "unknown", ...none };
@@ -118,7 +115,7 @@ export async function observeRegPermitting(page: Page, requested: string): Promi
   const inputValue = entered ? requested : "";
   const shown = entered ? await resultNumbers(frame, requested) : null;
   if (shown) {
-    const exact = await exactResults(frame, requested);
+    const exact = shown.filter((text) => isRequested(text, requested));
     return exact.length > 1
       ? { phase: "results", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact, candidates: [] }
       : { phase: "search", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact,
@@ -134,23 +131,23 @@ export async function observeRegPermitting(page: Page, requested: string): Promi
 }
 
 /** True once a search for the exact number returned "No cases", or every result on a single page is another number. */
-export async function regPermittingFoundNothing(page: Page, requested: string): Promise<boolean> {
+async function regPermittingFoundNothing(page: Page, requested: string): Promise<boolean> {
   const frame = await searchFrame(page, requested);
   if (!frame || !(await criteriaEntered(frame, requested))) return false;
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
   if (await grid.locator(NO_RESULTS_ROW).filter({ visible: true }).count() > 0) return true;
   const shown = await resultNumbers(frame, requested);
-  return Boolean(shown && shown.length > 0 && shown.length < PAGE_SIZE && (await exactResults(frame, requested)).length === 0);
+  return Boolean(shown && shown.length > 0 && shown.length < PAGE_SIZE && !shown.some((text) => isRequested(text, requested)));
 }
 
-export async function openRegPermittingSearch(page: Page): Promise<void> {
+async function openRegPermittingSearch(page: Page): Promise<void> {
   const link = page.locator(SEARCH_RECORDS_LINK).first();
   if (await link.count() === 0) return;
   await link.dispatchEvent("click");
   await waitForFrameShowing(page, FORMS.application.input, 20_000);
 }
 
-export async function fillRegPermittingSearch(page: Page, requested: string): Promise<void> {
+async function fillRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const wanted = parseRegPermittingNumber(requested);
   let frame = await frameShowing(page, FORMS.application.input) ?? await frameShowing(page, FORMS.permit.input);
   if (!wanted || !frame) return;
@@ -163,7 +160,7 @@ export async function fillRegPermittingSearch(page: Page, requested: string): Pr
   await frame.locator(target.input).filter({ visible: true }).first().fill(wanted.number);
 }
 
-export async function submitRegPermittingSearch(page: Page, requested: string): Promise<void> {
+async function submitRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const frame = await searchFrame(page, requested);
   if (!frame || !(await criteriaEntered(frame, requested))) return;
   const target = form(requested);
@@ -172,20 +169,21 @@ export async function submitRegPermittingSearch(page: Page, requested: string): 
     .waitFor({ state: "visible", timeout: 30_000 }).catch(() => undefined);
 }
 
-export async function openRegPermittingResult(page: Page, requested: string): Promise<void> {
+async function openRegPermittingResult(page: Page, requested: string): Promise<void> {
   const frame = await searchFrame(page, requested);
-  if (!frame || (await exactResults(frame, requested)).length !== 1) return;
-  const wanted = parseRegPermittingNumber(requested)!;
-  const links = frame.locator(`${form(requested).grid} ${RESULT_ROW} td:first-child a`).filter({ visible: true });
-  for (const link of await links.all()) {
-    if ((await link.innerText()).trim().toUpperCase() !== wanted.number) continue;
-    await link.click();
-    break;
-  }
+  const links = frame && await resultLinks(frame, requested);
+  if (!links) return;
+  const exact = (await links.allInnerTexts()).flatMap((text, index) => isRequested(text.trim(), requested) ? [index] : []);
+  if (exact.length !== 1) return;
+  await links.nth(exact[0]!).click();
   const record = await waitForFrameShowing(page, RECORD_HEADING, 30_000);
   // The heading appears before the fields fill in.
   await record?.locator("span.field-caption.dataLabelForRead").filter({ hasText: /Status$/ }).first()
     .waitFor({ state: "visible", timeout: 20_000 }).catch(() => undefined);
+}
+
+export async function waitForSearchRecordsLink(page: Page): Promise<void> {
+  await page.locator(SEARCH_RECORDS_LINK).first().waitFor({ state: "attached", timeout: 20_000 }).catch(() => undefined);
 }
 
 /** True when a record view is showing, as after opening a saved record link. */
@@ -198,11 +196,11 @@ export async function regPermittingRecordShown(page: Page, timeout: number): Pro
  * for water use, App Status; Permit Number with Permit Status). A record opened from a result carries its key in its
  * frame address; one opened from a saved link was opened from that link.
  */
-export async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile, requested: string,
+async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile, requested: string,
   openedRecordUrl: string | null): Promise<DisplayedRecord> {
   const wanted = parseRegPermittingNumber(requested);
   const frame = await frameShowing(page, RECORD_HEADING);
-  if (!wanted || !frame) return { displayedNumber: null, statusLabel: null, statusValue: null, recordUrl: null };
+  if (!wanted || !frame) return NOTHING_DISPLAYED;
   const labels = statusLabels(profile).filter((label) => (label === "Permit Status") === (wanted.kind === "permit"));
   let statusLabel: string | null = null;
   let statusValue: string | null = null;
@@ -216,5 +214,18 @@ export async function readRegPermittingRecord(page: Page, profile: RegPermitting
     statusLabel,
     statusValue,
     recordUrl: key ? regPermittingRecordUrl(profile, key) : openedRecordUrl,
+  };
+}
+
+export function regPermittingAdapter(page: Page, profile: RegPermittingProfile, requested: string,
+  openedRecordUrl: string | null): PortalAdapter {
+  return {
+    observe: () => observeRegPermitting(page, requested),
+    foundNothing: () => regPermittingFoundNothing(page, requested),
+    openSearch: () => openRegPermittingSearch(page),
+    fill: () => fillRegPermittingSearch(page, requested),
+    submit: () => submitRegPermittingSearch(page, requested),
+    openResult: () => openRegPermittingResult(page, requested),
+    read: () => readRegPermittingRecord(page, profile, requested, openedRecordUrl),
   };
 }
