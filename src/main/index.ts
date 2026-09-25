@@ -288,7 +288,8 @@ async function stopChecks(): Promise<boolean> {
 }
 
 function scheduleDue(): void {
-  if (store.getMonitoring() !== "scheduled") return;
+  // The interval and resume listener outlive store.close() on the quit, update, and delete paths.
+  if (shuttingDown || store.getMonitoring() !== "scheduled") return;
   const now = new Date();
   // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
   if (!withinCheckWindow(now, store.getCheckTimes())) return;
