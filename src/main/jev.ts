@@ -6,9 +6,18 @@ import {
   TypeSafeClient,
   choice,
 } from "@typesafe-ai/sdk";
+import { z } from "zod";
 import { JEV_MODEL } from "../shared/permit.js";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
+
+/** The model's answer as sent over the wire; numbers must be finite for the confidence and margin checks to mean anything. */
+const choiceAnswerSchema = z.object({
+  type: z.literal("choice"),
+  choice: z.string(),
+  confidence: z.number(),
+  probabilities: z.record(z.string(), z.number()),
+});
 
 export type NavigationDecision =
   | { _tag: "chosen"; candidateId: string; actualModel: string; attempts: number }
@@ -24,9 +33,11 @@ const MIN_MARGIN = 0.15;
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal.aborted) { reject(new Error("aborted"));
+    if (signal.aborted) {
+      reject(new Error("aborted"));
 
- return; }
+      return;
+    }
 
     const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, milliseconds);
     const onAbort = () => { clearTimeout(timer); reject(new Error("aborted")); };
@@ -92,25 +103,15 @@ export async function chooseNavigation(input: {
         },
       }, { signal: input.signal, retry: { maxRetries: 0 }, timeout: 8_000 });
 
-      const answer = result.answers.next;
+      const answer = choiceAnswerSchema.safeParse(result.answers.next);
 
-      if (answer.type !== "choice" || typeof answer.choice !== "string" ||
-        typeof answer.confidence !== "number" || !Number.isFinite(answer.confidence) ||
-        !answer.probabilities || typeof answer.probabilities !== "object") {
-        return { _tag: "unsupported_page", attempts, actualModel: result.model };
-      }
+      if (!answer.success) return { _tag: "unsupported_page", attempts, actualModel: result.model };
+      const { choice: selected, confidence, probabilities } = answer.data;
+      const probability = probabilities[selected];
+      const others = Object.entries(probabilities).flatMap(([id, value]) => id === selected ? [] : [value]);
+      const margin = probability === undefined ? -1 : probability - Math.max(0, ...others);
 
-      const selected = answer.choice;
-      const probability = answer.probabilities[selected];
-
-      const others = Object.entries(answer.probabilities)
-        .filter(([id]) => id !== selected)
-        .map(([, value]) => value)
-        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-
-      const margin = typeof probability === "number" ? probability - Math.max(0, ...others) : -1;
-
-      if (!Object.hasOwn(criteria, selected) || answer.confidence < MIN_CONFIDENCE || margin < MIN_MARGIN) {
+      if (!Object.hasOwn(criteria, selected) || confidence < MIN_CONFIDENCE || margin < MIN_MARGIN) {
         return { _tag: "unsupported_page", attempts, actualModel: result.model };
       }
 

@@ -16,6 +16,15 @@ if (process.env.RELEASE_BUILD === "1" && !windowsSign) {
   throw new Error("A release build requires Windows signing credentials.");
 }
 
+const squirrelConfig = {
+  name: "PermitMonitor",
+  authors: "Permit Monitor",
+  setupExe: "PermitMonitorSetup.exe",
+  setupIcon: path.resolve(__dirname, "assets/icon.ico"),
+};
+
+if (windowsSign) squirrelConfig.windowsSign = windowsSign;
+
 async function appFilesToSign(directory) {
   const files = [];
 
@@ -61,15 +70,6 @@ module.exports = {
     },
   },
   makers: [
-    {
-      name: "@electron-forge/maker-squirrel",
-      config: {
-        name: "PermitMonitor",
-        authors: "Permit Monitor",
-        setupExe: "PermitMonitorSetup.exe",
-        setupIcon: path.resolve(__dirname, "assets/icon.ico"),
-        ...(windowsSign ? { windowsSign } : {}),
-      },
-    },
+    { name: "@electron-forge/maker-squirrel", config: squirrelConfig },
   ],
 };

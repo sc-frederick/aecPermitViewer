@@ -113,7 +113,7 @@ export function openAtLoginAvailable(): boolean {
   return process.platform === "win32" && app.isPackaged;
 }
 
-function loginItemTarget(): { path: string; args: string[] } {
+function loginItemTarget() {
   // Launch through Squirrel's Update.exe so the login item survives app updates.
   const updateExe = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
 

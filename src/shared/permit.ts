@@ -9,20 +9,23 @@ export const START_URL = "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx?modu
 
 export const HILLSBOROUGH_LABEL = "Hillsborough County government · Building";
 
-export type RunOutcome =
-  | "success"
-  | "not_found_in_supported_search"
-  | "ambiguous"
-  | "identity_mismatch"
-  | "status_unavailable"
-  | "record_link_unavailable"
-  | "unsupported_page"
-  | "blocked"
-  | "api_unavailable"
-  | "authentication_error"
-  | "browser_error"
-  | "timeout"
-  | "cancelled";
+export const runOutcomeSchema = z.enum([
+  "success",
+  "not_found_in_supported_search",
+  "ambiguous",
+  "identity_mismatch",
+  "status_unavailable",
+  "record_link_unavailable",
+  "unsupported_page",
+  "blocked",
+  "api_unavailable",
+  "authentication_error",
+  "browser_error",
+  "timeout",
+  "cancelled",
+]);
+
+export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 
 export interface PermitRow {
   id: string;
@@ -78,7 +81,7 @@ export interface AppPreferences {
   openAtLoginAvailable: boolean;
 }
 
-export type PreferenceKey = "notifyStatusChanges" | "notifyFailures" | "runInBackground" | "openAtLogin";
+export type { PreferenceKey } from "./bridge.js";
 
 export interface AppSnapshot {
   permits: PermitRow[];
@@ -96,7 +99,7 @@ export const MANUAL_STATUS_LABEL = "Status (entered by hand)";
 
 export const manualStatusSchema = z.object({
   permitId: z.uuid(),
-  status: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
+  status: z.string().trim().min(1).max(200).regex(/^\P{Cc}+$/u),
   recordUrl: z.string().trim().max(2000),
 });
 
@@ -362,7 +365,7 @@ export function permitNumberProblem(jurisdictionId: JurisdictionId, number: stri
 }
 
 /** Each WMIS program's public record page and the numeric parameters that identify a record. */
-const WMIS_RECORD_PAGES: Record<string, { path: string; params: readonly string[] }> = {
+const WMIS_RECORD_PAGES: Record<Extract<JurisdictionProfile, { portalFamily: "wmis" }>["module"], { path: string; params: readonly string[] }> = {
   ERP: { path: "/ERP/ERP/Entry/ERP.aspx", params: ["id"] },
   WUP: { path: "/Support/WUP/WupSimple.aspx", params: ["st", "rev"] },
   WCP: { path: "/Support/WCP/WcpDetail.aspx", params: ["permit"] },
@@ -370,9 +373,10 @@ const WMIS_RECORD_PAGES: Record<string, { path: string; params: readonly string[
 
 /** The HTTPS record page for a WMIS record, built from the identifiers the search results displayed. */
 export function wmisRecordUrl(profile: JurisdictionProfile, values: Record<string, number>): string | null {
+  if (profile.portalFamily !== "wmis") return null;
   const record = WMIS_RECORD_PAGES[profile.module];
 
-  if (profile.portalFamily !== "wmis" || !record || !record.params.every((name) => Number.isSafeInteger(values[name]))) return null;
+  if (!record.params.every((name) => Number.isSafeInteger(values[name]))) return null;
   const url = new URL(`https://${recordHost(profile)}${record.path}`);
 
   for (const name of record.params) url.searchParams.set(name, String(values[name]));
@@ -494,7 +498,7 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
   if (url.pathname.toLowerCase() !== path.toLowerCase()) return null;
 
   const values = (name: string): string[] => [...url.searchParams.entries()]
-    .filter(([key]) => key.toLowerCase() === name.toLowerCase()).map(([, entry]) => entry);
+    .flatMap(([key, entry]) => key.toLowerCase() === name.toLowerCase() ? [entry] : []);
 
   const allowedModules = accelaModules(profile).map((module) => module.toLowerCase());
 
@@ -558,7 +562,7 @@ export function parseDisplayedStatus(input: {
   if (regNumber && (regNumber.kind === "permit") !== (label === "Permit Status")) return { _tag: "err", outcome: "status_unavailable" };
   const status = input.statusValue.trim();
 
-  if (!status || /[\u0000-\u001f]/.test(status)) return { _tag: "err", outcome: "status_unavailable" };
+  if (!status || /\p{Cc}/u.test(status)) return { _tag: "err", outcome: "status_unavailable" };
   const recordUrl = parsePortalUrl(input.recordUrl, "detail", jurisdictionId);
 
   if (!recordUrl) return { _tag: "err", outcome: "record_link_unavailable" };

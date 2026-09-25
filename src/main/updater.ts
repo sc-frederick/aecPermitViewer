@@ -167,9 +167,9 @@ export class UpdateManager {
     const stall = new AbortController();
     let stallTimer = setTimeout(() => stall.abort(), 60_000);
 
-    const response = await fetchHttps(installerUrl, stall.signal).catch((error: unknown) => {
+    const response = await fetchHttps(installerUrl, stall.signal).catch((cause: unknown) => {
       clearTimeout(stallTimer);
-      throw error;
+      throw cause;
     });
 
     if (!response.ok || !response.body) {

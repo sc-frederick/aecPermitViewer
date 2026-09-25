@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
 import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
 import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
@@ -449,16 +449,20 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   currentRun = message.runId;
   jurisdiction = getAutomatedJurisdiction(message.jurisdictionId);
 
-  if (!jurisdiction) { fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
+  if (!jurisdiction) {
+    fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
 
- return; }
+    return;
+  }
 
   requestedNumber = message.permitNumber;
   stopped = false;
   process.env.PLAYWRIGHT_BROWSERS_PATH = message.browserPath;
   browser = await chromium.launch({ headless: true, chromiumSandbox: true });
-  const userAgent = "plainUserAgent" in jurisdiction && jurisdiction.plainUserAgent ? await plainUserAgent(browser) : null;
-  context = await browser.newContext({ acceptDownloads: false, serviceWorkers: "block", ...(userAgent ? { userAgent } : {}) });
+  const contextOptions: BrowserContextOptions = { acceptDownloads: false, serviceWorkers: "block" };
+
+  if ("plainUserAgent" in jurisdiction && jurisdiction.plainUserAgent) contextOptions.userAgent = await plainUserAgent(browser);
+  context = await browser.newContext(contextOptions);
   page = await context.newPage();
   page.setDefaultTimeout(8_000);
   page.on("popup", (popup) => { void popup.close(); });
@@ -666,8 +670,8 @@ process.parentPort?.on("message", (event: { data: MainToWorker }) => {
   const task = message.kind === "start" ? start(message)
     : message.kind === "reobserve" ? sendObservationOrResult() : choose(message);
 
-  void task.catch((error: unknown) => {
-    if (process.env.PERMIT_PORTAL_SMOKE === "1") process.stderr.write(`Worker smoke error: ${String(error)}\n`);
+  void task.catch((cause: unknown) => {
+    if (process.env.PERMIT_PORTAL_SMOKE === "1") process.stderr.write(`Worker smoke error: ${String(cause)}\n`);
 
     if (currentRun && !stopped) fail({ kind: "failed", runId: currentRun, outcome: "browser_error" });
   });

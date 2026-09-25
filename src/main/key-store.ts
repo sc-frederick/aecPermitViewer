@@ -33,7 +33,7 @@ export class KeyStore {
 
       return "configured";
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return "missing";
 
       return "unavailable";
     }

@@ -8,6 +8,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings",
     "test": "vitest run",
     "smoke:portal": "npm run build && node scripts/smoke-portal.mjs",
     "browser:stage": "node scripts/stage-browsers.mjs",

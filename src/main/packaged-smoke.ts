@@ -1,6 +1,6 @@
 import { app, utilityProcess } from "electron";
 import path from "node:path";
-import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
+import { workerToMainSchema, type MainToWorker } from "../shared/worker-protocol.js";
 
 export async function runPackagedBrowserSmoke(): Promise<void> {
   const runId = "packaged-browser-smoke";
@@ -27,17 +27,20 @@ export async function runPackagedBrowserSmoke(): Promise<void> {
   const timer = setTimeout(() => finish(false), 45_000);
   worker.on("exit", () => finish(false));
   worker.on("error", () => finish(false));
-  worker.on("message", (raw: unknown) => {
-    const message = raw as WorkerToMain;
+  worker.on("message", (raw) => {
+    const parsed = workerToMainSchema.safeParse(raw);
+    const message = parsed.success ? parsed.data : null;
 
     if (!message || message.runId !== runId) return;
 
     if (message.kind === "observation") {
       const candidate = message.observation.candidates[0];
 
-      if (!candidate) { finish(false);
+      if (!candidate) {
+        finish(false);
 
- return; }
+        return;
+      }
 
       worker.postMessage({ kind: "choose", runId, fingerprint: message.observation.fingerprint,
         candidateId: candidate.id } satisfies MainToWorker);

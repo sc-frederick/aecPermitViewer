@@ -17,7 +17,7 @@ import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
 import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
 import { getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
-import type { BridgeResult } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type BridgeResult } from "../shared/bridge.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
 // Electron's default so development builds can still show toasts.
@@ -27,7 +27,8 @@ if (process.argv.includes("--squirrel-uninstall")) {
   try { setOpenAtLogin(false); } catch { /* the uninstaller continues regardless */ }
 }
 
-const squirrelStartup = require("electron-squirrel-startup") as boolean;
+// electron-squirrel-startup exports true while a Squirrel install or update event is being handled.
+const squirrelStartup = require("electron-squirrel-startup") === true;
 
 if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.quit();
@@ -222,12 +223,19 @@ function safeSender(event: Electron.IpcMainInvokeEvent): boolean {
   return event.senderFrame.url === pathToFileURL(path.join(__dirname, "index.html")).href;
 }
 
-function handle<T>(channel: string, callback: (raw: unknown) => Promise<BridgeResult<T>> | BridgeResult<T>): void {
-  ipcMain.handle(channel, async (event, raw: unknown) => {
+const NO_INPUT = z.undefined();
+
+/** Answers a window request once its input parses; otherwise answers with `invalid`. */
+function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
+  callback: (input: I) => Promise<BridgeResult<T>> | BridgeResult<T>): void {
+  ipcMain.handle(channel, async (event, ...args) => {
     if (!safeSender(event)) return { ok: false, error: "Unauthorized request." };
+    const parsed = schema.safeParse(args[0]);
+
+    if (!parsed.success) return { ok: false, error: invalid };
 
     try {
-      return await callback(raw);
+      return await callback(parsed.data);
     } catch {
       return { ok: false, error: "Something went wrong. Try again." };
     }
@@ -435,36 +443,32 @@ async function startApp(): Promise<void> {
 
     return snapshot();
   });
-  handle("permit:add-and-check", (raw) => {
-    const parsed = addPermitSchema.safeParse(raw);
-
-    if (!parsed.success) return { ok: false, error: "Enter a permit number." };
-    const jurisdictionId = resolveJurisdiction(parsed.data.jurisdiction);
+  handle("permit:add-and-check", addPermitSchema, "Enter a permit number.", (input) => {
+    const jurisdictionId = resolveJurisdiction(input.jurisdiction);
 
     if (!jurisdictionId) {
       return { ok: false, error: "Choose a supported jurisdiction." };
     }
 
-    const problem = permitNumberProblem(jurisdictionId, parsed.data.permitNumber);
+    const problem = permitNumberProblem(jurisdictionId, input.permitNumber);
 
     if (problem) return { ok: false, error: problem };
 
     try {
-      const id = store.addPermit(parsed.data.permitNumber, jurisdictionId);
+      const id = store.addPermit(input.permitNumber, jurisdictionId);
       scheduleCheck(id);
 
       return { ok: true, value: id };
     } catch (error) {
-      if ((error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+      if (error instanceof Error && "code" in error && error.code === "SQLITE_CONSTRAINT_UNIQUE") {
         return { ok: false, error: "That permit is already in the list." };
       }
 
       throw error;
     }
   });
-  handle("permit:check", (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-    const permit = id.success ? store.getPermit(id.data) : null;
+  handle("permit:check", permitIdSchema, "Permit not found.", (id) => {
+    const permit = store.getPermit(id);
 
     if (!permit) return { ok: false, error: "Permit not found." };
 
@@ -473,9 +477,8 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:open-portal", async (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-    const permit = id.success ? store.getPermit(id.data) : null;
+  handle("permit:open-portal", permitIdSchema, "Permit not found.", async (id) => {
+    const permit = store.getPermit(id);
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
     if (!permit || !profile || profile.portalFamily !== "manual") return { ok: false, error: "Permit not found." };
@@ -485,51 +488,42 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:record-manual-status", async (raw) => {
-    const parsed = manualStatusSchema.safeParse(raw);
-
-    if (!parsed.success) return { ok: false, error: "Enter the status shown on the portal." };
-    const permit = store.getPermit(parsed.data.permitId);
+  handle("permit:record-manual-status", manualStatusSchema, "Enter the status shown on the portal.", async (input) => {
+    const permit = store.getPermit(input.permitId);
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
     if (!permit || !profile || profile.portalFamily !== "manual") return { ok: false, error: "Permit not found." };
-    const recordUrl = parsed.data.recordUrl || profile.startUrl;
+    const recordUrl = input.recordUrl || profile.startUrl;
 
     if (!parsePortalUrl(recordUrl, "detail", permit.jurisdictionId)) {
       return { ok: false, error: `Use a link from ${profile.label}'s portal, or leave it blank.` };
     }
 
-    store.recordManualStatus({ permitId: permit.id, status: parsed.data.status, recordUrl, appVersion: app.getVersion() });
+    store.recordManualStatus({ permitId: permit.id, status: input.status, recordUrl, appVersion: app.getVersion() });
     await broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:cancel", (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-
-    if (!id.success) return { ok: false, error: "Permit not found." };
-    const queuedAt = queue.indexOf(id.data);
+  handle("permit:cancel", permitIdSchema, "Permit not found.", (id) => {
+    const queuedAt = queue.indexOf(id);
 
     if (queuedAt >= 0) queue.splice(queuedAt, 1);
 
-    if (pendingPermitId === id.data) pendingCancelled = true;
+    if (pendingPermitId === id) pendingCancelled = true;
 
-    if (active?.permitId === id.data) active.check.cancel();
+    if (active?.permitId === id) active.check.cancel();
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:history", (raw) => {
-    const id = permitIdSchema.safeParse(raw);
+  handle("permit:history", permitIdSchema, "Permit not found.", (id) => {
+    if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
 
-    if (!id.success || !store.getPermit(id.data)) return { ok: false, error: "Permit not found." };
-
-    return { ok: true, value: store.history(id.data) };
+    return { ok: true, value: store.history(id) };
   });
-  handle("permit:save-key", async (raw) => {
-    // The key arrives once from the settings field and is encrypted immediately. It is never
-    // echoed back to the window, logged, stored in the database, or given to the browser worker.
-    if (typeof raw !== "string") return { ok: false, error: "Enter your API key." };
+  // The key arrives once from the settings field and is encrypted immediately. It is never
+  // echoed back to the window, logged, stored in the database, or given to the browser worker.
+  handle("permit:save-key", z.string(), "Enter your API key.", async (raw) => {
     const key = raw.trim();
     const problem = keyProblem(key);
 
@@ -546,15 +540,14 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:remove-key", async () => {
+  handle("permit:remove-key", NO_INPUT, "Invalid request.", async () => {
     await keys.remove();
     await broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:open-record", async (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-    const permit = id.success ? store.getPermit(id.data) : null;
+  handle("permit:open-record", permitIdSchema, "No record link yet.", async (id) => {
+    const permit = store.getPermit(id);
 
     if (!permit?.lastRecordUrl || !parsePortalUrl(permit.lastRecordUrl, "detail", permit.jurisdictionId)) {
       return { ok: false, error: "No record link yet." };
@@ -564,10 +557,9 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:open-observation-record", async (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-    const observation = id.success ? store.getObservation(id.data) : null;
-    const jurisdictionId = id.success ? store.getObservationJurisdictionId(id.data) : null;
+  handle("permit:open-observation-record", permitIdSchema, "No record link for this entry.", async (id) => {
+    const observation = store.getObservation(id);
+    const jurisdictionId = store.getObservationJurisdictionId(id);
 
     if (!observation || !jurisdictionId || !parsePortalUrl(observation.recordUrl, "detail", jurisdictionId)) {
       return { ok: false, error: "No record link for this entry." };
@@ -577,77 +569,60 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:remove", (raw) => {
-    const id = permitIdSchema.safeParse(raw);
-
-    if (!id.success || !store.getPermit(id.data)) return { ok: false, error: "Permit not found." };
-    const queuedAt = queue.indexOf(id.data);
+  handle("permit:remove", permitIdSchema, "Permit not found.", (id) => {
+    if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
+    const queuedAt = queue.indexOf(id);
 
     if (queuedAt >= 0) queue.splice(queuedAt, 1);
 
-    if (active?.permitId === id.data || pendingPermitId === id.data) {
+    if (active?.permitId === id || pendingPermitId === id) {
       return { ok: false, error: "Cancel the running check first." };
     }
 
-    store.removePermit(id.data);
+    store.removePermit(id);
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:set-monitoring", (raw) => {
-    const mode = z.enum(["manual", "scheduled"]).safeParse(raw);
-
-    if (!mode.success) return { ok: false, error: "Invalid monitoring mode." };
-    store.setMonitoring(mode.data);
+  handle("permit:set-monitoring", z.enum(["manual", "scheduled"]), "Invalid monitoring mode.", (mode) => {
+    store.setMonitoring(mode);
     void scheduleDue();
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:set-check-times", (raw) => {
-    const times = z.array(z.string()).safeParse(raw);
-    const normalized = times.success ? normalizeCheckTimes(times.data) : null;
+  const checkTimesProblem = `Choose between 1 and ${MAX_CHECK_TIMES} check times.`;
 
-    if (!normalized) return { ok: false, error: `Choose between 1 and ${MAX_CHECK_TIMES} check times.` };
+  handle("permit:set-check-times", z.array(z.string()), checkTimesProblem, (times) => {
+    const normalized = normalizeCheckTimes(times);
+
+    if (!normalized) return { ok: false, error: checkTimesProblem };
     store.setCheckTimes(normalized, new Date());
     void scheduleDue();
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:set-permit-monitoring", (raw) => {
-    const parsed = z.object({ permitId: permitIdSchema, enabled: z.boolean() }).safeParse(raw);
-
-    if (!parsed.success || !store.getPermit(parsed.data.permitId)) return { ok: false, error: "Permit not found." };
-    store.setPermitMonitoring(parsed.data.permitId, parsed.data.enabled);
+  handle("permit:set-permit-monitoring", z.object({ permitId: permitIdSchema, enabled: z.boolean() }), "Permit not found.", (input) => {
+    if (!store.getPermit(input.permitId)) return { ok: false, error: "Permit not found." };
+    store.setPermitMonitoring(input.permitId, input.enabled);
     void scheduleDue();
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:set-project-number", (raw) => {
-    const parsed = setProjectNumberSchema.safeParse(raw);
-
-    if (!parsed.success) {
-      const permitProblem = parsed.error.issues.some((issue) => issue.path[0] === "permitId");
-
-      return { ok: false, error: permitProblem ? "Permit not found." : "Use letters, numbers, spaces, and - . _ / only (40 at most)." };
-    }
-
-    if (!store.setProjectNumber(parsed.data.permitId, parsed.data.projectNumber)) return { ok: false, error: "Permit not found." };
+  // Any other permit ID is simply not found, so only the project number can be invalid.
+  handle("permit:set-project-number", setProjectNumberSchema.extend({ permitId: z.string() }),
+    "Use letters, numbers, spaces, and - . _ / only (40 at most).", (input) => {
+    if (!store.setProjectNumber(input.permitId, input.projectNumber)) return { ok: false, error: "Permit not found." };
     void broadcast();
 
     return { ok: true, value: null };
   });
-  handle("permit:set-preference", (raw) => {
-    const parsed = z.object({
-      key: z.enum(["notifyStatusChanges", "notifyFailures", "runInBackground", "openAtLogin"]),
-      value: z.boolean(),
-    }).safeParse(raw);
-
-    if (!parsed.success) return { ok: false, error: "Invalid setting." };
-    const { key, value } = parsed.data;
-
+  handle("permit:set-preference", z.object({
+    key: z.enum(PREFERENCE_KEYS),
+    value: z.boolean(),
+  }), "Invalid setting.", ({ key, value }) => {
     if (key === "openAtLogin") {
       if (!openAtLoginAvailable()) return { ok: false, error: "Available in the installed app." };
       setOpenAtLogin(value);
@@ -659,21 +634,21 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:check-update", async () => {
+  handle("permit:check-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.check() };
     } catch {
       return { ok: false, error: "Couldn't check for updates." };
     }
   });
-  handle("permit:download-update", async () => {
+  handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.download() };
     } catch {
       return { ok: false, error: "Download failed. Nothing was changed." };
     }
   });
-  handle("permit:install-update", async () => {
+  handle("permit:install-update", NO_INPUT, "Invalid request.", async () => {
     let installer: string;
 
     try {
@@ -706,9 +681,7 @@ async function startApp(): Promise<void> {
       return { ok: false, error: "The installer couldn't start. Restart the app and try again." };
     }
   });
-  handle("permit:delete-local-data", async (raw) => {
-    if (raw !== "DELETE LOCAL DATA") return { ok: false, error: "Deletion was not confirmed." };
-
+  handle("permit:delete-local-data", z.literal("DELETE LOCAL DATA"), "Deletion was not confirmed.", async () => {
     if (!(await stopChecks())) {
       shuttingDown = false;
 
@@ -740,9 +713,11 @@ async function startApp(): Promise<void> {
 app.on("before-quit", (event) => {
   quitting = true;
 
-  if (quitAllowed || !store) { background?.destroy();
+  if (quitAllowed || !store) {
+    background?.destroy();
 
- return; }
+    return;
+  }
 
   event.preventDefault();
   void stopChecks().then((stopped) => {

@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { chooseNavigation } from "./jev.js";
 import { parseDisplayedStatus, type ObservationRow, type PermitRow, type RunOutcome } from "../shared/permit.js";
-import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
+import { workerToMainSchema, type MainToWorker, type WorkerToMain } from "../shared/worker-protocol.js";
 
 export interface CheckResult {
   outcome: RunOutcome;
@@ -91,7 +91,10 @@ export function runCheck(input: {
         forceKillTimer.unref();
       }
 
-      resolve({ outcome, actionCount, requestCount, actualModel, browserVersion, ...(observation ? { observation } : {}) });
+      const result: CheckResult = { outcome, actionCount, requestCount, actualModel, browserVersion };
+
+      if (observation) result.observation = observation;
+      resolve(result);
     };
 
     const timer = setTimeout(() => finish("timeout"), DEADLINE_MS);
@@ -105,13 +108,14 @@ export function runCheck(input: {
       void rm(cachePath, { recursive: true, force: true }).finally(markClosed);
     });
     worker.on("error", () => { if (!done) finish("browser_error"); });
-    worker.on("message", (raw: unknown) => { void handleMessage(raw).catch(() => finish("api_unavailable")); });
+    worker.on("message", (raw) => {
+      const message = workerToMainSchema.safeParse(raw);
 
-    async function handleMessage(raw: unknown): Promise<void> {
-      if (done || !raw || typeof raw !== "object") return;
-      const message = raw as WorkerToMain;
+      if (message.success) void handleMessage(message.data).catch(() => finish("api_unavailable"));
+    });
 
-      if (message.runId !== input.runId) return;
+    async function handleMessage(message: WorkerToMain): Promise<void> {
+      if (done || message.runId !== input.runId) return;
 
       switch (message.kind) {
         case "action_count":

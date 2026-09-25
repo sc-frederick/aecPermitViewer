@@ -74,7 +74,7 @@ async function fieldValue(frame: Frame, label: string): Promise<string | null> {
   const values = await frame.locator("span.field-caption.dataLabelForRead").evaluateAll((captions, name) => captions
     .filter((caption) => caption.textContent?.trim() === name)
     .map((caption) => caption.parentElement?.querySelector(":scope > .field-item.dataValueRead")?.textContent?.trim() ?? ""), label)
-    .catch(() => [] as string[]);
+    .catch((): string[] => []);
 
   return values.length === 1 && values[0] && values[0] !== "no value" ? values[0] : null;
 }

@@ -1,22 +1,27 @@
-import type { RunOutcome } from "./permit.js";
+import { z } from "zod";
+import { runOutcomeSchema } from "./permit.js";
 import type { JurisdictionId } from "./jurisdictions.js";
 
-export interface Candidate {
-  id: string;
-  description: string;
-}
+const candidateSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+});
 
-export interface PageObservation {
-  phase: "search" | "results" | "detail" | "challenge" | "unknown";
-  location: "permit-search" | "permit-detail" | "other";
-  fingerprint: string;
-  headings: string[];
-  formLabels: string[];
-  visibleControls: string[];
-  resultNumbers: string[];
-  recentActions: string[];
-  candidates: Candidate[];
-}
+export type Candidate = z.infer<typeof candidateSchema>;
+
+const pageObservationSchema = z.object({
+  phase: z.enum(["search", "results", "detail", "challenge", "unknown"]),
+  location: z.enum(["permit-search", "permit-detail", "other"]),
+  fingerprint: z.string(),
+  headings: z.array(z.string()),
+  formLabels: z.array(z.string()),
+  visibleControls: z.array(z.string()),
+  resultNumbers: z.array(z.string()),
+  recentActions: z.array(z.string()),
+  candidates: z.array(candidateSchema),
+});
+
+export type PageObservation = z.infer<typeof pageObservationSchema>;
 
 export type MainToWorker =
   | { kind: "start"; runId: string; jurisdictionId: JurisdictionId; permitNumber: string; previousRecordUrl: string | null; browserPath: string }
@@ -24,8 +29,15 @@ export type MainToWorker =
   | { kind: "reobserve"; runId: string }
   | { kind: "cancel"; runId: string };
 
-export type WorkerToMain =
-  | { kind: "observation"; runId: string; observation: PageObservation }
-  | { kind: "verified"; runId: string; displayedNumber: string; statusLabel: string; statusValue: string; observedAt: string; recordUrl: string; browserVersion: string }
-  | { kind: "failed"; runId: string; outcome: RunOutcome }
-  | { kind: "action_count"; runId: string; count: number };
+/** Messages from the browser worker, parsed in main because the worker process drives untrusted pages. */
+export const workerToMainSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("observation"), runId: z.string(), observation: pageObservationSchema }),
+  z.object({
+    kind: z.literal("verified"), runId: z.string(), displayedNumber: z.string(), statusLabel: z.string(), statusValue: z.string(),
+    observedAt: z.string(), recordUrl: z.string(), browserVersion: z.string(),
+  }),
+  z.object({ kind: z.literal("failed"), runId: z.string(), outcome: runOutcomeSchema }),
+  z.object({ kind: z.literal("action_count"), runId: z.string(), count: z.number() }),
+]);
+
+export type WorkerToMain = z.infer<typeof workerToMainSchema>;

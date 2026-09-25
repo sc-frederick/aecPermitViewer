@@ -38,14 +38,20 @@ export function parseCheckTime(value: string): CheckTime | null {
 
 /** Parses, de-duplicates, and sorts "HH:MM" strings. Returns null unless 1–MAX valid times remain. */
 export function normalizeCheckTimes(values: readonly string[]): CheckTimes | null {
-  const parsed = values.map(parseCheckTime);
+  const formatted = new Set<string>();
 
-  if (parsed.some((time) => time === null)) return null;
-  const unique = [...new Set((parsed as CheckTime[]).map(formatCheckTime))].sort();
+  for (const value of values) {
+    const time = parseCheckTime(value);
 
-  if (unique.length === 0 || unique.length > MAX_CHECK_TIMES) return null;
+    if (!time) return null;
+    formatted.add(formatCheckTime(time));
+  }
 
-  return unique.map((value) => parseCheckTime(value)!) as unknown as CheckTimes;
+  const [first, ...rest] = [...formatted].sort().flatMap((value) => parseCheckTime(value) ?? []);
+
+  if (!first || rest.length >= MAX_CHECK_TIMES) return null;
+
+  return [first, ...rest];
 }
 
 function at(day: Date, time: CheckTime): Date {
