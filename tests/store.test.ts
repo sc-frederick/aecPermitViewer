@@ -289,9 +289,8 @@ describe("lookups", () => {
         store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion });
       }
       expect(store.latestBrowserVersion()).toBe("140.0");
-      const db = (store as unknown as { db: { prepare(sql: string): { all(): Array<{ detail: string }> } } }).db;
-      const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
-        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all();
+      const plan = rawDb(store).prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
+        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all() as Array<{ detail: string }>;
       expect(plan.map((step) => step.detail).join(" ")).toContain("idx_runs_started");
     } finally {
       store.close();
