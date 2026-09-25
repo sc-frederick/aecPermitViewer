@@ -15,6 +15,7 @@ describe("project groups", () => {
     const groups = groupByProject([
       permit("a", "28069"), permit("b", null), permit("c", "2807"), permit("d", "28069"), permit("e", "  "),
     ]);
+
     expect(groups.map((group) => [group.projectNumber, group.permits.map((entry) => entry.id)])).toEqual([
       ["2807", ["c"]], ["28069", ["a", "d"]], [null, ["b", "e"]],
     ]);
@@ -33,6 +34,7 @@ describe("project groups", () => {
 
   it("accepts common job number formats and rejects control characters", () => {
     for (const value of ["28069", "2024-117.02", "AEC 28069", "J/1234", ""]) expect(projectNumberSchema.safeParse(value).success).toBe(true);
+
     for (const value of ["-28069", "280\t69", "x".repeat(41), "<b>"]) expect(projectNumberSchema.safeParse(value).success).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { verifyBrowserPayload } from "../src/main/browser-integrity.js";
 
 const temporary: string[] = [];
+
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
@@ -30,6 +31,7 @@ describe("bundled browser integrity", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-test-"));
     temporary.push(directory);
     const names = Array.from({ length: 12 }, (_, index) => `file-${String(index).padStart(2, "0")}.bin`);
+
     for (const name of names) await writeFile(path.join(directory, name), name);
     const manifest = { version: 1, files: names.map((name) => ({ path: name, sha256: createHash("sha256").update(name).digest("hex") })) };
     await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify(manifest));

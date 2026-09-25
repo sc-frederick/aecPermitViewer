@@ -1,36 +1,75 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { z } from "zod";
 import {
   HILLSBOROUGH_ID,
   MANUAL_STATUS_LABEL,
   permitComparisonValue,
+  runOutcomeSchema,
   type CheckRunRow,
   type ObservationRow,
   type PermitHistory,
   type PermitRow,
   type RunOutcome,
 } from "../shared/permit.js";
-import { getJurisdiction, isManualJurisdiction, JURISDICTIONS, type JurisdictionId } from "../shared/jurisdictions.js";
+import { getJurisdiction, isManualJurisdiction, JURISDICTIONS, type JurisdictionId, type JurisdictionProfile } from "../shared/jurisdictions.js";
 import { DEFAULT_CHECK_TIMES, formatCheckTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
-interface StoredPermit {
-  id: string;
-  jurisdiction_id: JurisdictionId;
-  permit_number: string;
-  project_number: string | null;
-  monitoring_enabled: number;
-  last_status: string | null;
-  last_observed_at: string | null;
-  last_record_url: string | null;
-  latest_attempt_at: string | null;
-  latest_outcome: RunOutcome | null;
-  next_due_at: string | null;
-}
+const userVersionSchema = z.object({ user_version: z.number() });
+
+const columnSchema = z.object({ name: z.string() });
+
+const jurisdictionRefSchema = z.object({ jurisdictionId: z.string() });
+
+const dueSchema = z.object({ id: z.string(), jurisdictionId: z.string() });
+
+const startedSchema = z.object({ startedAt: z.string() });
+
+const settingSchema = z.object({ value: z.string() });
+
+const browserVersionSchema = z.object({ version: z.string() });
+
+const storedPermitSchema = z.object({
+  id: z.string(),
+  jurisdiction_id: z.string(),
+  permit_number: z.string(),
+  project_number: z.string().nullable(),
+  monitoring_enabled: z.number(),
+  last_status: z.string().nullable(),
+  last_observed_at: z.string().nullable(),
+  last_record_url: z.string().nullable(),
+  latest_attempt_at: z.string().nullable(),
+  latest_outcome: runOutcomeSchema.nullable(),
+  next_due_at: z.string().nullable(),
+});
+
+type StoredPermit = z.infer<typeof storedPermitSchema>;
+
+const checkRunSchema = z.object({
+  id: z.string(),
+  permitId: z.string(),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  outcome: runOutcomeSchema.nullable(),
+  actionCount: z.number(),
+  requestCount: z.number(),
+}) satisfies z.ZodType<CheckRunRow>;
+
+const observationSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  permitId: z.string(),
+  verifiedPermitNumber: z.string(),
+  statusLabel: z.string(),
+  statusValue: z.string(),
+  observedAt: z.string(),
+  recordUrl: z.string(),
+}) satisfies z.ZodType<ObservationRow>;
 
 function userVersion(db: DatabaseSync): number {
-  return Number((db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version);
+  return userVersionSchema.parse(db.prepare("PRAGMA user_version").get()).user_version;
 }
 
 const PERMIT_SELECT = `
@@ -41,10 +80,15 @@ const PERMIT_SELECT = `
   LEFT JOIN status_observations o ON o.id = p.last_observation_id
   LEFT JOIN check_runs r ON r.id = p.last_attempt_id`;
 
-function mapPermit(row: StoredPermit, checking: boolean): PermitRow {
+/** A saved permit, or null when its jurisdiction is no longer in the app; its rows stay in case support returns. */
+function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
+  const jurisdiction = getJurisdiction(row.jurisdiction_id);
+
+  if (!jurisdiction) return null;
+
   return {
     id: row.id,
-    jurisdictionId: row.jurisdiction_id,
+    jurisdictionId: jurisdiction.id,
     permitNumber: row.permit_number,
     projectNumber: row.project_number,
     monitoringEnabled: row.monitoring_enabled === 1,
@@ -64,12 +108,15 @@ export class PermitStore {
 
   constructor(filePath: string) {
     mkdirSync(path.dirname(filePath), { recursive: true });
+
     if (existsSync(filePath)) {
       const prior = new DatabaseSync(filePath, { readOnly: true });
       const version = userVersion(prior);
       prior.close();
+
       if (version < 3) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
     }
+
     this.db = new DatabaseSync(filePath);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
@@ -80,7 +127,9 @@ export class PermitStore {
 
   private migrate(): void {
     const version = userVersion(this.db);
+
     if (version > 3) throw new Error("Database was created by a newer app version.");
+
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
@@ -145,11 +194,14 @@ export class PermitStore {
       `);
       this.db.exec("PRAGMA user_version = 1");
     });
+
     // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
     // Version 3 added the user's project number for grouping permits.
-    const columns = this.db.prepare("PRAGMA table_info(permits)").all() as unknown as Array<{ name: string }>;
+    const columns = this.db.prepare("PRAGMA table_info(permits)").all().map((column) => columnSchema.parse(column));
+
     if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
+
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
     // Lets the latest browser version be read without scanning every run. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
@@ -157,16 +209,18 @@ export class PermitStore {
 
   /**
    * Upserts the built-in jurisdiction profiles so permits can reference any supported authority.
-   * A profile removed from the app keeps its row, because saved permits and history still point to it.
+   * A profile removed from the app keeps its row, because saved permits and history still point to it. Permits
+   * under a removed profile are left out of reads until it returns.
    */
   private syncProfiles(): void {
     /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
-    const MATCHING_RULES: Partial<Record<string, string>> = {
+    const MATCHING_RULES: Partial<Record<JurisdictionProfile["portalFamily"], string>> = {
       "click2gov": "click2gov-serial-1",
       "wmis": "wmis-serial-1",
       "epermit": "epermit-number-sequence-1",
       "regpermitting": "exact-uppercase-1",
     };
+
     const seed = this.db.prepare(`INSERT INTO jurisdiction_profiles
       (id, display_name, authority_type, portal_family, official_start_url,
       tenant, supported_module, coverage_note, adapter_version, matching_rule_version)
@@ -176,6 +230,7 @@ export class PermitStore {
         official_start_url = excluded.official_start_url, tenant = excluded.tenant,
         supported_module = excluded.supported_module, coverage_note = excluded.coverage_note,
         adapter_version = excluded.adapter_version, matching_rule_version = excluded.matching_rule_version`);
+
     this.transaction(() => {
       for (const profile of JURISDICTIONS) seed.run(profile.id, profile.label, profile.authorityType,
         profile.portalFamily, profile.startUrl, profile.tenant, profile.module, profile.coverageNote, profile.adapterVersion,
@@ -191,15 +246,29 @@ export class PermitStore {
   /** Prepares each statement once; the snapshot and scheduler run the same few queries repeatedly. */
   private sql(source: string): StatementSync {
     let statement = this.statements.get(source);
+
     if (!statement) {
       statement = this.db.prepare(source);
       this.statements.set(source, statement);
     }
+
     return statement;
+  }
+
+  /** Parses a row as it leaves SQLite, so a column that drifts from its type fails at the query that read it. */
+  private row<T>(schema: z.ZodType<T>, source: string, ...params: SQLInputValue[]): T | null {
+    const row = this.sql(source).get(...params);
+
+    return row ? schema.parse(row) : null;
+  }
+
+  private rows<T>(schema: z.ZodType<T>, source: string, ...params: SQLInputValue[]): T[] {
+    return this.sql(source).all(...params).map((row) => schema.parse(row));
   }
 
   private transaction(work: () => void): void {
     this.db.exec("BEGIN IMMEDIATE");
+
     try {
       work();
       this.db.exec("COMMIT");
@@ -224,16 +293,18 @@ export class PermitStore {
       VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
         permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
         isManualJurisdiction(jurisdictionId) ? 0 : 1);
+
     return id;
   }
 
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
-    const rows = this.sql(`${PERMIT_SELECT} ORDER BY p.created_at DESC`).all() as unknown as StoredPermit[];
-    return rows.map((row) => mapPermit(row, checkingIds.has(row.id)));
+    return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`)
+      .flatMap((row) => mapPermit(row, checkingIds.has(row.id)) ?? []);
   }
 
   getPermit(id: string): PermitRow | null {
-    const row = this.sql(`${PERMIT_SELECT} WHERE p.id = ?`).get(id) as unknown as StoredPermit | undefined;
+    const row = this.row(storedPermitSchema, `${PERMIT_SELECT} WHERE p.id = ?`, id);
+
     return row ? mapPermit(row, false) : null;
   }
 
@@ -242,9 +313,10 @@ export class PermitStore {
     appVersion: string;
     playwrightVersion: string;
   }): string {
-    const permit = this.sql("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
-      .get(input.permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+    const permit = this.row(jurisdictionRefSchema, "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?", input.permitId);
+
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
+
     if (!profile) throw new Error("Permit jurisdiction is not configured");
     const id = randomUUID();
     this.transaction(() => {
@@ -254,6 +326,7 @@ export class PermitStore {
         .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.playwrightVersion);
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });
+
     return id;
   }
 
@@ -269,8 +342,9 @@ export class PermitStore {
   }): void {
     this.transaction(() => {
       const finishedAt = new Date().toISOString();
-      const started = this.sql("SELECT started_at AS startedAt FROM check_runs WHERE id = ?")
-        .get(input.runId) as unknown as { startedAt: string } | undefined;
+
+      const started = this.row(startedSchema, "SELECT started_at AS startedAt FROM check_runs WHERE id = ?", input.runId);
+
       if (!started) throw new Error("Check run not found");
       this.sql(`UPDATE check_runs SET finished_at = ?, outcome = ?, safe_error_code = ?,
         action_count = ?, request_count = ?, duration_ms = ?, actual_model = ?, browser_version = ? WHERE id = ?`)
@@ -278,6 +352,7 @@ export class PermitStore {
           input.outcome === "success" ? null : input.outcome,
           input.actionCount, input.requestCount, Date.parse(finishedAt) - Date.parse(started.startedAt),
           input.actualModel, input.browserVersion, input.runId);
+
       if (input.outcome === "success" && input.observation) {
         const observationId = randomUUID();
         const observation = input.observation;
@@ -300,6 +375,7 @@ export class PermitStore {
   /** Saves a status the user read on a hand-checked portal as a completed check. */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string; appVersion: string }): void {
     const permit = this.getPermit(input.permitId);
+
     if (!permit || !isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is not checked by hand");
     const runId = randomUUID();
     const now = new Date().toISOString();
@@ -319,36 +395,39 @@ export class PermitStore {
   }
 
   history(permitId: string): PermitHistory {
-    const runs = this.sql(`SELECT id, permit_id AS permitId, started_at AS startedAt,
+    const runs = this.rows(checkRunSchema, `SELECT id, permit_id AS permitId, started_at AS startedAt,
       finished_at AS finishedAt, outcome, action_count AS actionCount,
-      request_count AS requestCount FROM check_runs WHERE permit_id = ? ORDER BY started_at DESC`)
-      .all(permitId) as unknown as CheckRunRow[];
-    const observations = this.sql(`SELECT id, run_id AS runId, permit_id AS permitId,
+      request_count AS requestCount FROM check_runs WHERE permit_id = ? ORDER BY started_at DESC`, permitId);
+
+    const observations = this.rows(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
       status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl
-      FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`)
-      .all(permitId) as unknown as ObservationRow[];
+      FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`, permitId);
+
     return { runs, observations };
   }
 
   getObservation(id: string): ObservationRow | null {
-    return this.sql(`SELECT id, run_id AS runId, permit_id AS permitId,
+    return this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
       status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl
-      FROM status_observations WHERE id = ?`).get(id) as unknown as ObservationRow | undefined ?? null;
+      FROM status_observations WHERE id = ?`, id);
   }
 
   getObservationJurisdictionId(id: string): JurisdictionId | null {
-    const row = this.sql(`SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
-      JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`).get(id) as unknown as { jurisdictionId: JurisdictionId } | undefined;
-    return row?.jurisdictionId ?? null;
+    const row = this.row(jurisdictionRefSchema, `SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
+      JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`, id);
+
+    return row ? getJurisdiction(row.jurisdictionId)?.id ?? null : null;
   }
 
   private jurisdictionAdapterVersion(permitId: string): string {
-    const row = this.sql("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
-      .get(permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+    const row = this.row(jurisdictionRefSchema, "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?", permitId);
+
     const profile = row ? getJurisdiction(row.jurisdictionId) : null;
+
     if (!profile) throw new Error("Permit jurisdiction is not configured");
+
     return profile.adapterVersion;
   }
 
@@ -357,14 +436,16 @@ export class PermitStore {
   }
 
   getMonitoring(): "manual" | "scheduled" {
-    const row = this.sql("SELECT value FROM settings WHERE key = 'monitoring'").get() as unknown as { value: string } | undefined;
+    const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
+
     // Scheduled checks are the default. "daily" is how earlier versions stored the same choice.
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
   getCheckTimes(): CheckTimes {
-    const row = this.sql("SELECT value FROM settings WHERE key = 'check_times'").get() as unknown as { value: string } | undefined;
+    const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'check_times'");
     const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
+
     return stored ?? DEFAULT_CHECK_TIMES;
   }
 
@@ -376,7 +457,8 @@ export class PermitStore {
   }
 
   getFlag(key: string, fallback: boolean): boolean {
-    const row = this.sql("SELECT value FROM settings WHERE key = ?").get(key) as unknown as { value: string } | undefined;
+    const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key);
+
     return row ? row.value === "1" : fallback;
   }
 
@@ -386,15 +468,16 @@ export class PermitStore {
   }
 
   latestBrowserVersion(): string | null {
-    const row = this.sql(`SELECT browser_version AS version FROM check_runs
-      WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get() as unknown as { version: string } | undefined;
+    const row = this.row(browserVersionSchema, `SELECT browser_version AS version FROM check_runs
+      WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`);
+
     return row?.version ?? null;
   }
 
   duePermitIds(now: string): string[] {
-    return (this.sql(`SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
-      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`).all(now) as unknown as Array<{ id: string; jurisdictionId: string }>)
-      .filter((row) => !isManualJurisdiction(row.jurisdictionId)).map((row) => row.id);
+    return this.rows(dueSchema, `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
+      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`, now)
+      .flatMap((row) => isManualJurisdiction(row.jurisdictionId) ? [] : [row.id]);
   }
 
   removePermit(id: string): boolean {
@@ -415,6 +498,7 @@ export class PermitStore {
 
   setPermitMonitoring(id: string, enabled: boolean): void {
     const permit = this.getPermit(id);
+
     if (enabled && permit && isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is checked by hand");
     this.sql("UPDATE permits SET monitoring_enabled = ?, next_due_at = ? WHERE id = ?")
       .run(enabled ? 1 : 0, enabled ? new Date().toISOString() : null, id);

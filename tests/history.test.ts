@@ -16,8 +16,10 @@ const dayOf = (value: string) => value.slice(0, 10);
 describe("daily history", () => {
   it("collapses a day's checks into its latest status", () => {
     const runs = [run("c", "2026-09-24T16:43", "success"), run("b", "2026-09-24T12:41", "success"), run("a", "2026-09-24T12:08", "success")];
+
     const observations = [observed("c", "2026-09-24T16:43", "Issued"), observed("b", "2026-09-24T12:41", "In Process"),
       observed("a", "2026-09-24T12:08", "In Process")];
+
     const days = dailyHistory({ runs, observations }, dayOf);
     expect(days).toHaveLength(1);
     expect(days[0]?.observation?.statusValue).toBe("Issued");
