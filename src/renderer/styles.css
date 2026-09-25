@@ -141,11 +141,18 @@ select.field-control:open::picker-icon { margin-top: 4px; transform: rotate(225d
 select.field-control:open { border-bottom: var(--rule-bold); padding-bottom: 7px; }
 select.field-control::picker(select) { position-try-order: normal; margin: 6px 0; padding: 4px 0; min-width: anchor-size(width); max-height: min(360px, 60vh); border: var(--hairline); border-radius: 0; background: var(--color-bone); color: var(--color-ink); box-shadow: none; opacity: 0; transform: translateY(-4px); transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-base) var(--ease-out), overlay var(--duration-base) allow-discrete, display var(--duration-base) allow-discrete; }
 select.field-control:open::picker(select) { opacity: 1; transform: none; }
+select.field-control::picker(select) { scrollbar-width: thin; scrollbar-color: var(--color-fog) transparent; }
 @starting-style { select.field-control:open::picker(select) { opacity: 0; transform: translateY(-4px); } }
 select.field-control option { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 16px; border: 0; font-family: var(--font-body); font-size: 14px; line-height: 1.4; color: var(--color-graphite); background: transparent; cursor: pointer; transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 select.field-control option + option { border-top: var(--hairline-soft); }
 select.field-control option:hover, select.field-control option:focus-visible { background: var(--color-bone-deep); color: var(--color-ink); box-shadow: none; outline: none; }
 select.field-control option:checked { color: var(--color-ink); font-weight: 500; }
+/* Group labels read like field labels: mono, uppercase, tracked, above hairline-separated groups. */
+select.field-control optgroup { padding: 12px 0 0; font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-label-sm); line-height: 1.2; letter-spacing: var(--tracking-label-sm); text-transform: uppercase; text-indent: 10px; color: var(--color-graphite); }
+select.field-control optgroup + optgroup { margin-top: 4px; border-top: var(--hairline); }
+select.field-control optgroup option { margin-top: 0; text-indent: 0; letter-spacing: normal; text-transform: none; font-weight: 400; }
+select.field-control optgroup option:first-of-type { margin-top: 6px; }
+select.field-control optgroup option:checked { font-weight: 500; }
 select.field-control option::checkmark { order: 1; margin-left: auto; content: ""; width: 5px; height: 10px; margin-top: -3px; border-right: 1.5px solid var(--color-ink); border-bottom: 1.5px solid var(--color-ink); transform: rotate(45deg); }
 .mono-input { font-family: var(--font-mono); font-size: 14px; letter-spacing: .02em; }
 .field-error { margin: 10px 0 0; font-family: var(--font-mono); font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); text-transform: uppercase; line-height: 1.5; color: var(--color-error); }

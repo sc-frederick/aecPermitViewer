@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, STATUS_LABELS } from "../shared/permit.js";
+import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
 import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
+import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
+import { wmisAdapter } from "./wmis.js";
+import { epermitAdapter, watchEpermitForm } from "./epermit.js";
+import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
 const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
@@ -22,7 +26,7 @@ const ST_PETE_NUMBER = '[id="permit.appNumber"]';
 const ST_PETE_SEARCH_BUTTON = 'input[name="finish"]';
 
 /** Where each portal family shows the permit number and record-level status on its detail page. */
-const DETAIL_FIELDS: Record<AutomatedJurisdictionProfile["portalFamily"], { number: string; status: string }> = {
+const DETAIL_FIELDS: Partial<Record<AutomatedJurisdictionProfile["portalFamily"], { number: string; status: string }>> = {
   "accela": { number: DETAIL_NUMBER, status: DETAIL_STATUS },
   "tyler-civic-access": { number: "#focusText span.ng-binding", status: "#label-PermitDetail-Status p.form-control-static" },
   "click2gov": {
@@ -41,6 +45,8 @@ let actionCount = 0;
 let recentActions: string[] = [];
 let lastObservation: PageObservation | null = null;
 let stopped = false;
+/** The saved record link this run opened instead of searching, if any. */
+let openedRecordUrl: string | null = null;
 
 function send(message: WorkerToMain): void {
   process.parentPort?.postMessage(message);
@@ -86,13 +92,48 @@ async function visibleText(selector: string): Promise<string | null> {
   return (await locator.innerText()).trim();
 }
 
+/** The module driving this run's portal, for families that don't use the generic steps below. */
+function portalAdapter(): PortalAdapter | null {
+  if (!page || !jurisdiction) return null;
+  switch (jurisdiction.portalFamily) {
+    case "wmis": return wmisAdapter(page, jurisdiction, requestedNumber);
+    case "epermit": return epermitAdapter(page, jurisdiction, requestedNumber);
+    case "regpermitting": return regPermittingAdapter(page, jurisdiction, requestedNumber, openedRecordUrl);
+    default: return null;
+  }
+}
+
+/** Read the record's displayed number, status, and status label, and the record link to save. */
+async function readRecord(): Promise<DisplayedRecord> {
+  const adapter = portalAdapter();
+  if (adapter) return adapter.read();
+  const fields = jurisdiction && DETAIL_FIELDS[jurisdiction.portalFamily];
+  if (!page || !jurisdiction || !fields) return NOTHING_DISPLAYED;
+  return {
+    displayedNumber: await visibleText(fields.number),
+    statusValue: await visibleText(fields.status),
+    // Accela's label is read from the page; the other portals' labels are part of their selectors.
+    statusLabel: jurisdiction.portalFamily === "accela" ? await visibleText(DETAIL_STATUS_TITLE)
+      : `${expectedStatusLabel(jurisdiction)}:`,
+    recordUrl: jurisdiction.portalFamily === "click2gov" ? stPeteRecordUrl(requestedNumber) : page.url(),
+  };
+}
+
 async function waitForDetail(): Promise<void> {
   if (!page || jurisdiction?.portalFamily !== "tyler-civic-access") return;
   // Tyler renders the record after load, so wait for both fields to hold text.
-  for (const selector of Object.values(DETAIL_FIELDS["tyler-civic-access"])) {
+  for (const selector of Object.values(DETAIL_FIELDS["tyler-civic-access"]!)) {
     await page.locator(selector).filter({ hasText: /\S/ })
       .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   }
+}
+
+/**
+ * A saved record link can replace the search only where the record page shows the full number and the status.
+ * SWFWMD's water use pages show no status, and ePermit record pages omit the number's prefix.
+ */
+function recordLinkShowsRecord(profile: AutomatedJurisdictionProfile): boolean {
+  return profile.portalFamily === "wmis" ? profile.module !== "WUP" : profile.portalFamily !== "epermit";
 }
 
 function globalSearch(): boolean {
@@ -149,12 +190,21 @@ async function observe(): Promise<PageObservation> {
 
   if (location === "permit-detail" && jurisdiction) {
     phase = "detail";
-    const fields = DETAIL_FIELDS[jurisdiction.portalFamily];
-    displayedNumber = (await visibleText(fields.number)) ?? "";
-    displayedStatus = (await visibleText(fields.status)) ?? "";
+    const record = await readRecord();
+    displayedNumber = record.displayedNumber ?? "";
+    displayedStatus = record.statusValue ?? "";
   } else if (location === "permit-search") {
     phase = "search";
-    if (jurisdiction?.portalFamily === "accela" && onGlobalResults(url)) {
+    const adapter = portalAdapter();
+    if (adapter) {
+      const search = await adapter.observe();
+      phase = search.phase;
+      inputValue = search.inputValue;
+      formLabels.push(...search.formLabels);
+      visibleControls.push(...search.visibleControls);
+      resultNumbers = search.resultNumbers;
+      candidates.push(...search.candidates);
+    } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(url)) {
       // The search already ran; the only way forward is the exact result row or the next page of results.
       if (await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) visibleControls.push("Global Search results");
     } else if (jurisdiction?.portalFamily === "accela") {
@@ -201,8 +251,9 @@ async function observe(): Promise<PageObservation> {
         else candidates.push({ id: "search_record_number", description: "Submit the City of St. Petersburg Application Number search." });
       }
     }
-    const links = await exactResultLinks();
-    resultNumbers = links.map((link) => link.text);
+    // An adapter matches its own results above.
+    const links = adapter ? [] : await exactResultLinks();
+    if (!adapter) resultNumbers = links.map((link) => link.text);
     if (links.length > 1) phase = "results";
     if (links.length === 1) {
       const target = new URL(links[0]!.href, page.url());
@@ -251,7 +302,13 @@ async function sendObservationOrResult(): Promise<void> {
     return;
   }
   if (observation.phase === "search" && recentActions.includes("search_record_number")) {
-    if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
+    const adapter = portalAdapter();
+    if (adapter) {
+      if (await adapter.foundNothing()) {
+        fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+        return;
+      }
+    } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
       // Global Search matches whole record numbers, so a finished search without the exact row has no such record.
       if (observation.candidates.length === 0 && await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) {
         fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
@@ -272,12 +329,7 @@ async function sendObservationOrResult(): Promise<void> {
     }
   }
   if (observation.phase === "detail" && jurisdiction) {
-    const fields = DETAIL_FIELDS[jurisdiction.portalFamily];
-    const displayedNumber = await visibleText(fields.number);
-    const statusValue = await visibleText(fields.status);
-    // Accela's label is read from the page; the other portals' labels are part of their selectors.
-    const labelText = jurisdiction.portalFamily === "accela" ? await visibleText(DETAIL_STATUS_TITLE)
-      : `${STATUS_LABELS[jurisdiction.portalFamily]}:`;
+    const { displayedNumber, statusValue, statusLabel: labelText, recordUrl } = await readRecord();
     if (!displayedNumber || !sameJurisdictionPermitNumber(requestedNumber, displayedNumber, jurisdiction.id)) {
       fail({ kind: "failed", runId: currentRun, outcome: "identity_mismatch" });
       return;
@@ -286,7 +338,6 @@ async function sendObservationOrResult(): Promise<void> {
       fail({ kind: "failed", runId: currentRun, outcome: "status_unavailable" });
       return;
     }
-    const recordUrl = jurisdiction.portalFamily === "click2gov" ? stPeteRecordUrl(requestedNumber) : page.url();
     if (!recordUrl || !parsePortalUrl(recordUrl, "detail", jurisdiction.id)) {
       fail({ kind: "failed", runId: currentRun, outcome: "record_link_unavailable" });
       return;
@@ -319,28 +370,39 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   stopped = false;
   process.env.PLAYWRIGHT_BROWSERS_PATH = message.browserPath;
   browser = await chromium.launch({ headless: true, chromiumSandbox: true });
-  context = await browser.newContext({ acceptDownloads: false, serviceWorkers: "block" });
+  const userAgent = "plainUserAgent" in jurisdiction && jurisdiction.plainUserAgent ? await plainUserAgent(browser) : null;
+  context = await browser.newContext({ acceptDownloads: false, serviceWorkers: "block", ...(userAgent ? { userAgent } : {}) });
   page = await context.newPage();
   page.setDefaultTimeout(8_000);
   page.on("popup", (popup) => { void popup.close(); });
   page.on("framenavigated", (frame) => {
-    if (frame === page?.mainFrame() && frame.url() !== "about:blank" && locationOf(frame.url()) === "other") {
+    // A failed load shows Chromium's error page; the failed goto itself decides whether to retry.
+    if (frame === page?.mainFrame() && frame.url() !== "about:blank" && !frame.url().startsWith("chrome-error://") &&
+      locationOf(frame.url()) === "other") {
       fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
     }
   });
+  const epermitFormReady = jurisdiction.portalFamily === "epermit" ? watchEpermitForm(page) : null;
   const startUrl = jurisdiction.startUrl;
-  const target = message.previousRecordUrl && parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id)
-    ? message.previousRecordUrl : startUrl;
+  const target = message.previousRecordUrl && parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id) &&
+    recordLinkShowsRecord(jurisdiction) ? message.previousRecordUrl : startUrl;
+  let landed = target;
   try {
     await page.goto(target, { waitUntil: "domcontentloaded", timeout: 15_000 });
   } catch {
     if (stopped) return;
-    if (target !== startUrl && page && !stopped) await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    else throw new Error("Navigation failed");
+    // A portal occasionally drops the first connection (SWFWMD's resets HTTP/2), so the search gets a second try.
+    if (target === startUrl) await page.waitForTimeout(1_500);
+    landed = startUrl;
+    if (page && !stopped) await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
-  if (target !== startUrl && page && !stopped && locationOf(page.url()) !== "permit-detail") {
+  // RegPermitting's record view settles on the same address as its search, so it is recognized by content.
+  const recordOpened = landed !== startUrl && page !== null && !stopped && (jurisdiction.portalFamily === "regpermitting"
+    ? await regPermittingRecordShown(page, 15_000) : locationOf(page.url()) === "permit-detail");
+  if (landed !== startUrl && page && !stopped && !recordOpened) {
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
+  openedRecordUrl = recordOpened ? target : null;
   if (page && !stopped && locationOf(page.url()) === "permit-detail") await waitForDetail();
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
     await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
@@ -349,6 +411,8 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   if (jurisdiction.portalFamily === "tyler-civic-access" && page && !stopped) {
     await page.locator("#SearchKeyword, a[href*='#/search']").first().waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   }
+  if (epermitFormReady && page && !stopped) await epermitFormReady();
+  if (jurisdiction.portalFamily === "regpermitting" && page && !stopped && !openedRecordUrl) await waitForSearchRecordsLink(page);
   await sendObservationOrResult();
 }
 
@@ -363,8 +427,13 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
     fail({ kind: "failed", runId: currentRun, outcome: "unsupported_page" });
     return;
   }
+  const adapter = portalAdapter();
   switch (message.candidateId) {
     case "open_public_search": {
+      if (adapter) {
+        await adapter.openSearch?.();
+        break;
+      }
       if (jurisdiction?.portalFamily !== "tyler-civic-access") break;
       await page.goto("https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
         { waitUntil: "domcontentloaded", timeout: 15_000 });
@@ -372,7 +441,9 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       break;
     }
     case "fill_record_number": {
-      if (jurisdiction?.portalFamily === "click2gov") {
+      if (adapter) {
+        await adapter.fill();
+      } else if (jurisdiction?.portalFamily === "click2gov") {
         const parts = parseApplicationNumber(requestedNumber);
         if (!parts) break;
         await page.locator(ST_PETE_YEAR).fill(parts.year);
@@ -386,7 +457,9 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       break;
     }
     case "search_record_number": {
-      if (jurisdiction?.portalFamily === "click2gov") {
+      if (adapter) {
+        await adapter.submit();
+      } else if (jurisdiction?.portalFamily === "click2gov") {
         const parts = parseApplicationNumber(requestedNumber);
         if (!parts || await page.locator(ST_PETE_YEAR).inputValue() !== parts.year ||
           await page.locator(ST_PETE_NUMBER).inputValue() !== parts.serial) break;
@@ -419,6 +492,10 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       break;
     }
     case "open_exact_result": {
+      if (adapter) {
+        await adapter.openResult();
+        break;
+      }
       const links = await exactResultLinks();
       if (links.length !== 1) break;
       if (globalSearch()) {
