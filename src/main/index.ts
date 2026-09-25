@@ -30,12 +30,14 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => showWindow());
-  void app.whenReady().then(startApp).catch(() => {
-    if (!process.argv.includes("--smoke-browser")) {
-      dialog.showErrorBox("Permit Monitor could not start", "The local application or bundled browser could not be verified. Reinstall the app from a trusted release.");
-    }
-    app.exit(1);
-  });
+  void app.whenReady().then(startApp).catch(failStartup);
+}
+
+function failStartup(): void {
+  if (!process.argv.includes("--smoke-browser")) {
+    dialog.showErrorBox("Permit Monitor could not start", "The local application or bundled browser could not be verified. Reinstall the app from a trusted release.");
+  }
+  app.exit(1);
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -53,6 +55,9 @@ let quitAllowed = false;
 let quitting = false;
 let background: Background | null = null;
 let keyNoticeShown = false;
+let broadcastPending: Promise<void> | null = null;
+/** Resolves true once the bundled browser matches its manifest. No check launches it before then. */
+let browserVerified: Promise<boolean> = Promise.resolve(true);
 
 const PREF_FLAGS = {
   notifyStatusChanges: "notify_status_changes",
@@ -120,13 +125,12 @@ async function snapshot(): Promise<AppSnapshot> {
   const checking = new Set(queue);
   if (active) checking.add(active.permitId);
   if (pendingPermitId) checking.add(pendingPermitId);
+  const browserVersion = store.latestBrowserVersion();
   return {
     permits: store.listPermits(checking),
     keyState: await keys.state().catch(() => "unavailable"),
     appVersion: app.getVersion(),
-    browserVersion: store.latestBrowserVersion()
-      ? `Playwright 1.63.0 · Chromium ${store.latestBrowserVersion()}`
-      : "Playwright 1.63.0 · bundled Chromium",
+    browserVersion: browserVersion ? `Playwright 1.63.0 · Chromium ${browserVersion}` : "Playwright 1.63.0 · bundled Chromium",
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
@@ -140,7 +144,19 @@ async function snapshot(): Promise<AppSnapshot> {
   };
 }
 
-async function broadcast(): Promise<void> {
+/**
+ * Sends the current state to the window and tray. Calls made in the same turn (for example, every
+ * permit queued by one scheduled run) share a single snapshot taken just after that turn.
+ */
+function broadcast(): Promise<void> {
+  broadcastPending ??= new Promise<void>((resolve) => setImmediate(resolve)).then(() => {
+    broadcastPending = null;
+    return sendSnapshot();
+  });
+  return broadcastPending;
+}
+
+async function sendSnapshot(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try {
     const current = await snapshot();
@@ -206,19 +222,19 @@ async function runNext(): Promise<void> {
   const spacing = Math.max(0, 30_000 - (Date.now() - lastJurisdictionCheckEndedAt));
   if (spacing > 0) {
     const until = Date.now() + spacing;
-    while (Date.now() < until && !shuttingDown) {
+    while (Date.now() < until && !shuttingDown && !pendingCancelled) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(100, until - Date.now())));
     }
   }
   if (shuttingDown || pendingCancelled) return;
   const key = await keys.read().catch(() => null);
   if (shuttingDown || pendingCancelled) return;
+  if (!(await browserVerified) || shuttingDown || pendingCancelled) return;
   const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: "1.63.0" });
   if (!key) {
     finishAndAnnounce({ runId, permitId, outcome: "authentication_error", actionCount: 0,
       requestCount: 0, actualModel: null, browserVersion: null });
     lastJurisdictionCheckEndedAt = Date.now();
-    await broadcast();
     return;
   }
   const browserPath = app.isPackaged
@@ -231,11 +247,10 @@ async function runNext(): Promise<void> {
   } catch {
     finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
       requestCount: 0, actualModel: null, browserVersion: null });
-    await broadcast();
     return;
   }
+  // Already shown as checking while pending, so there is nothing new to broadcast here.
   active = { permitId, check };
-  await broadcast();
   const result = await check.result;
   await check.closed;
   try {
@@ -244,11 +259,10 @@ async function runNext(): Promise<void> {
     active = null;
   }
   lastJurisdictionCheckEndedAt = Date.now();
-  await broadcast();
   } finally {
     pendingPermitId = null;
     pendingCancelled = false;
-    // The broadcasts above still count this permit as in progress; send the settled state.
+    // Every path out of a check, including a saved result, is sent once the permit is no longer pending.
     await broadcast();
   }
 }
@@ -276,11 +290,18 @@ async function scheduleDue(): Promise<void> {
 }
 
 async function startApp(): Promise<void> {
-  if (app.isPackaged) await verifyBrowserPayload(path.join(process.resourcesPath, "playwright-browsers"));
+  const payload = app.isPackaged ? verifyBrowserPayload(path.join(process.resourcesPath, "playwright-browsers")) : Promise.resolve();
   if (process.argv.includes("--smoke-browser")) {
+    await payload;
     await runPackagedBrowserSmoke();
     return;
   }
+  // Hashing the browser payload takes a while, so the window opens meanwhile. Checks wait for it,
+  // and a mismatch still ends the app before the browser is ever launched.
+  browserVerified = payload.then(() => true, () => {
+    failStartup();
+    return false;
+  });
   if (process.platform !== "win32") {
     // Development on other platforms is permitted; the packaged release is Windows-only.
   }

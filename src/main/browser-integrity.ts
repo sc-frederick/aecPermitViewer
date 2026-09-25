@@ -8,6 +8,10 @@ interface BrowserManifest {
   files: Array<{ path: string; sha256: string }>;
 }
 
+/** Files hashed at once; overlapping reads keeps the disk busy while earlier chunks are hashed. */
+const CONCURRENCY = 4;
+const READ_CHUNK_BYTES = 1024 * 1024;
+
 async function filesIn(directory: string, prefix = ""): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -28,11 +32,25 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
   if (expected.length !== actual.length || expected.some((value, index) => value !== actual[index])) {
     throw new Error("Browser payload file list differs from the packaged manifest");
   }
-  for (const entry of manifest.files) {
-    if (!/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error("Browser payload hash is invalid");
-    const hash = createHash("sha256");
-    for await (const chunk of createReadStream(path.join(directory, ...entry.path.split("/")))) hash.update(chunk);
-    const expectedHash = Buffer.from(entry.sha256, "hex");
-    if (!timingSafeEqual(hash.digest(), expectedHash)) throw new Error("Browser payload file integrity failed");
-  }
+  if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256))) throw new Error("Browser payload hash is invalid");
+  let next = 0;
+  let failed = false;
+  const verifyNext = async (): Promise<void> => {
+    while (!failed && next < manifest.files.length) {
+      const entry = manifest.files[next++]!;
+      try {
+        const hash = createHash("sha256");
+        const file = path.join(directory, ...entry.path.split("/"));
+        for await (const chunk of createReadStream(file, { highWaterMark: READ_CHUNK_BYTES })) hash.update(chunk);
+        if (!timingSafeEqual(hash.digest(), Buffer.from(entry.sha256, "hex"))) throw new Error("Browser payload file integrity failed");
+      } catch (error) {
+        // The other readers stop at their next file.
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  const results = await Promise.allSettled(Array.from({ length: CONCURRENCY }, verifyNext));
+  const rejected = results.find((result) => result.status === "rejected");
+  if (rejected) throw rejected.reason;
 }
