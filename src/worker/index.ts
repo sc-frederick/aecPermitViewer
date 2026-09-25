@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, STATUS_LABELS } from "../shared/permit.js";
-import { getAutomatedJurisdiction, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
+import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
@@ -9,6 +9,12 @@ const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
 const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 const DETAIL_STATUS = "#ctl00_PlaceHolderMain_lblRecordStatus";
 const DETAIL_STATUS_TITLE = "#ctl00_PlaceHolderMain_lblRecordStatusTitle";
+// Accela's Global Search box (Pasco replaces it with its own, injected after load) and the results page it opens.
+const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
+const GLOBAL_RESULTS_LABEL = "#ctl00_PlaceHolderMain_lblSearchResults";
+const GLOBAL_NO_RESULTS = "#ctl00_PlaceHolderMain_pnlNoResults";
+const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
+const GLOBAL_NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
 const TYLER_SEARCH_FIELD = "#SearchKeyword";
 const TYLER_SEARCH_BUTTON = "#button-Search";
 const ST_PETE_YEAR = '[id="permit.appYear"]';
@@ -89,12 +95,36 @@ async function waitForDetail(): Promise<void> {
   }
 }
 
-async function exactResultLinks(): Promise<Array<{ text: string; href: string }>> {
+function globalSearch(): boolean {
+  return Boolean(jurisdiction && usesGlobalSearch(jurisdiction.id));
+}
+
+function onGlobalResults(url: string): boolean {
+  return globalSearch() && new URL(url).pathname.toLowerCase().endsWith("/cap/globalsearchresults.aspx");
+}
+
+/** Wait for a record, a results list, or the no-results notice after a Global Search or results postback. */
+async function waitForGlobalResults(previousRows: string): Promise<void> {
+  if (!page) return;
+  await page.waitForFunction(({ rows, link, detail, none }) => {
+    if (document.querySelector(detail) || document.querySelector(none)) return true;
+    const current = [...document.querySelectorAll<HTMLElement>(link)].map((anchor) => anchor.innerText.trim()).join("|");
+    return current !== "" && current !== rows;
+  }, { rows: previousRows, link: GLOBAL_RESULT_LINK, detail: DETAIL_NUMBER, none: GLOBAL_NO_RESULTS }, { timeout: 15_000 })
+    .catch(() => undefined);
+  await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+}
+
+async function globalResultRows(): Promise<string> {
+  return page ? (await page.locator(GLOBAL_RESULT_LINK).allInnerTexts()).map((text) => text.trim()).join("|") : "";
+}
+
+async function exactResultLinks(): Promise<Array<{ text: string; href: string; id: string }>> {
   if (!page) return [];
-  const links = await page.locator("a").evaluateAll((anchors) => anchors.slice(0, 250).flatMap((anchor) => {
+  const links = await page.locator(globalSearch() ? GLOBAL_RESULT_LINK : "a").evaluateAll((anchors) => anchors.slice(0, 250).flatMap((anchor) => {
     if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
     const href = anchor.getAttribute("href");
-    return href ? [{ text: anchor.innerText.trim(), href }] : [];
+    return href ? [{ text: anchor.innerText.trim(), href, id: anchor.id }] : [];
   }));
   const found = links.filter((link) => jurisdiction && sameJurisdictionPermitNumber(requestedNumber, link.text, jurisdiction.id));
   return found.filter((link, index) => found.findIndex((candidate) => candidate.href === link.href) === index);
@@ -124,18 +154,27 @@ async function observe(): Promise<PageObservation> {
     displayedStatus = (await visibleText(fields.status)) ?? "";
   } else if (location === "permit-search") {
     phase = "search";
-    if (jurisdiction?.portalFamily === "accela") {
-      const input = page.locator(SEARCH_FIELD);
+    if (jurisdiction?.portalFamily === "accela" && onGlobalResults(url)) {
+      // The search already ran; the only way forward is the exact result row or the next page of results.
+      if (await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) visibleControls.push("Global Search results");
+    } else if (jurisdiction?.portalFamily === "accela") {
+      const global = globalSearch();
+      const input = global ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
       if (await input.count() === 1 && await input.isVisible() && await input.isEnabled()) {
         inputValue = await input.inputValue();
-        formLabels.push("Record Number");
-        visibleControls.push("Record Number field");
-        if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", description: "Fill the Record Number field with the exact requested permit number." });
+        formLabels.push(global ? "Global Search" : "Record Number");
+        visibleControls.push(global ? "Global Search field" : "Record Number field");
+        if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", description: global
+          ? "Fill the portal's Global Search field with the exact requested permit number."
+          : "Fill the Record Number field with the exact requested permit number." });
       }
       const search = page.locator(SEARCH_BUTTON);
-      if (inputValue === requestedNumber && await search.count() === 1 && await search.isVisible() && await search.isEnabled()) {
-        visibleControls.push("Search button");
-        candidates.push({ id: "search_record_number", description: "Submit the public Building permit record search." });
+      // Global Search submits from its field on Enter; its button can be covered or drawn at zero size.
+      if (inputValue === requestedNumber && (global || (await search.count() === 1 && await search.isVisible() && await search.isEnabled()))) {
+        if (!global) visibleControls.push("Search button");
+        candidates.push({ id: "search_record_number", description: global
+          ? "Submit the portal's Global Search for the exact permit number."
+          : "Submit the public Building permit record search." });
       }
     } else if (jurisdiction?.portalFamily === "tyler-civic-access") {
       const input = page.locator(TYLER_SEARCH_FIELD);
@@ -167,11 +206,14 @@ async function observe(): Promise<PageObservation> {
     if (links.length > 1) phase = "results";
     if (links.length === 1) {
       const target = new URL(links[0]!.href, page.url());
-      if (jurisdiction && parsePortalUrl(target.toString(), "detail", jurisdiction.id)) {
+      // Global Search result rows open their record through a postback rather than a link.
+      if (jurisdiction && (globalSearch() || parsePortalUrl(target.toString(), "detail", jurisdiction.id))) {
         phase = "results";
         candidates.length = 0;
         candidates.push({ id: "open_exact_result", description: `Open the result whose displayed permit number exactly equals ${requestedNumber}.` });
       }
+    } else if (links.length === 0 && onGlobalResults(url) && await page.locator(GLOBAL_NEXT_PAGE).count() === 1) {
+      candidates.push({ id: "next_results_page", description: "Show the next page of Global Search results to look for the exact permit number." });
     }
   }
 
@@ -209,7 +251,13 @@ async function sendObservationOrResult(): Promise<void> {
     return;
   }
   if (observation.phase === "search" && recentActions.includes("search_record_number")) {
-    if (jurisdiction?.portalFamily === "accela") {
+    if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
+      // Global Search matches whole record numbers, so a finished search without the exact row has no such record.
+      if (observation.candidates.length === 0 && await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) {
+        fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+        return;
+      }
+    } else if (jurisdiction?.portalFamily === "accela") {
       const message = page.getByText("Your search returned no results. Please modify your search criteria and try again.", { exact: true });
       const input = page.locator(SEARCH_FIELD);
       if (await message.count() === 1 && await message.isVisible() &&
@@ -280,9 +328,7 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
       fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
     }
   });
-  const startUrl = jurisdiction.id === "pasco-county-building" && /^\d{2}[A-Z]\d{5,}$/i.test(requestedNumber)
-    ? jurisdiction.startUrl.replace(/module=Building&TabName=Building/i, "module=Permits&TabName=Permits")
-    : jurisdiction.startUrl;
+  const startUrl = jurisdiction.startUrl;
   const target = message.previousRecordUrl && parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id)
     ? message.previousRecordUrl : startUrl;
   try {
@@ -296,6 +342,10 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
   if (page && !stopped && locationOf(page.url()) === "permit-detail") await waitForDetail();
+  if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
+    await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
+      .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+  }
   if (jurisdiction.portalFamily === "tyler-civic-access" && page && !stopped) {
     await page.locator("#SearchKeyword, a[href*='#/search']").first().waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   }
@@ -328,7 +378,8 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         await page.locator(ST_PETE_YEAR).fill(parts.year);
         await page.locator(ST_PETE_NUMBER).fill(parts.serial);
       } else {
-        const input = page.locator(jurisdiction?.portalFamily === "tyler-civic-access" ? TYLER_SEARCH_FIELD : SEARCH_FIELD);
+        const input = jurisdiction?.portalFamily === "tyler-civic-access" ? page.locator(TYLER_SEARCH_FIELD)
+          : globalSearch() ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
         if (await input.count() !== 1 || !(await input.isVisible()) || !(await input.isEnabled())) break;
         await input.fill(requestedNumber);
       }
@@ -346,6 +397,13 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         if (await page.locator(TYLER_SEARCH_FIELD).inputValue() !== requestedNumber) break;
         await page.locator(TYLER_SEARCH_BUTTON).click();
         await page.getByText(/Found \d+ results?/).first().waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+      } else if (jurisdiction?.portalFamily === "accela" && globalSearch()) {
+        const input = page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true });
+        if (await input.count() !== 1 || await input.inputValue() !== requestedNumber) break;
+        await input.press("Enter", { noWaitAfter: true });
+        await page.waitForURL((target) => onGlobalResults(target.toString()) ||
+          Boolean(jurisdiction && parsePortalUrl(target.toString(), "detail", jurisdiction.id)), { timeout: 15_000 }).catch(() => undefined);
+        await waitForGlobalResults("");
       } else if (jurisdiction?.portalFamily === "accela") {
         const input = page.locator(SEARCH_FIELD);
         const button = page.locator(SEARCH_BUTTON);
@@ -363,10 +421,23 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
     case "open_exact_result": {
       const links = await exactResultLinks();
       if (links.length !== 1) break;
+      if (globalSearch()) {
+        if (!onGlobalResults(page.url())) break;
+        await page.locator(`[id="${links[0]!.id}"]`).click({ noWaitAfter: true });
+        await page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
+        break;
+      }
       const target = new URL(links[0]!.href, page.url());
       if (!jurisdiction || !parsePortalUrl(target.toString(), "detail", jurisdiction.id)) break;
       await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 12_000 });
       await waitForDetail();
+      break;
+    }
+    case "next_results_page": {
+      if (!onGlobalResults(page.url())) break;
+      const rows = await globalResultRows();
+      await page.locator(GLOBAL_NEXT_PAGE).click({ noWaitAfter: true });
+      await waitForGlobalResults(rows);
       break;
     }
     default:

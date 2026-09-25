@@ -8,19 +8,25 @@ export const JURISDICTIONS = [
     startUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx?module=Building&TabName=Building",
     tenant: "HCFL",
     module: "Building",
-    coverageNote: "County government Building records in HillsGovHub; municipalities are separate authorities.",
-    adapterVersion: "accela-2",
+    // HillsGovHub's Global Search finds a record number in any of these modules.
+    globalSearch: true,
+    modules: ["Building", "LandDevelopment", "Fire", "Enforcement", "Administrative"],
+    coverageNote: "County government records in HillsGovHub, found with its Global Search across Building, Land Development (including utility and site permits), Fire, Enforcement, and Administrative; municipalities are separate authorities.",
+    adapterVersion: "accela-global-1",
   },
   {
     id: "pasco-county-building",
     label: "Pasco County",
     authorityType: "county-government",
     portalFamily: "accela",
-    startUrl: "https://aca-prod.accela.com/PASCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    startUrl: "https://aca-prod.accela.com/PASCO/Default.aspx",
     tenant: "PASCO",
     module: "Building",
-    coverageNote: "Pasco County records in PasCoGateway. Older numbered permits use its Permits search.",
-    adapterVersion: "accela-2",
+    // PascoGateway's home-page Global Search finds a record number in any of these modules.
+    globalSearch: true,
+    modules: ["Building", "Permits", "Planning", "Enforcement"],
+    coverageNote: "Pasco County records in PascoGateway, found with its Global Search across Building, Permits, Planning, and Enforcement.",
+    adapterVersion: "accela-global-1",
   },
   {
     id: "tampa-building",
@@ -121,6 +127,17 @@ export function getJurisdiction(id: string): JurisdictionProfile | null {
 export function getAutomatedJurisdiction(id: string): AutomatedJurisdictionProfile | null {
   const profile = getJurisdiction(id);
   return profile && profile.portalFamily !== "manual" ? profile : null;
+}
+
+/** True for Accela portals searched through the home page's Global Search instead of one module's record search. */
+export function usesGlobalSearch(id: string): boolean {
+  const profile = getJurisdiction(id);
+  return Boolean(profile && "globalSearch" in profile && profile.globalSearch);
+}
+
+/** Accela modules whose record pages belong to the authority. */
+export function accelaModules(profile: JurisdictionProfile): readonly string[] {
+  return "modules" in profile ? profile.modules : [profile.module];
 }
 
 /** True for authorities whose status the user enters by hand. */
