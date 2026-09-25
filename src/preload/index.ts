@@ -17,6 +17,7 @@ const bridge: PermitBridge = {
   setMonitoring: (mode) => ipcRenderer.invoke("permit:set-monitoring", mode),
   setCheckTimes: (times) => ipcRenderer.invoke("permit:set-check-times", times),
   setPermitMonitoring: (permitId, enabled) => ipcRenderer.invoke("permit:set-permit-monitoring", { permitId, enabled }),
+  setProjectNumber: (permitId, projectNumber) => ipcRenderer.invoke("permit:set-project-number", { permitId, projectNumber }),
   setPreference: (key, value) => ipcRenderer.invoke("permit:set-preference", { key, value }),
   checkForUpdate: () => ipcRenderer.invoke("permit:check-update"),
   downloadUpdate: () => ipcRenderer.invoke("permit:download-update"),

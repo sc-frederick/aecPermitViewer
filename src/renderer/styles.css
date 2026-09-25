@@ -163,9 +163,17 @@ select.field-control option::checkmark { order: 1; margin-left: auto; content: "
 .table th:nth-child(5) { width: 180px; }
 .table td { padding: 14px 16px; vertical-align: top; border-bottom: var(--hairline-soft); font-size: var(--fs-body-sm); color: var(--color-graphite); }
 .table tbody tr { transition: background-color var(--duration-fast) var(--ease-out); }
-.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody:last-child tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover { background: var(--color-parchment); }
 .table tbody tr.row-enter { animation: row-enter .9s var(--ease-out); }
+/* Project groups: each is its own tbody, headed by a parchment band with the project number. */
+.table tbody + tbody .group-row th { border-top: var(--hairline); }
+.table tbody tr.group-row:hover { background: none; }
+.group-row th { padding: 12px 20px 10px; background: var(--color-parchment); border-bottom: var(--hairline-soft); text-align: left; font-weight: 400; }
+.group-head { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.group-label { font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); text-transform: uppercase; color: var(--color-graphite); }
+.group-number { font-family: var(--font-mono); font-weight: 500; font-size: 14px; letter-spacing: .02em; color: var(--color-ink); overflow-wrap: anywhere; }
+.group-count { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-graphite); white-space: nowrap; }
 
 .permit-link { display: inline-block; padding: 0; border: 0; background: none; font-family: var(--font-mono); font-weight: 500; font-size: 14px; letter-spacing: .02em; color: var(--color-ink); text-align: left; white-space: nowrap; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 5px; text-decoration-thickness: 1px; transition: text-decoration-color var(--duration-fast) var(--ease-out); }
 .permit-link:hover { text-decoration-color: currentColor; }
@@ -212,6 +220,8 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .detail-meta { display: block; margin-top: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--color-graphite); }
 .detail-meta.failed { margin-top: 4px; color: var(--color-error); }
 .detail-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.detail-project { max-width: 260px; }
+.detail-project .field-error { margin-top: 4px; }
 .rule-head { padding-top: 20px; border-top: var(--rule-bold); }
 
 /* Checkbox */
@@ -286,6 +296,14 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .manual .confirm-actions { margin-top: 28px; }
 .manual #manual-body { margin-bottom: 14px; }
 .manual-reopen { margin-bottom: 28px; }
+.project .coord { margin: 0 0 8px; }
+.project .field { margin-top: 24px; }
+.project .field-error { margin: 12px 0 0; }
+.project .confirm-actions { justify-content: space-between; margin-top: 28px; }
+.project-recent { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 14px; }
+.project-recent-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.project-chip { height: 26px; padding: 0 9px; border: var(--hairline-fog); border-radius: var(--radius-micro); background: transparent; font-family: var(--font-mono); font-size: 12px; letter-spacing: .02em; color: var(--color-graphite); transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.project-chip:hover { border-color: var(--color-ink); color: var(--color-ink); }
 
 /* Notice */
 .notice { position: fixed; right: 32px; bottom: 32px; z-index: 10; display: flex; align-items: flex-start; gap: 12px; max-width: 440px; padding: 14px 18px; background: var(--color-ink); color: var(--color-parchment); border: var(--hairline); font-size: var(--fs-body-sm); line-height: 1.5; animation: pop-in var(--duration-base) var(--ease-out); }

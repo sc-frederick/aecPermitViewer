@@ -16,7 +16,8 @@ The first user is a permit professional reviewing several saved public records. 
 - A hairline-framed banner with an ember left rule appears whenever the key is missing or key storage is unavailable.
 - Add a permit: one card with an explicit issuing-jurisdiction select, the full permit number, "Add permit", and the Show filter (with counts). The jurisdiction's coverage and access note appears before saving. Validation errors appear inline under the form.
 - Permits: a table with Permit, Status, Verified, Last check, and row actions (Check now or Cancel, plus open the verified record). The permit number opens the details sheet. A "Not scheduled" tag marks permits excluded from scheduled checks. The empty state is one serif line.
-- Details sheet: current status and verification time, Check now, Open record, the scheduled-check toggle with that permit's next check time, the full check history, and Remove permit.
+- Projects: after a permit is added, a small dialog asks for the user's own project number (Skip or Add), prefilled with the last one used and offering recent ones as chips. Once any permit has a project number, the table groups permits under parchment band headers ("Project 28069 · 3 permits") in natural order, with "No project" last; each group is its own `tbody`.
+- Details sheet: current status and verification time, Check now, Open record, the project number (saved on Enter or leaving the field; blank clears it), the scheduled-check toggle with that permit's next check time, the full check history, and Remove permit.
 - Settings sheet: TypeSafe key (a password field that sends the key once for encryption, clears itself, and never shows the key again; replace or remove), background and notification switches, signed full-installer updates, and local-data deletion.
 - Destructive or disruptive actions (remove permit, delete local data, install update) use an in-app confirm dialog.
 

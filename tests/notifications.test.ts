@@ -4,7 +4,7 @@ import type { PermitRow } from "../src/shared/permit.js";
 
 const base: PermitRow = {
   id: "00000000-0000-4000-8000-000000000001", jurisdictionId: "hillsborough-county-building",
-  permitNumber: "HC-BLD-26-0087599", monitoringEnabled: true, lastStatus: null, lastObservedAt: null,
+  permitNumber: "HC-BLD-26-0087599", projectNumber: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null,
   lastRecordUrl: null, latestAttemptAt: null, latestOutcome: null, nextDueAt: null, checking: false,
 };
 const verified: PermitRow = { ...base, lastStatus: "In Process", lastObservedAt: "2026-09-23T12:00:00.000Z", latestOutcome: "success" };

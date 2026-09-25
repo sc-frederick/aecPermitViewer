@@ -220,3 +220,43 @@ describe("hand-checked permits", () => {
     }
   });
 });
+
+describe("project numbers", () => {
+  it("saves, trims, and clears a permit's project number", () => {
+    const store = newStore();
+    try {
+      const permitId = store.addPermit("HC-BLD-26-0087599");
+      expect(store.getPermit(permitId)?.projectNumber).toBeNull();
+      expect(store.setProjectNumber(permitId, " 28069 ")).toBe(true);
+      expect(store.getPermit(permitId)?.projectNumber).toBe("28069");
+      store.setProjectNumber(permitId, "");
+      expect(store.getPermit(permitId)?.projectNumber).toBeNull();
+      expect(store.setProjectNumber("00000000-0000-4000-8000-000000000000", "28069")).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("adds the project column to a version 2 database and keeps its permits", () => {
+    const store = newStore();
+    const directory = directories[directories.length - 1]!;
+    const filePath = path.join(directory, "data.sqlite");
+    let permitId = "";
+    try {
+      permitId = store.addPermit("HC-BLD-26-0087599");
+      const db = (store as unknown as { db: { exec(sql: string): void } }).db;
+      db.exec("ALTER TABLE permits DROP COLUMN project_number");
+      db.exec("PRAGMA user_version = 2");
+    } finally {
+      store.close();
+    }
+    const migrated = new PermitStore(filePath);
+    try {
+      expect(migrated.getPermit(permitId)).toMatchObject({ permitNumber: "HC-BLD-26-0087599", projectNumber: null });
+      migrated.setProjectNumber(permitId, "28069");
+      expect(migrated.getPermit(permitId)?.projectNumber).toBe("28069");
+    } finally {
+      migrated.close();
+    }
+  });
+});

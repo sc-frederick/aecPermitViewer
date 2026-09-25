@@ -4,6 +4,7 @@ import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
 import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
 import { dailyHistory } from "../shared/history.js";
+import { groupByProject, recentProjects, type ProjectGroup } from "../shared/projects.js";
 import { getJurisdiction, isManualJurisdiction, JURISDICTIONS } from "../shared/jurisdictions.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
@@ -180,7 +181,8 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
   const identity = make("td");
   const open = actionButton(permit.permitNumber, "details", permit, "permit-link");
   const jurisdiction = getJurisdiction(permit.jurisdictionId);
-  open.setAttribute("aria-label", `${permit.permitNumber}, ${jurisdiction?.label ?? permit.jurisdictionId}, details`);
+  open.setAttribute("aria-label", [permit.permitNumber, jurisdiction?.label ?? permit.jurisdictionId,
+    permit.projectNumber ? `project ${permit.projectNumber}` : null, "details"].filter(Boolean).join(", "));
   identity.append(open);
   identity.append(make("span", "cell-sub", jurisdiction?.label ?? permit.jurisdictionId));
   if (monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId)) {
@@ -216,6 +218,31 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
 
   row.append(identity, status, observed, attempt, controls);
   return row;
+}
+
+const permitCount = (count: number) => `${count} ${count === 1 ? "permit" : "permits"}`;
+
+/** One tbody per project, headed by the project number, so the groups read as sections of one table. */
+function renderGroup(group: ProjectGroup | null, permits: PermitRow[], monitoring: AppSnapshot["monitoring"]): HTMLTableSectionElement {
+  const body = make("tbody", "permit-group");
+  if (group) {
+    const head = make("tr", "group-row");
+    const cell = make("th");
+    cell.scope = "rowgroup";
+    cell.colSpan = 5;
+    const wrap = make("div", "group-head");
+    if (group.projectNumber) {
+      wrap.append(make("span", "group-label", "Project"), make("span", "group-number", group.projectNumber));
+    } else {
+      wrap.append(make("span", "group-label", "No project"));
+    }
+    wrap.append(make("span", "group-count", permitCount(permits.length)));
+    cell.append(wrap);
+    head.append(cell);
+    body.append(head);
+  }
+  body.append(...permits.map((permit) => renderPermit(permit, monitoring)));
+  return body;
 }
 
 function matchesFilter(permit: PermitRow): boolean {
@@ -323,8 +350,15 @@ function render(snapshot: AppSnapshot): void {
   }
 
   const visible = snapshot.permits.filter(matchesFilter);
-  element<HTMLTableSectionElement>("permit-list").replaceChildren(...visible.map((permit) => renderPermit(permit, snapshot.monitoring)));
-  element<HTMLElement>("permit-table").hidden = visible.length === 0;
+  const table = element<HTMLTableElement>("permit-table");
+  for (const body of [...table.tBodies]) body.remove();
+  // Group only once a project number is in use; until then the table stays one plain list.
+  if (visible.some((permit) => permit.projectNumber)) {
+    table.append(...groupByProject(visible).map((group) => renderGroup(group, group.permits, snapshot.monitoring)));
+  } else if (visible.length > 0) {
+    table.append(renderGroup(null, visible, snapshot.monitoring));
+  }
+  table.hidden = visible.length === 0;
   element<HTMLElement>("empty-state").hidden = visible.length > 0;
   element<HTMLElement>("empty-state").textContent = total === 0 ? "No permits yet."
     : filter === "failed" ? "No failed checks." : "Every permit has a status.";
@@ -364,6 +398,9 @@ function renderDetailsSummary(permit: PermitRow): void {
     ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;
   element<HTMLElement>("details-daily-help").textContent = next ? `Next: ${next}` : "";
   element<HTMLButtonElement>("details-remove").disabled = permit.checking;
+  // Don't overwrite what someone is typing, or a value that failed to save.
+  const project = element<HTMLInputElement>("details-project");
+  if (document.activeElement !== project && project.getAttribute("aria-invalid") !== "true") project.value = permit.projectNumber ?? "";
 }
 
 function renderJurisdictionOptions(): void {
@@ -423,7 +460,9 @@ async function loadHistory(permitId: string): Promise<void> {
 function openDetails(permitId: string): void {
   const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
   if (!permit) return;
+  const switching = detailsPermitId !== permitId;
   detailsPermitId = permitId;
+  if (switching) setInlineError("details-project", "details-project-error", null);
   renderDetailsSummary(permit);
   element<HTMLOListElement>("history-list").replaceChildren();
   const sheet = element<HTMLDialogElement>("details-sheet");
@@ -496,6 +535,86 @@ element<HTMLFormElement>("manual-form").addEventListener("submit", async (event)
   notice("Status saved.", "info");
 });
 
+function setInlineError(inputId: string, errorId: string, message: string | null): void {
+  const error = element<HTMLElement>(errorId);
+  error.hidden = !message;
+  error.textContent = message ?? "";
+  const input = element<HTMLInputElement>(inputId);
+  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+}
+
+const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._/-]*$/;
+
+function projectProblem(value: string): string | null {
+  if (!value) return null;
+  if (value.length > 40) return "Use 40 characters or fewer.";
+  return PROJECT_PATTERN.test(value) ? null : "Use letters, numbers, spaces, and - . _ / only.";
+}
+
+// Project number: asked once after a permit is added, editable later from its details.
+const projectDialog = element<HTMLDialogElement>("project-dialog");
+let projectPermitId: string | null = null;
+let settleProject: ((saved: string | null) => void) | null = null;
+
+function askProjectNumber(permit: PermitRow): Promise<string | null> {
+  settleProject?.(null);
+  projectPermitId = permit.id;
+  element<HTMLElement>("project-permit").textContent = permit.permitNumber;
+  const others = currentSnapshot?.permits.filter((entry) => entry.id !== permit.id) ?? [];
+  const recent = recentProjects(others, 5);
+  const input = element<HTMLInputElement>("project-input");
+  // Permits tend to arrive a project at a time, so offer the last one used, selected so typing replaces it.
+  input.value = recent[0] ?? "";
+  element<HTMLElement>("project-recent").hidden = recent.length < 2;
+  element<HTMLUListElement>("project-recent-list").replaceChildren(...recent.map((number) => {
+    const item = make("li");
+    const chip = make("button", "project-chip", number);
+    chip.type = "button";
+    chip.dataset.project = number;
+    item.append(chip);
+    return item;
+  }));
+  setInlineError("project-input", "project-error", null);
+  projectDialog.showModal();
+  input.focus();
+  input.select();
+  return new Promise((resolve) => { settleProject = resolve; });
+}
+
+function finishProject(saved: string | null): void {
+  projectPermitId = null;
+  if (projectDialog.open) projectDialog.close();
+  const settle = settleProject;
+  settleProject = null;
+  settle?.(saved);
+}
+
+element<HTMLInputElement>("project-input").addEventListener("input", () => setInlineError("project-input", "project-error", null));
+element<HTMLUListElement>("project-recent-list").addEventListener("click", (event) => {
+  const chip = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-project]");
+  if (!chip?.dataset.project) return;
+  const input = element<HTMLInputElement>("project-input");
+  input.value = chip.dataset.project;
+  setInlineError("project-input", "project-error", null);
+  input.focus();
+});
+element<HTMLButtonElement>("project-skip").addEventListener("click", () => finishProject(null));
+projectDialog.addEventListener("cancel", (event) => { event.preventDefault(); finishProject(null); });
+projectDialog.addEventListener("click", (event) => { if (event.target === projectDialog) finishProject(null); });
+element<HTMLFormElement>("project-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const permitId = projectPermitId;
+  if (!permitId) return;
+  const input = element<HTMLInputElement>("project-input");
+  const value = input.value.trim();
+  if (!value) { finishProject(null); return; }
+  const problem = projectProblem(value);
+  if (problem) { setInlineError("project-input", "project-error", problem); input.focus(); return; }
+  const result = await busy(element<HTMLButtonElement>("project-save"), () => api.setProjectNumber(permitId, value));
+  if (!result.ok) { setInlineError("project-input", "project-error", result.error); input.focus(); return; }
+  finishProject(value);
+});
+
 function setFieldError(message: string | null): void {
   const input = element<HTMLInputElement>("permit-number");
   const error = element<HTMLElement>("permit-number-error");
@@ -522,9 +641,10 @@ element<HTMLFormElement>("add-form").addEventListener("submit", async (event) =>
   input.value = "";
   setFieldError(null);
   if (filter !== "all") setFilter("all");
-  notice(`${number} added.`, "info");
   render(await api.snapshot());
   const added = currentSnapshot?.permits.find((entry) => entry.id === result.value);
+  const project = added ? await askProjectNumber(added) : null;
+  notice(project ? `${number} added to project ${project}.` : `${number} added.`, "info");
   if (added && isManualJurisdiction(added.jurisdictionId)) await startManualCheck(added);
 });
 
@@ -621,7 +741,7 @@ element<HTMLSelectElement>("permit-filter").addEventListener("change", (event) =
 });
 
 // Table actions
-element<HTMLElement>("permit-list").addEventListener("click", (event) => {
+element<HTMLTableElement>("permit-table").addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
   if (!target?.dataset.permitId || !target.dataset.action) return;
   void runPermitAction(target.dataset.action, target.dataset.permitId);
@@ -640,6 +760,25 @@ element<HTMLButtonElement>("details-check").addEventListener("click", (event) =>
 });
 element<HTMLButtonElement>("details-open").addEventListener("click", () => {
   if (detailsPermitId) void runPermitAction("open", detailsPermitId);
+});
+element<HTMLInputElement>("details-project").addEventListener("input", () => setInlineError("details-project", "details-project-error", null));
+element<HTMLInputElement>("details-project").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") (event.currentTarget as HTMLInputElement).blur();
+});
+// Saves when the field is committed (Enter or leaving it), like the other details settings.
+element<HTMLInputElement>("details-project").addEventListener("change", async (event) => {
+  const input = event.currentTarget as HTMLInputElement;
+  const permitId = detailsPermitId;
+  const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
+  if (!permitId || !permit) return;
+  const value = input.value.trim();
+  input.value = value;
+  if (value === (permit.projectNumber ?? "")) return;
+  const problem = projectProblem(value);
+  if (problem) { setInlineError("details-project", "details-project-error", problem); return; }
+  const result = await api.setProjectNumber(permitId, value);
+  if (!result.ok) { setInlineError("details-project", "details-project-error", result.error); return; }
+  notice(value ? "Project number saved." : "Project number cleared.", "info");
 });
 element<HTMLInputElement>("details-daily").addEventListener("change", async (event) => {
   if (!detailsPermitId) return;
@@ -726,6 +865,7 @@ api.onLocalError((message) => notice(message));
 api.onOpenDetails((permitId) => {
   for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet:not(#details-sheet)")) closeSheet(dialog);
   finishConfirm(false);
+  finishProject(null);
   if (currentSnapshot?.permits.some((permit) => permit.id === permitId)) openDetails(permitId);
   else void api.snapshot().then((snapshot) => { render(snapshot); openDetails(permitId); });
 });
