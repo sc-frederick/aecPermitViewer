@@ -10,6 +10,7 @@ import path from "node:path";
 function developmentKey(): string | null {
   if (app.isPackaged) return null;
   const value = process.env.TYPESAFE_API_KEY?.trim();
+
   return value ? value : null;
 }
 
@@ -24,12 +25,16 @@ export class KeyStore {
 
   async state(): Promise<"configured" | "missing" | "unavailable"> {
     if (this.devKey) return "configured";
+
     if (process.platform !== "win32" || !(await safeStorage.isAsyncEncryptionAvailable())) return "unavailable";
+
     try {
       await readFile(this.secretPath);
+
       return "configured";
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+
       return "unavailable";
     }
   }
@@ -39,6 +44,7 @@ export class KeyStore {
     if (process.platform !== "win32" || !(await safeStorage.isAsyncEncryptionAvailable())) {
       throw new Error("unavailable");
     }
+
     await this.writeEncrypted(await safeStorage.encryptStringAsync(key));
   }
 
@@ -48,10 +54,13 @@ export class KeyStore {
 
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
+
     if (await this.state() !== "configured") return null;
     const encrypted = await readFile(this.secretPath);
     const decrypted = await safeStorage.decryptStringAsync(encrypted);
+
     if (decrypted.shouldReEncrypt) await this.writeEncrypted(await safeStorage.encryptStringAsync(decrypted.result));
+
     return decrypted.result;
   }
 

@@ -17,18 +17,24 @@ export interface CheckEvent {
  */
 export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome: RunOutcome): CheckEvent | null {
   const number = after.permitNumber;
+
   if (outcome === "success" && after.lastStatus !== null) {
     if (before.lastStatus === null) {
       return { kind: "first-status", permitId: after.id, title: number, body: `“${after.lastStatus}”` };
     }
+
     if (before.lastStatus !== after.lastStatus) {
       return { kind: "status-changed", permitId: after.id, title: number, body: `“${before.lastStatus}” → “${after.lastStatus}”` };
     }
+
     return null;
   }
+
   if (!isFailure(outcome) || isFailure(before.latestOutcome)) return null;
+
   if (outcome === "authentication_error") {
     return { kind: "key-needed", permitId: after.id, title: "TypeSafe key needed", body: "Add it in Settings." };
   }
+
   return { kind: "check-failed", permitId: after.id, title: number, body: outcomeText[outcome] };
 }

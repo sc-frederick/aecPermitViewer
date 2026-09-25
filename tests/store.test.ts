@@ -7,6 +7,7 @@ import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
 import { JURISDICTIONS } from "../src/shared/jurisdictions.js";
 
 const directories: string[] = [];
+
 afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -14,12 +15,14 @@ afterEach(() => {
 function newStore(): PermitStore {
   const directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-test-"));
   directories.push(directory);
+
   return new PermitStore(path.join(directory, "data.sqlite"));
 }
 
 describe("observation history", () => {
   it("keeps a prior verified status and timestamp after a failed attempt", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       const successId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
@@ -49,8 +52,10 @@ describe("observation history", () => {
 
   it("records unchanged successful observations as separate evidence", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
+
       for (const observedAt of ["2026-09-24T12:00:00.000Z", "2026-09-25T12:00:00.000Z"]) {
         const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
         store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
@@ -60,6 +65,7 @@ describe("observation history", () => {
             recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL" },
         });
       }
+
       expect(store.history(permitId).observations).toHaveLength(2);
     } finally {
       store.close();
@@ -70,6 +76,7 @@ describe("observation history", () => {
 describe("permit removal", () => {
   it("deletes a permit with its runs and observations", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
@@ -95,6 +102,7 @@ describe("permit removal", () => {
 describe("jurisdiction persistence", () => {
   it("seeds each supported profile and associates permits and run metadata with their profile", () => {
     const store = newStore();
+
     try {
       const profile = JURISDICTIONS.find((entry) => entry.id !== HILLSBOROUGH_ID);
       expect(profile).toBeDefined();
@@ -117,13 +125,16 @@ describe("jurisdiction persistence", () => {
     const store = newStore();
     const directory = directories[directories.length - 1]!;
     const filePath = path.join(directory, "data.sqlite");
+
     try {
       (store as unknown as { db: { exec(sql: string): void } }).db.exec("DELETE FROM jurisdiction_profiles");
       (store as unknown as { db: { exec(sql: string): void } }).db.exec(`PRAGMA user_version = ${version}`);
     } finally {
       store.close();
     }
+
     const migrated = new PermitStore(filePath);
+
     try {
       expect((migrated as unknown as { db: { prepare(sql: string): { get(): unknown } } }).db
         .prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
@@ -137,6 +148,7 @@ describe("jurisdiction persistence", () => {
 describe("scheduled checks", () => {
   it("includes new permits, defaults to scheduled mode, and reads the earlier 'daily' setting", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       expect(store.getPermit(permitId)?.monitoringEnabled).toBe(true);
@@ -153,6 +165,7 @@ describe("scheduled checks", () => {
 
   it("schedules the next check at a business-hours slot and pulls old 24-hour due times forward", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
@@ -173,6 +186,7 @@ describe("scheduled checks", () => {
 
   it("stores custom check times and pulls due times forward to the new schedule", () => {
     const store = newStore();
+
     try {
       expect(store.getCheckTimes()).toEqual([{ hour: 8, minute: 30 }, { hour: 12, minute: 30 }, { hour: 16, minute: 30 }]);
       const permitId = store.addPermit("HC-BLD-26-0087599");
@@ -190,6 +204,7 @@ describe("scheduled checks", () => {
 describe("hand-checked permits", () => {
   it("stay out of scheduled checks and record entered statuses as observations", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("BLD2024-01234", "orange-county-building");
       expect(store.getPermit(permitId)?.monitoringEnabled).toBe(false);
@@ -211,6 +226,7 @@ describe("hand-checked permits", () => {
 
   it("refuses an entered status for an automated permit", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       expect(() => store.recordManualStatus({ permitId, status: "Issued", appVersion: "test",
@@ -224,6 +240,7 @@ describe("hand-checked permits", () => {
 describe("project numbers", () => {
   it("saves, trims, and clears a permit's project number", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       expect(store.getPermit(permitId)?.projectNumber).toBeNull();
@@ -242,6 +259,7 @@ describe("project numbers", () => {
     const directory = directories[directories.length - 1]!;
     const filePath = path.join(directory, "data.sqlite");
     let permitId = "";
+
     try {
       permitId = store.addPermit("HC-BLD-26-0087599");
       const db = (store as unknown as { db: { exec(sql: string): void } }).db;
@@ -250,7 +268,9 @@ describe("project numbers", () => {
     } finally {
       store.close();
     }
+
     const migrated = new PermitStore(filePath);
+
     try {
       expect(migrated.getPermit(permitId)).toMatchObject({ permitNumber: "HC-BLD-26-0087599", projectNumber: null });
       migrated.setProjectNumber(permitId, "28069");
@@ -264,6 +284,7 @@ describe("project numbers", () => {
 describe("lookups", () => {
   it("reads one permit exactly as the list shows it", () => {
     const store = newStore();
+
     try {
       const first = store.addPermit("HC-BLD-26-0087599");
       const second = store.addPermit("HC-BLD-26-0087600");
@@ -271,6 +292,7 @@ describe("lookups", () => {
       const runId = store.startRun({ permitId: second, appVersion: "test", playwrightVersion: "test" });
       store.finishRun({ runId, permitId: second, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
+
       for (const permit of store.listPermits()) expect(store.getPermit(permit.id)).toEqual(permit);
       expect(store.getPermit(first)?.permitNumber).toBe("HC-BLD-26-0087599");
       expect(store.getPermit("00000000-0000-4000-8000-000000000000")).toBeNull();
@@ -281,17 +303,22 @@ describe("lookups", () => {
 
   it("reports the browser version from the most recent run that recorded one", () => {
     const store = newStore();
+
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
       expect(store.latestBrowserVersion()).toBeNull();
+
       for (const browserVersion of ["139.0", "140.0", null]) {
         const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
         store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion });
       }
+
       expect(store.latestBrowserVersion()).toBe("140.0");
       const db = (store as unknown as { db: { prepare(sql: string): { all(): Array<{ detail: string }> } } }).db;
+
       const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
         WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all();
+
       expect(plan.map((step) => step.detail).join(" ")).toContain("idx_runs_started");
     } finally {
       store.close();

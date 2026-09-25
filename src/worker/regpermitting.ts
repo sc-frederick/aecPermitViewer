@@ -9,6 +9,7 @@ type RegPermittingProfile = Extract<AutomatedJurisdictionProfile, { portalFamily
 
 // The navigation drawer starts collapsed, so the link is present but off screen.
 const SEARCH_RECORDS_LINK = 'a.menu-item-anchor[title="Search Records"]';
+
 /** Search by Application is the default tab; permits have their own tab, field, button, and results grid. */
 const FORMS = {
   application: {
@@ -24,17 +25,23 @@ const FORMS = {
     grid: 'table#bodyTbl_right[pl_prop="D_PermitSearch.pxResults"]',
   },
 } as const;
+
 const RESULT_ROW = "tr[pl_index]";
+
 const NO_RESULTS_ROW = "tr#Grid_NoResults";
+
 /** The results grid shows 20 rows a page, so a full page without the number can't rule it out. */
 const PAGE_SIZE = 20;
+
 const RECORD_HEADING = "span.case_id";
 
 /** The browser's own user agent without "Headless", for a portal whose firewall rejects that word. */
 export async function plainUserAgent(browser: Browser): Promise<string> {
   const probe = await browser.newContext();
+
   try {
     const page = await probe.newPage();
+
     return (await page.evaluate(() => navigator.userAgent)).replace("HeadlessChrome/", "Chrome/");
   } finally {
     await probe.close();
@@ -45,16 +52,20 @@ async function frameShowing(page: Page, selector: string): Promise<Frame | null>
   for (const frame of page.frames()) {
     if (await frame.locator(selector).filter({ visible: true }).count().catch(() => 0) > 0) return frame;
   }
+
   return null;
 }
 
 async function waitForFrameShowing(page: Page, selector: string, timeout: number): Promise<Frame | null> {
   const until = Date.now() + timeout;
+
   while (Date.now() < until) {
     const frame = await frameShowing(page, selector);
+
     if (frame) return frame;
     await page.waitForTimeout(250);
   }
+
   return null;
 }
 
@@ -64,6 +75,7 @@ async function fieldValue(frame: Frame, label: string): Promise<string | null> {
     .filter((caption) => caption.textContent?.trim() === name)
     .map((caption) => caption.parentElement?.querySelector(":scope > .field-item.dataValueRead")?.textContent?.trim() ?? ""), label)
     .catch(() => [] as string[]);
+
   return values.length === 1 && values[0] && values[0] !== "no value" ? values[0] : null;
 }
 
@@ -79,17 +91,20 @@ async function searchFrame(page: Page, requested: string): Promise<Frame | null>
 async function criteriaEntered(frame: Frame, requested: string): Promise<boolean> {
   const wanted = parseRegPermittingNumber(requested);
   const value = await frame.locator(form(requested).input).filter({ visible: true }).first().inputValue().catch(() => "");
+
   return Boolean(wanted && value.trim().toUpperCase() === wanted.number);
 }
 
 /** The number links in the visible results grid, or null when no results are shown. */
 async function resultLinks(frame: Frame, requested: string): Promise<Locator | null> {
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
+
   return await grid.count() === 0 ? null : grid.locator(`${RESULT_ROW} td:first-child a`);
 }
 
 async function resultNumbers(frame: Frame, requested: string): Promise<string[] | null> {
   const links = await resultLinks(frame, requested);
+
   return links ? (await links.allInnerTexts()).map((text) => text.trim()) : null;
 }
 
@@ -101,47 +116,60 @@ function isRequested(text: string, requested: string): boolean {
 async function observeRegPermitting(page: Page, requested: string): Promise<SearchObservation> {
   const wanted = parseRegPermittingNumber(requested);
   const none = { inputValue: "", formLabels: [], visibleControls: [], resultNumbers: [], candidates: [] };
+
   if (!wanted) return { phase: "unknown", ...none };
+
   if (await frameShowing(page, RECORD_HEADING)) return { phase: "detail", ...none, visibleControls: ["Record view"] };
   const frame = await frameShowing(page, FORMS.application.input) ?? await frameShowing(page, FORMS.permit.input);
+
   if (!frame) {
     return await page.locator(SEARCH_RECORDS_LINK).count() > 0
       ? { phase: "search", ...none, visibleControls: ["Search Records link"], candidates: [{ id: "open_public_search",
         description: "Open Search Records, RegPermitting's public search." }] }
       : { phase: "search", ...none };
   }
+
   const tab = form(requested).tab;
   const entered = await criteriaEntered(frame, requested);
   const inputValue = entered ? requested : "";
   const shown = entered ? await resultNumbers(frame, requested) : null;
+
   if (shown) {
     const exact = shown.filter((text) => isRequested(text, requested));
+
     return exact.length > 1
       ? { phase: "results", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact, candidates: [] }
       : { phase: "search", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact,
         candidates: exact.length === 1 ? [{ id: "open_exact_result", description: `Open the result whose number exactly matches ${requested}.` }] : [] };
   }
+
   const candidates: Candidate[] = [];
+
   if (!entered) {
     candidates.push({ id: "fill_record_number", description: `Open ${tab} and enter the exact ${wanted.kind} number.` });
   } else if (await frame.locator(form(requested).button).filter({ visible: true }).count() > 0) {
     candidates.push({ id: "search_record_number", description: `Submit ${tab} for the exact ${wanted.kind} number.` });
   }
+
   return { phase: "search", inputValue, formLabels: [tab], visibleControls: [`${tab} field`], resultNumbers: [], candidates };
 }
 
 /** True once a search for the exact number returned "No cases", or every result on a single page is another number. */
 async function regPermittingFoundNothing(page: Page, requested: string): Promise<boolean> {
   const frame = await searchFrame(page, requested);
+
   if (!frame || !(await criteriaEntered(frame, requested))) return false;
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
+
   if (await grid.locator(NO_RESULTS_ROW).filter({ visible: true }).count() > 0) return true;
   const shown = await resultNumbers(frame, requested);
+
   return Boolean(shown && shown.length > 0 && shown.length < PAGE_SIZE && !shown.some((text) => isRequested(text, requested)));
 }
 
 async function openRegPermittingSearch(page: Page): Promise<void> {
   const link = page.locator(SEARCH_RECORDS_LINK).first();
+
   if (await link.count() === 0) return;
   await link.dispatchEvent("click");
   await waitForFrameShowing(page, FORMS.application.input, 20_000);
@@ -150,18 +178,23 @@ async function openRegPermittingSearch(page: Page): Promise<void> {
 async function fillRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const wanted = parseRegPermittingNumber(requested);
   let frame = await frameShowing(page, FORMS.application.input) ?? await frameShowing(page, FORMS.permit.input);
+
   if (!wanted || !frame) return;
   const target = form(requested);
+
   if (await frame.locator(target.input).filter({ visible: true }).count() === 0) {
     await frame.locator("[role=tab]").filter({ hasText: target.tab }).first().click();
     frame = await waitForFrameShowing(page, target.input, 12_000);
+
     if (!frame) return;
   }
+
   await frame.locator(target.input).filter({ visible: true }).first().fill(wanted.number);
 }
 
 async function submitRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const frame = await searchFrame(page, requested);
+
   if (!frame || !(await criteriaEntered(frame, requested))) return;
   const target = form(requested);
   await frame.locator(target.button).filter({ visible: true }).first().click();
@@ -172,8 +205,10 @@ async function submitRegPermittingSearch(page: Page, requested: string): Promise
 async function openRegPermittingResult(page: Page, requested: string): Promise<void> {
   const frame = await searchFrame(page, requested);
   const links = frame && await resultLinks(frame, requested);
+
   if (!links) return;
   const exact = (await links.allInnerTexts()).flatMap((text, index) => isRequested(text.trim(), requested) ? [index] : []);
+
   if (exact.length !== 1) return;
   await links.nth(exact[0]!).click();
   const record = await waitForFrameShowing(page, RECORD_HEADING, 30_000);
@@ -200,15 +235,20 @@ async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile
   openedRecordUrl: string | null): Promise<DisplayedRecord> {
   const wanted = parseRegPermittingNumber(requested);
   const frame = await frameShowing(page, RECORD_HEADING);
+
   if (!wanted || !frame) return NOTHING_DISPLAYED;
   const labels = statusLabels(profile).filter((label) => (label === "Permit Status") === (wanted.kind === "permit"));
   let statusLabel: string | null = null;
   let statusValue: string | null = null;
+
   for (const label of labels) {
     const value = await fieldValue(frame, label);
+
     if (value) [statusLabel, statusValue] = [label, value];
   }
+
   const key = frame === page.mainFrame() ? null : new URL(frame.url()).searchParams.get("key");
+
   return {
     displayedNumber: await fieldValue(frame, wanted.kind === "permit" ? "Permit Number" : "Application Number"),
     statusLabel,

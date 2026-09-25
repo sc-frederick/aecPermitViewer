@@ -5,11 +5,13 @@ import { verifyReleaseEnvelope } from "../src/main/updater.js";
 describe("signed update metadata", () => {
   const keys = generateKeyPairSync("ed25519");
   const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+
   const payload = { version: "0.2.0", url: "https://updates.example.test/PermitMonitorSetup.exe",
     sha256: "a".repeat(64), size: 250_000_000, publisher: "Permit Monitor LLC" };
 
   function envelope(value: typeof payload): string {
     const signed = Buffer.from(JSON.stringify(value));
+
     return JSON.stringify({ signed: signed.toString("base64"), signature: sign(null, signed, keys.privateKey).toString("base64") });
   }
 

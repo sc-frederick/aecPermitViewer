@@ -2,15 +2,18 @@ import { build } from "esbuild";
 import { copyFile, cp, mkdir, writeFile } from "node:fs/promises";
 
 await mkdir("dist", { recursive: true });
+
 const updateConfig = {
   feedUrl: process.env.UPDATE_FEED_URL ?? "",
   publicKeySpkiBase64: process.env.UPDATE_PUBLIC_KEY_SPKI_BASE64 ?? "",
   expectedPublisher: process.env.UPDATE_EXPECTED_PUBLISHER ?? "",
 };
+
 // expectedPublisher stays empty for unsigned builds; the signed manifest is then the only update check.
 if (process.env.RELEASE_BUILD === "1" && (!updateConfig.feedUrl || !updateConfig.publicKeySpkiBase64)) {
   throw new Error("A release build requires the update feed URL and public key.");
 }
+
 await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 
 const shared = {

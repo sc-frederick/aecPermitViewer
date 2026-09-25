@@ -22,7 +22,9 @@ export interface ActiveCheck {
 }
 
 const MAX_ACTIONS = 20;
+
 const MAX_REQUESTS = 20;
+
 const DEADLINE_MS = 180_000;
 
 export function runCheck(input: {
@@ -40,6 +42,7 @@ export function runCheck(input: {
   const closed = new Promise<void>((resolve) => { markClosed = resolve; });
   const cachePath = path.join(input.cacheRoot, input.runId);
   mkdirSync(cachePath, { recursive: true });
+
   const result = new Promise<CheckResult>((resolve) => {
     let done = false;
     let exited = false;
@@ -51,13 +54,16 @@ export function runCheck(input: {
     let forceKillTimer: NodeJS.Timeout | null = null;
     const repeated = new Map<string, number>();
     const environment: NodeJS.ProcessEnv = {};
+
     for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"]) {
       if (process.env[name]) environment[name] = process.env[name];
     }
+
     environment.PLAYWRIGHT_BROWSERS_PATH = input.browserPath;
     environment.TEMP = cachePath;
     environment.TMP = cachePath;
     let worker: Electron.UtilityProcess;
+
     try {
       worker = utilityProcess.fork(path.resolve(input.workerPath), [], {
         env: environment,
@@ -68,25 +74,33 @@ export function runCheck(input: {
       markClosed();
       resolve({ outcome: "browser_error", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
+
       return;
     }
+
     const finish = (outcome: RunOutcome, observation?: CheckResult["observation"]) => {
       if (done) return;
       done = true;
       controller.abort();
       clearTimeout(timer);
+
       if (!exited) {
         try { worker.postMessage({ kind: "cancel", runId: input.runId } satisfies MainToWorker); } catch { /* already exited */ }
+
         forceKillTimer = setTimeout(() => { worker.kill(); }, 5_000);
         forceKillTimer.unref();
       }
+
       resolve({ outcome, actionCount, requestCount, actualModel, browserVersion, ...(observation ? { observation } : {}) });
     };
+
     const timer = setTimeout(() => finish("timeout"), DEADLINE_MS);
     cancel = () => finish("cancelled");
     worker.on("exit", () => {
       exited = true;
+
       if (forceKillTimer) clearTimeout(forceKillTimer);
+
       if (!done) finish("browser_error");
       void rm(cachePath, { recursive: true, force: true }).finally(markClosed);
     });
@@ -96,17 +110,23 @@ export function runCheck(input: {
     async function handleMessage(raw: unknown): Promise<void> {
       if (done || !raw || typeof raw !== "object") return;
       const message = raw as WorkerToMain;
+
       if (message.runId !== input.runId) return;
+
       switch (message.kind) {
         case "action_count":
           actionCount = message.count;
+
           if (actionCount >= MAX_ACTIONS) finish("timeout");
+
           return;
         case "failed":
           finish(message.outcome);
+
           return;
         case "verified": {
           browserVersion = message.browserVersion;
+
           const parsed = parseDisplayedStatus({
             jurisdictionId: input.permit.jurisdictionId,
             requestedNumber: input.permit.permitNumber,
@@ -116,22 +136,32 @@ export function runCheck(input: {
             observedAt: message.observedAt,
             recordUrl: message.recordUrl,
           });
+
           if (parsed._tag === "err") finish(parsed.outcome);
           else finish("success", parsed.value);
+
           return;
         }
+
         case "observation": {
           if (decisionPending) return;
+
           if (requestCount >= MAX_REQUESTS || actionCount >= MAX_ACTIONS || Date.now() >= deadline) {
             finish("timeout");
+
             return;
           }
+
           const observation = message.observation;
+
           if (observation.candidates.length === 0 || observation.candidates.length > 30) {
             finish("unsupported_page");
+
             return;
           }
+
           decisionPending = true;
+
           const decision = await chooseNavigation({
             key: input.key,
             jurisdictionId: input.permit.jurisdictionId,
@@ -142,36 +172,50 @@ export function runCheck(input: {
             deadline,
             onAttempt: () => { requestCount += 1; },
           });
+
           decisionPending = false;
+
           if (done) return;
+
           if ("actualModel" in decision && decision.actualModel) actualModel = decision.actualModel;
+
           if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page") {
             finish(decision._tag);
+
             return;
           }
+
           const pair = `${observation.fingerprint}:${decision._tag === "chosen" ? decision.candidateId : decision._tag}`;
           const times = (repeated.get(pair) ?? 0) + 1;
           repeated.set(pair, times);
+
           if (times >= 2) {
             finish("unsupported_page");
+
             return;
           }
+
           if (decision._tag === "stop") {
             finish("unsupported_page");
+
             return;
           }
+
           if (decision._tag === "wait") {
             setTimeout(() => {
               if (!done) worker.postMessage({ kind: "reobserve", runId: input.runId } satisfies MainToWorker);
             }, 800).unref();
+
             return;
           }
+
           worker.postMessage({
             kind: "choose",
             runId: input.runId,
             fingerprint: observation.fingerprint,
             candidateId: decision.candidateId,
           } satisfies MainToWorker);
+
           return;
         }
       }
@@ -186,5 +230,6 @@ export function runCheck(input: {
       browserPath: input.browserPath,
     } satisfies MainToWorker);
   });
+
   return { result, closed, cancel: () => cancel() };
 }
