@@ -71,6 +71,7 @@ describe("verified portal observation", () => {
     expect(parsePortalUrl(pasco.replaceAll("Planning", "Licenses"), "detail", "pasco-county-building")).toBeNull();
     const landDevelopment = detailUrl.replaceAll("Building", "LandDevelopment");
     expect(parsePortalUrl(landDevelopment, "detail", HILLSBOROUGH_ID)).not.toBeNull();
+    expect(parsePortalUrl(detailUrl.replaceAll("Building", "Administrative"), "detail", HILLSBOROUGH_ID)).not.toBeNull();
     expect(parseDisplayedStatus({ ...candidate, requestedNumber: "HC-MINSITE-26-0000079",
       displayedNumber: "HC-MINSITE-26-0000079", recordUrl: landDevelopment })).toMatchObject({ _tag: "ok" });
     expect(parsePortalUrl(detailUrl.replaceAll("Building", "Licenses"), "detail", HILLSBOROUGH_ID)).toBeNull();

@@ -10,8 +10,8 @@ export const JURISDICTIONS = [
     module: "Building",
     // HillsGovHub's Global Search finds a record number in any of these modules.
     globalSearch: true,
-    modules: ["Building", "LandDevelopment", "Fire", "Enforcement"],
-    coverageNote: "County government records in HillsGovHub, found with its Global Search across Building, Land Development, Fire, and Enforcement; municipalities are separate authorities.",
+    modules: ["Building", "LandDevelopment", "Fire", "Enforcement", "Administrative"],
+    coverageNote: "County government records in HillsGovHub, found with its Global Search across Building, Land Development (including utility and site permits), Fire, Enforcement, and Administrative; municipalities are separate authorities.",
     adapterVersion: "accela-global-1",
   },
   {
