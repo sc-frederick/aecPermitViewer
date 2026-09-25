@@ -13,6 +13,10 @@ export interface PermitBridge {
   addAndCheck(input: { jurisdiction: string; permitNumber: string }): Promise<BridgeResult<string>>;
   checkNow(permitId: string): Promise<BridgeResult<null>>;
   cancel(permitId: string): Promise<BridgeResult<null>>;
+  /** Hand-checked permits: opens the portal search and copies the permit number. */
+  openPortal(permitId: string): Promise<BridgeResult<null>>;
+  /** Hand-checked permits: saves the status the user read, with an optional record link. */
+  recordManualStatus(input: { permitId: string; status: string; recordUrl: string }): Promise<BridgeResult<null>>;
   history(permitId: string): Promise<BridgeResult<PermitHistory>>;
   /** Sends the key to main once for encryption; it is never returned to the window. */
   saveKey(key: string): Promise<BridgeResult<null>>;

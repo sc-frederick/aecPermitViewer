@@ -22,7 +22,7 @@ For a supported authority, the app checks a saved permit and records its exact d
 
 ## Operating context
 
-The authority selector includes Hillsborough, Pasco, Pinellas, Hernando, and Polk counties, plus Tampa and St. Petersburg. A municipality inside a county is a separate authority. Accela, Tyler Civic Access, and Click2Gov require separate search paths. Palm Bay (login required) and Orange County (CAPTCHA on every search) are not offered, because neither allows an anonymous lookup. Checks run locally while the app is open and the computer is awake. Selected, filtered page text goes to TypeSafe for navigation decisions. See [portal research](docs/FL_PERMIT_PORTALS.md) for each search boundary and access limit.
+The authority selector includes Hillsborough, Pasco, Pinellas, Hernando, Polk, and Orange counties, plus Tampa, St. Petersburg, and Palm Bay. A municipality inside a county is a separate authority. Accela, Tyler Civic Access, and Click2Gov require separate search paths. Palm Bay (login required) and Orange County (CAPTCHA on every search) don't allow an anonymous lookup, so they are checked by hand: the app opens the official search and records the status the user enters. Checks run locally while the app is open and the computer is awake. Selected, filtered page text goes to TypeSafe for navigation decisions. See [portal research](docs/FL_PERMIT_PORTALS.md) for each search boundary and access limit.
 
 ## Capabilities and constraints
 

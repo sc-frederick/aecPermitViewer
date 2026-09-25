@@ -77,10 +77,37 @@ export const JURISDICTIONS = [
     coverageNote: "Polk County Building records in Accela; historical permits use a separate county lookup.",
     adapterVersion: "accela-2",
   },
+  // Neither portal allows an anonymous automated lookup, so these are checked by hand: the app opens
+  // the official search and records the status the user reads there.
+  {
+    id: "orange-county-building",
+    label: "Orange County",
+    authorityType: "county-government",
+    portalFamily: "manual",
+    startUrl: "https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx",
+    tenant: "",
+    module: "Building",
+    coverageNote: "Checked by hand. Fast Track asks for human verification on each search, so Check now opens it and you enter the status you see.",
+    adapterVersion: "manual-1",
+  },
+  {
+    id: "palm-bay-building",
+    label: "City of Palm Bay",
+    authorityType: "municipality",
+    portalFamily: "manual",
+    startUrl: "https://ims.palmbayfl.gov/ims/Find?bNewSearch=true&cat=Permit",
+    tenant: "",
+    module: "Building",
+    coverageNote: "Checked by hand. The city's iMS search requires a login, so Check now opens it and you enter the status you see.",
+    adapterVersion: "manual-1",
+  },
 ] as const;
 
 /** One authority supported by the permit selector. */
 export type JurisdictionProfile = (typeof JURISDICTIONS)[number];
+
+/** An authority the browser worker can search on its own. */
+export type AutomatedJurisdictionProfile = Exclude<JurisdictionProfile, { portalFamily: "manual" }>;
 
 /** Stable identifier for a supported permit authority. */
 export type JurisdictionId = JurisdictionProfile["id"];
@@ -88,4 +115,15 @@ export type JurisdictionId = JurisdictionProfile["id"];
 /** Return the exact profile for a persisted or user-selected identifier. */
 export function getJurisdiction(id: string): JurisdictionProfile | null {
   return JURISDICTIONS.find((profile) => profile.id === id) ?? null;
+}
+
+/** The profile only if the browser worker can check it; manual authorities return null. */
+export function getAutomatedJurisdiction(id: string): AutomatedJurisdictionProfile | null {
+  const profile = getJurisdiction(id);
+  return profile && profile.portalFamily !== "manual" ? profile : null;
+}
+
+/** True for authorities whose status the user enters by hand. */
+export function isManualJurisdiction(id: string): boolean {
+  return getJurisdiction(id)?.portalFamily === "manual";
 }
