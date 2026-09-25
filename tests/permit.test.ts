@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HILLSBOROUGH_ID, parseDisplayedStatus, parsePortalUrl, resolveJurisdiction, sameJurisdictionPermitNumber, samePermitNumber } from "../src/shared/permit.js";
+import { HILLSBOROUGH_ID, parseDisplayedStatus, permitNumberSchema, parsePortalUrl, resolveJurisdiction, sameJurisdictionPermitNumber, samePermitNumber } from "../src/shared/permit.js";
 import { JURISDICTIONS } from "../src/shared/jurisdictions.js";
 
 const detailUrl = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
@@ -60,6 +60,28 @@ describe("verified portal observation", () => {
     expect(parsePortalUrl(tampaDetail, "detail", "hillsborough-county-building")).toBeNull();
     expect(parsePortalUrl("https://aca-prod.accela.com/PASCO/Cap/CapHome.aspx?module=Permits&TabName=Permits",
       "search", "pasco-county-building")).not.toBeNull();
+  });
+
+  it("follows Global Search into each searched module, and only those modules", () => {
+    const pasco = "https://aca-prod.accela.com/PASCO/Cap/CapDetail.aspx?Module=Planning&TabName=Planning&capID1=REC26&capID2=00000&capID3=0029W&agencyCode=PASCO";
+    expect(parsePortalUrl("https://aca-prod.accela.com/PASCO/Default.aspx", "search", "pasco-county-building")).not.toBeNull();
+    expect(parsePortalUrl("https://aca-prod.accela.com/PASCO/Cap/GlobalSearchResults.aspx?QueryText=SDP-2026-00005",
+      "search", "pasco-county-building")).not.toBeNull();
+    expect(parsePortalUrl(pasco, "detail", "pasco-county-building")).not.toBeNull();
+    expect(parsePortalUrl(pasco.replaceAll("Planning", "Licenses"), "detail", "pasco-county-building")).toBeNull();
+    const landDevelopment = detailUrl.replaceAll("Building", "LandDevelopment");
+    expect(parsePortalUrl(landDevelopment, "detail", HILLSBOROUGH_ID)).not.toBeNull();
+    expect(parseDisplayedStatus({ ...candidate, requestedNumber: "HC-MINSITE-26-0000079",
+      displayedNumber: "HC-MINSITE-26-0000079", recordUrl: landDevelopment })).toMatchObject({ _tag: "ok" });
+    expect(parsePortalUrl(detailUrl.replaceAll("Building", "Licenses"), "detail", HILLSBOROUGH_ID)).toBeNull();
+    // Tampa still searches only its Building module.
+    expect(parsePortalUrl(landDevelopment.replaceAll("HCFL", "TAMPA"), "detail", "tampa-building")).toBeNull();
+    expect(parsePortalUrl("https://aca-prod.accela.com/TAMPA/Cap/GlobalSearchResults.aspx?QueryText=X", "search", "tampa-building")).toBeNull();
+  });
+
+  it("accepts revision record numbers with a dot", () => {
+    expect(permitNumberSchema.safeParse("COMALT-2025-000297.R01").success).toBe(true);
+    expect(permitNumberSchema.safeParse(".R01").success).toBe(false);
   });
 
   it("accepts Tyler's permit status but not a status from another authority", () => {

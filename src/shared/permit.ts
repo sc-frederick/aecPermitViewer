@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, type AutomatedJurisdictionProfile, type JurisdictionId } from "./jurisdictions.js";
+import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId } from "./jurisdictions.js";
 
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 export const JEV_MODEL = "jev-1.13.0" as const;
@@ -97,7 +97,7 @@ export const manualStatusSchema = z.object({
   recordUrl: z.string().trim().max(2000),
 });
 
-export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, "Use the full permit number with its hyphens and zeros.");
+export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "Use the full permit number with its hyphens, dots, and zeros.");
 export const permitIdSchema = z.uuid();
 /** An empty value clears the project number. */
 export const projectNumberSchema = z.string().trim().max(40)
@@ -175,11 +175,16 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
     return null;
   }
   if (url.hash) return null;
+  if (page === "search" && usesGlobalSearch(jurisdictionId)) {
+    const tenantPath = `/${profile.tenant}`.toLowerCase();
+    const searchPath = url.pathname.toLowerCase();
+    if (searchPath === `${tenantPath}/default.aspx` || searchPath === `${tenantPath}/cap/globalsearchresults.aspx`) return url;
+  }
   const path = page === "search" ? `/${profile.tenant}/Cap/CapHome.aspx` : `/${profile.tenant}/Cap/CapDetail.aspx`;
   if (url.pathname.toLowerCase() !== path.toLowerCase()) return null;
   const values = (name: string): string[] => [...url.searchParams.entries()]
     .filter(([key]) => key.toLowerCase() === name.toLowerCase()).map(([, entry]) => entry);
-  const allowedModules = jurisdictionId === "pasco-county-building" ? ["building", "permits"] : [profile.module.toLowerCase()];
+  const allowedModules = accelaModules(profile).map((module) => module.toLowerCase());
   if (values("TabName").length !== 1 || !allowedModules.includes(values("TabName")[0]?.toLowerCase() ?? "")) return null;
   const moduleValues = values("Module");
   if (moduleValues.length !== 1) return null;
