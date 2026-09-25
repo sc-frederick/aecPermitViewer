@@ -17,8 +17,6 @@ import {
 import { getJurisdiction, isManualJurisdiction, JURISDICTIONS, type JurisdictionId, type JurisdictionProfile } from "../shared/jurisdictions.js";
 import { DEFAULT_CHECK_TIMES, formatCheckTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
-const jurisdictionIdSchema = z.enum(JURISDICTIONS.map((profile) => profile.id));
-
 const userVersionSchema = z.object({ user_version: z.number() });
 
 const columnSchema = z.object({ name: z.string() });
@@ -35,7 +33,7 @@ const browserVersionSchema = z.object({ version: z.string() });
 
 const storedPermitSchema = z.object({
   id: z.string(),
-  jurisdiction_id: jurisdictionIdSchema,
+  jurisdiction_id: z.string(),
   permit_number: z.string(),
   project_number: z.string().nullable(),
   monitoring_enabled: z.number(),
@@ -82,10 +80,15 @@ const PERMIT_SELECT = `
   LEFT JOIN status_observations o ON o.id = p.last_observation_id
   LEFT JOIN check_runs r ON r.id = p.last_attempt_id`;
 
-function mapPermit(row: StoredPermit, checking: boolean): PermitRow {
+/** A saved permit, or null when its jurisdiction is no longer in the app; its rows stay in case support returns. */
+function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
+  const jurisdiction = getJurisdiction(row.jurisdiction_id);
+
+  if (!jurisdiction) return null;
+
   return {
     id: row.id,
-    jurisdictionId: row.jurisdiction_id,
+    jurisdictionId: jurisdiction.id,
     permitNumber: row.permit_number,
     projectNumber: row.project_number,
     monitoringEnabled: row.monitoring_enabled === 1,
@@ -206,8 +209,8 @@ export class PermitStore {
 
   /**
    * Upserts the built-in jurisdiction profiles so permits can reference any supported authority.
-   * A profile removed from the app keeps its row, because history still points to it. Permit reads parse each
-   * jurisdiction against JURISDICTIONS, so removing a profile also needs a migration for permits saved under it.
+   * A profile removed from the app keeps its row, because saved permits and history still point to it. Permits
+   * under a removed profile are left out of reads until it returns.
    */
   private syncProfiles(): void {
     /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
@@ -296,7 +299,7 @@ export class PermitStore {
 
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`)
-      .map((row) => mapPermit(row, checkingIds.has(row.id)));
+      .flatMap((row) => mapPermit(row, checkingIds.has(row.id)) ?? []);
   }
 
   getPermit(id: string): PermitRow | null {

@@ -134,6 +134,25 @@ describe("jurisdiction persistence", () => {
     }
   });
 
+  it("leaves out permits whose jurisdiction the app no longer lists, without failing other reads", () => {
+    const store = newStore();
+
+    try {
+      const kept = store.addPermit("HC-BLD-26-0087599");
+      const retired = store.addPermit("HC-BLD-26-0000001");
+      withDatabase((db) => {
+        db.exec(`INSERT INTO jurisdiction_profiles SELECT 'retired-county', display_name, authority_type, portal_family,
+          official_start_url, tenant, supported_module, coverage_note, adapter_version, matching_rule_version
+          FROM jurisdiction_profiles WHERE id = '${HILLSBOROUGH_ID}'`);
+        db.prepare("UPDATE permits SET jurisdiction_id = 'retired-county' WHERE id = ?").run(retired);
+      });
+      expect(store.listPermits().map((permit) => permit.id)).toEqual([kept]);
+      expect(store.getPermit(retired)).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
   it.each([1, 2])("restores missing profiles when opening a version %i database", (version) => {
     const store = newStore();
     const directory = directories[directories.length - 1]!;
