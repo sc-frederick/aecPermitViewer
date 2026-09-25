@@ -6,6 +6,7 @@ import {
 
 // Local-time dates, matching how the app reads the computer's clock.
 const on = (hour: number, minute = 0, day = 24) => new Date(2026, 8, day, hour, minute);
+
 const times = DEFAULT_CHECK_TIMES;
 
 describe("default check schedule", () => {

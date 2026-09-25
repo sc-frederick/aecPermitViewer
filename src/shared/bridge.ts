@@ -1,6 +1,7 @@
 import type { AppSnapshot, PermitHistory, PreferenceKey } from "./permit.js";
 
 export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
 export type UpdateCheck =
   | { state: "unavailable" }
   | { state: "current" }

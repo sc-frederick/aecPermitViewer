@@ -26,21 +26,25 @@ const bridge: PermitBridge = {
   onSnapshot: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on("permit:snapshot-changed", listener);
+
     return () => ipcRenderer.removeListener("permit:snapshot-changed", listener);
   },
   onLocalError: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
     ipcRenderer.on("permit:local-error", listener);
+
     return () => ipcRenderer.removeListener("permit:local-error", listener);
   },
   onOpenDetails: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, permitId: string) => callback(permitId);
     ipcRenderer.on("permit:open-details", listener);
+
     return () => ipcRenderer.removeListener("permit:open-details", listener);
   },
   onAppEvent: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, event: Parameters<typeof callback>[0]) => callback(event);
     ipcRenderer.on("permit:app-event", listener);
+
     return () => ipcRenderer.removeListener("permit:app-event", listener);
   },
 };

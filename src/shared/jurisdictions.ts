@@ -226,12 +226,14 @@ export function getJurisdiction(id: string): JurisdictionProfile | null {
 /** The profile only if the browser worker can check it; manual authorities return null. */
 export function getAutomatedJurisdiction(id: string): AutomatedJurisdictionProfile | null {
   const profile = getJurisdiction(id);
+
   return profile && profile.portalFamily !== "manual" ? profile : null;
 }
 
 /** True for Accela portals searched through the home page's Global Search instead of one module's record search. */
 export function usesGlobalSearch(id: string): boolean {
   const profile = getJurisdiction(id);
+
   return Boolean(profile && "globalSearch" in profile && profile.globalSearch);
 }
 

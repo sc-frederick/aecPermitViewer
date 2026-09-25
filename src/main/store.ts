@@ -64,12 +64,15 @@ export class PermitStore {
 
   constructor(filePath: string) {
     mkdirSync(path.dirname(filePath), { recursive: true });
+
     if (existsSync(filePath)) {
       const prior = new DatabaseSync(filePath, { readOnly: true });
       const version = userVersion(prior);
       prior.close();
+
       if (version < 3) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
     }
+
     this.db = new DatabaseSync(filePath);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
@@ -80,7 +83,9 @@ export class PermitStore {
 
   private migrate(): void {
     const version = userVersion(this.db);
+
     if (version > 3) throw new Error("Database was created by a newer app version.");
+
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
@@ -145,11 +150,14 @@ export class PermitStore {
       `);
       this.db.exec("PRAGMA user_version = 1");
     });
+
     // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
     // Version 3 added the user's project number for grouping permits.
     const columns = this.db.prepare("PRAGMA table_info(permits)").all() as unknown as Array<{ name: string }>;
+
     if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
+
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
     // Lets the latest browser version be read without scanning every run. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
@@ -167,6 +175,7 @@ export class PermitStore {
       "epermit": "epermit-number-sequence-1",
       "regpermitting": "exact-uppercase-1",
     };
+
     const seed = this.db.prepare(`INSERT INTO jurisdiction_profiles
       (id, display_name, authority_type, portal_family, official_start_url,
       tenant, supported_module, coverage_note, adapter_version, matching_rule_version)
@@ -176,6 +185,7 @@ export class PermitStore {
         official_start_url = excluded.official_start_url, tenant = excluded.tenant,
         supported_module = excluded.supported_module, coverage_note = excluded.coverage_note,
         adapter_version = excluded.adapter_version, matching_rule_version = excluded.matching_rule_version`);
+
     this.transaction(() => {
       for (const profile of JURISDICTIONS) seed.run(profile.id, profile.label, profile.authorityType,
         profile.portalFamily, profile.startUrl, profile.tenant, profile.module, profile.coverageNote, profile.adapterVersion,
@@ -191,15 +201,18 @@ export class PermitStore {
   /** Prepares each statement once; the snapshot and scheduler run the same few queries repeatedly. */
   private sql(source: string): StatementSync {
     let statement = this.statements.get(source);
+
     if (!statement) {
       statement = this.db.prepare(source);
       this.statements.set(source, statement);
     }
+
     return statement;
   }
 
   private transaction(work: () => void): void {
     this.db.exec("BEGIN IMMEDIATE");
+
     try {
       work();
       this.db.exec("COMMIT");
@@ -224,16 +237,19 @@ export class PermitStore {
       VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
         permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
         isManualJurisdiction(jurisdictionId) ? 0 : 1);
+
     return id;
   }
 
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     const rows = this.sql(`${PERMIT_SELECT} ORDER BY p.created_at DESC`).all() as unknown as StoredPermit[];
+
     return rows.map((row) => mapPermit(row, checkingIds.has(row.id)));
   }
 
   getPermit(id: string): PermitRow | null {
     const row = this.sql(`${PERMIT_SELECT} WHERE p.id = ?`).get(id) as unknown as StoredPermit | undefined;
+
     return row ? mapPermit(row, false) : null;
   }
 
@@ -244,7 +260,9 @@ export class PermitStore {
   }): string {
     const permit = this.sql("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
       .get(input.permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
+
     if (!profile) throw new Error("Permit jurisdiction is not configured");
     const id = randomUUID();
     this.transaction(() => {
@@ -254,6 +272,7 @@ export class PermitStore {
         .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.playwrightVersion);
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });
+
     return id;
   }
 
@@ -269,8 +288,10 @@ export class PermitStore {
   }): void {
     this.transaction(() => {
       const finishedAt = new Date().toISOString();
+
       const started = this.sql("SELECT started_at AS startedAt FROM check_runs WHERE id = ?")
         .get(input.runId) as unknown as { startedAt: string } | undefined;
+
       if (!started) throw new Error("Check run not found");
       this.sql(`UPDATE check_runs SET finished_at = ?, outcome = ?, safe_error_code = ?,
         action_count = ?, request_count = ?, duration_ms = ?, actual_model = ?, browser_version = ? WHERE id = ?`)
@@ -278,6 +299,7 @@ export class PermitStore {
           input.outcome === "success" ? null : input.outcome,
           input.actionCount, input.requestCount, Date.parse(finishedAt) - Date.parse(started.startedAt),
           input.actualModel, input.browserVersion, input.runId);
+
       if (input.outcome === "success" && input.observation) {
         const observationId = randomUUID();
         const observation = input.observation;
@@ -300,6 +322,7 @@ export class PermitStore {
   /** Saves a status the user read on a hand-checked portal as a completed check. */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string; appVersion: string }): void {
     const permit = this.getPermit(input.permitId);
+
     if (!permit || !isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is not checked by hand");
     const runId = randomUUID();
     const now = new Date().toISOString();
@@ -323,11 +346,13 @@ export class PermitStore {
       finished_at AS finishedAt, outcome, action_count AS actionCount,
       request_count AS requestCount FROM check_runs WHERE permit_id = ? ORDER BY started_at DESC`)
       .all(permitId) as unknown as CheckRunRow[];
+
     const observations = this.sql(`SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
       status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl
       FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`)
       .all(permitId) as unknown as ObservationRow[];
+
     return { runs, observations };
   }
 
@@ -341,14 +366,18 @@ export class PermitStore {
   getObservationJurisdictionId(id: string): JurisdictionId | null {
     const row = this.sql(`SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
       JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`).get(id) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+
     return row?.jurisdictionId ?? null;
   }
 
   private jurisdictionAdapterVersion(permitId: string): string {
     const row = this.sql("SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?")
       .get(permitId) as unknown as { jurisdictionId: JurisdictionId } | undefined;
+
     const profile = row ? getJurisdiction(row.jurisdictionId) : null;
+
     if (!profile) throw new Error("Permit jurisdiction is not configured");
+
     return profile.adapterVersion;
   }
 
@@ -358,6 +387,7 @@ export class PermitStore {
 
   getMonitoring(): "manual" | "scheduled" {
     const row = this.sql("SELECT value FROM settings WHERE key = 'monitoring'").get() as unknown as { value: string } | undefined;
+
     // Scheduled checks are the default. "daily" is how earlier versions stored the same choice.
     return row?.value === "manual" ? "manual" : "scheduled";
   }
@@ -365,6 +395,7 @@ export class PermitStore {
   getCheckTimes(): CheckTimes {
     const row = this.sql("SELECT value FROM settings WHERE key = 'check_times'").get() as unknown as { value: string } | undefined;
     const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
+
     return stored ?? DEFAULT_CHECK_TIMES;
   }
 
@@ -377,6 +408,7 @@ export class PermitStore {
 
   getFlag(key: string, fallback: boolean): boolean {
     const row = this.sql("SELECT value FROM settings WHERE key = ?").get(key) as unknown as { value: string } | undefined;
+
     return row ? row.value === "1" : fallback;
   }
 
@@ -388,6 +420,7 @@ export class PermitStore {
   latestBrowserVersion(): string | null {
     const row = this.sql(`SELECT browser_version AS version FROM check_runs
       WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get() as unknown as { version: string } | undefined;
+
     return row?.version ?? null;
   }
 
@@ -415,6 +448,7 @@ export class PermitStore {
 
   setPermitMonitoring(id: string, enabled: boolean): void {
     const permit = this.getPermit(id);
+
     if (enabled && permit && isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is checked by hand");
     this.sql("UPDATE permits SET monitoring_enabled = ?, next_due_at = ? WHERE id = ?")
       .run(enabled ? 1 : 0, enabled ? new Date().toISOString() : null, id);

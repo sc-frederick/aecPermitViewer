@@ -3,6 +3,7 @@ import { epermitRecordUrl, HILLSBOROUGH_ID, parseDisplayedStatus, parseEpermitNu
 import { getJurisdiction, JURISDICTIONS } from "../src/shared/jurisdictions.js";
 
 const detailUrl = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
+
 const candidate = {
   jurisdictionId: HILLSBOROUGH_ID,
   requestedNumber: "HC-BLD-26-0087599",
@@ -50,11 +51,13 @@ describe("verified portal observation", () => {
 
   it("resolves each selected authority and keeps record links in its own portal", () => {
     expect(new Set(JURISDICTIONS.map((profile) => profile.id)).size).toBe(JURISDICTIONS.length);
+
     for (const profile of JURISDICTIONS) {
       expect(resolveJurisdiction(profile.id)).toBe(profile.id);
       expect(resolveJurisdiction(profile.label)).toBe(profile.id);
       expect(parsePortalUrl(profile.startUrl, "search", profile.id)).not.toBeNull();
     }
+
     const tampaDetail = detailUrl.replaceAll("HCFL", "TAMPA");
     expect(parsePortalUrl(tampaDetail, "detail", "tampa-building")).not.toBeNull();
     expect(parsePortalUrl(tampaDetail, "detail", "hillsborough-county-building")).toBeNull();
@@ -90,6 +93,7 @@ describe("verified portal observation", () => {
       requestedNumber: "BLDR-004412-2026", displayedNumber: "BLDR-004412-2026", statusLabel: "Status:",
       statusValue: "Issued",
       recordUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/permit/d342dc84-196f-4f0e-b14b-1cee8bd7bcc6" };
+
     expect(parseDisplayedStatus(hernando)).toMatchObject({ _tag: "ok", value: { statusValue: "Issued" } });
     expect(parseDisplayedStatus({ ...hernando, statusLabel: "Inspection Status:" }))
       .toEqual({ _tag: "err", outcome: "status_unavailable" });
@@ -130,6 +134,7 @@ describe("hand-checked portal links", () => {
 describe("SWFWMD WMIS records", () => {
   const erp = "https://www38.swfwmd.state.fl.us/ERP/ERP/Entry/ERP.aspx?id=1001157";
   const erpHeading = "ERP Permit: 47590.008 (App: 1001157) · Prefix 43";
+
   const erpCandidate = { ...candidate, jurisdictionId: "swfwmd-erp" as const, requestedNumber: "43047590.008",
     displayedNumber: erpHeading, statusLabel: "Status:", statusValue: "Approved", recordUrl: erp };
 
@@ -190,21 +195,26 @@ describe("SWFWMD WMIS records", () => {
       .toEqual({ _tag: "err", outcome: "record_link_unavailable" });
     expect(parseDisplayedStatus({ ...erpCandidate, statusLabel: "Permit Status" }))
       .toEqual({ _tag: "err", outcome: "status_unavailable" });
+
     const water = { ...candidate, jurisdictionId: "swfwmd-wup" as const, requestedNumber: "1960.023", displayedNumber: "1960.023",
       statusLabel: "Permit Status", statusValue: "Approved",
       recordUrl: "https://www38.swfwmd.state.fl.us/Support/WUP/WupSimple.aspx?st=1960&rev=23" };
+
     expect(parseDisplayedStatus(water)).toMatchObject({ _tag: "ok", value: { statusValue: "Approved" } });
     expect(parseDisplayedStatus({ ...water, recordUrl: water.recordUrl.replace("rev=23", "rev=22") }))
       .toEqual({ _tag: "err", outcome: "record_link_unavailable" });
+
     const well = { ...candidate, jurisdictionId: "swfwmd-wcp" as const, requestedNumber: "973309", displayedNumber: "WCP Detail - 973309",
       statusLabel: "Application Status:", statusValue: "UNDER REVIEW",
       recordUrl: "https://www38.swfwmd.state.fl.us/Support/WCP/WcpDetail.aspx?permit=973309" };
+
     expect(parseDisplayedStatus(well)).toMatchObject({ _tag: "ok", value: { statusValue: "UNDER REVIEW" } });
   });
 });
 
 describe("St. Johns River-hosted ePermit records", () => {
   const nw = "https://permitting.sjrwmd.com/nwep/#/prmtInfo?curId=&hdr=1&usrId=0&offclId=6688&seqNo=3";
+
   const record = { ...candidate, jurisdictionId: "nwfwmd" as const, requestedNumber: "2E-131-6688-3",
     displayedNumber: "2E-131-6688-3 · Project Number 6688 - 3", statusLabel: "Status · Current Process Stage",
     statusValue: "Pending · Pending RAI Response", recordUrl: nw };
@@ -249,6 +259,7 @@ describe("St. Johns River-hosted ePermit records", () => {
 describe("SFWMD RegPermitting records", () => {
   const sfwmd = getJurisdiction("sfwmd")!;
   const permitUrl = regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-P")!;
+
   const permit = { ...candidate, jurisdictionId: "sfwmd" as const, requestedNumber: "48-112909-P", displayedNumber: "48-112909-P",
     statusLabel: "Permit Status", statusValue: "Approved", recordUrl: permitUrl };
 
@@ -276,8 +287,10 @@ describe("SFWMD RegPermitting records", () => {
   it("reads a permit's Permit Status and an application's own status, never the other", () => {
     expect(parseDisplayedStatus(permit)).toMatchObject({ _tag: "ok", value: { statusValue: "Approved" } });
     expect(parseDisplayedStatus({ ...permit, statusLabel: "Application Status" })).toEqual({ _tag: "err", outcome: "status_unavailable" });
+
     const application = { ...permit, requestedNumber: "260915-67760", displayedNumber: "260915-67760", statusLabel: "App Status",
       statusValue: "Pending-TechnicalReview", recordUrl: regPermittingRecordUrl(sfwmd, "SFWMD-REG-WUPERMIT-WORK 260915-67760")! };
+
     expect(parseDisplayedStatus(application)).toMatchObject({ _tag: "ok", value: { statusValue: "Pending-TechnicalReview" } });
     expect(parseDisplayedStatus({ ...application, statusLabel: "Permit Status" })).toEqual({ _tag: "err", outcome: "status_unavailable" });
     expect(parseDisplayedStatus({ ...permit, recordUrl: regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-M")! }))

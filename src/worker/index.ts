@@ -9,20 +9,34 @@ import { epermitAdapter, watchEpermitForm } from "./epermit.js";
 import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
+
 const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
+
 const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
+
 const DETAIL_STATUS = "#ctl00_PlaceHolderMain_lblRecordStatus";
+
 const DETAIL_STATUS_TITLE = "#ctl00_PlaceHolderMain_lblRecordStatusTitle";
+
 // Accela's Global Search box (Pasco replaces it with its own, injected after load) and the results page it opens.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
+
 const GLOBAL_RESULTS_LABEL = "#ctl00_PlaceHolderMain_lblSearchResults";
+
 const GLOBAL_NO_RESULTS = "#ctl00_PlaceHolderMain_pnlNoResults";
+
 const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
+
 const GLOBAL_NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
+
 const TYLER_SEARCH_FIELD = "#SearchKeyword";
+
 const TYLER_SEARCH_BUTTON = "#button-Search";
+
 const ST_PETE_YEAR = '[id="permit.appYear"]';
+
 const ST_PETE_NUMBER = '[id="permit.appNumber"]';
+
 const ST_PETE_SEARCH_BUTTON = 'input[name="finish"]';
 
 /** Where each portal family shows the permit number and record-level status on its detail page. */
@@ -36,15 +50,25 @@ const DETAIL_FIELDS: Partial<Record<AutomatedJurisdictionProfile["portalFamily"]
 };
 
 let browser: Browser | null = null;
+
 let jurisdiction: AutomatedJurisdictionProfile | null = null;
+
 let context: BrowserContext | null = null;
+
 let page: Page | null = null;
+
 let currentRun: string | null = null;
+
 let requestedNumber = "";
+
 let actionCount = 0;
+
 let recentActions: string[] = [];
+
 let lastObservation: PageObservation | null = null;
+
 let stopped = false;
+
 /** The saved record link this run opened instead of searching, if any. */
 let openedRecordUrl: string | null = null;
 
@@ -69,32 +93,40 @@ function fail(outcome: WorkerToMain & { kind: "failed" }): void {
 
 function locationOf(url: string): PageObservation["location"] {
   if (!jurisdiction) return "other";
+
   if (parsePortalUrl(url, "search", jurisdiction.id)) return "permit-search";
+
   if (parsePortalUrl(url, "detail", jurisdiction.id)) return "permit-detail";
+
   return "other";
 }
 
 function stPeteRecordUrl(number: string): string | null {
   const parts = parseApplicationNumber(number);
+
   if (!parts) return null;
   const url = new URL("https://stpe-egov.aspgov.com/Click2GovBP/selectpermit.html");
   url.searchParams.set("permit.appYear", parts.year);
   url.searchParams.set("permit.appNumber", parts.serial);
   url.searchParams.set("searchType", "0");
   url.searchParams.set("validatePermitView", "true");
+
   return url.toString();
 }
 
 async function visibleText(selector: string): Promise<string | null> {
   if (!page) return null;
   const locator = page.locator(selector);
+
   if (await locator.count() !== 1 || !(await locator.isVisible())) return null;
+
   return (await locator.innerText()).trim();
 }
 
 /** The module driving this run's portal, for families that don't use the generic steps below. */
 function portalAdapter(): PortalAdapter | null {
   if (!page || !jurisdiction) return null;
+
   switch (jurisdiction.portalFamily) {
     case "wmis": return wmisAdapter(page, jurisdiction, requestedNumber);
     case "epermit": return epermitAdapter(page, jurisdiction, requestedNumber);
@@ -106,9 +138,12 @@ function portalAdapter(): PortalAdapter | null {
 /** Read the record's displayed number, status, and status label, and the record link to save. */
 async function readRecord(): Promise<DisplayedRecord> {
   const adapter = portalAdapter();
+
   if (adapter) return adapter.read();
   const fields = jurisdiction && DETAIL_FIELDS[jurisdiction.portalFamily];
+
   if (!page || !jurisdiction || !fields) return NOTHING_DISPLAYED;
+
   return {
     displayedNumber: await visibleText(fields.number),
     statusValue: await visibleText(fields.status),
@@ -121,6 +156,7 @@ async function readRecord(): Promise<DisplayedRecord> {
 
 async function waitForDetail(): Promise<void> {
   if (!page || jurisdiction?.portalFamily !== "tyler-civic-access") return;
+
   // Tyler renders the record after load, so wait for both fields to hold text.
   for (const selector of Object.values(DETAIL_FIELDS["tyler-civic-access"]!)) {
     await page.locator(selector).filter({ hasText: /\S/ })
@@ -150,6 +186,7 @@ async function waitForGlobalResults(previousRows: string): Promise<void> {
   await page.waitForFunction(({ rows, link, detail, none }) => {
     if (document.querySelector(detail) || document.querySelector(none)) return true;
     const current = [...document.querySelectorAll<HTMLElement>(link)].map((anchor) => anchor.innerText.trim()).join("|");
+
     return current !== "" && current !== rows;
   }, { rows: previousRows, link: GLOBAL_RESULT_LINK, detail: DETAIL_NUMBER, none: GLOBAL_NO_RESULTS }, { timeout: 15_000 })
     .catch(() => undefined);
@@ -162,12 +199,16 @@ async function globalResultRows(): Promise<string> {
 
 async function exactResultLinks(): Promise<Array<{ text: string; href: string; id: string }>> {
   if (!page) return [];
+
   const links = await page.locator(globalSearch() ? GLOBAL_RESULT_LINK : "a").evaluateAll((anchors) => anchors.slice(0, 250).flatMap((anchor) => {
     if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
     const href = anchor.getAttribute("href");
+
     return href ? [{ text: anchor.innerText.trim(), href, id: anchor.id }] : [];
   }));
+
   const found = links.filter((link) => jurisdiction && sameJurisdictionPermitNumber(requestedNumber, link.text, jurisdiction.id));
+
   return found.filter((link, index) => found.findIndex((candidate) => candidate.href === link.href) === index);
 }
 
@@ -176,9 +217,11 @@ async function observe(): Promise<PageObservation> {
   const url = page.url();
   let location = locationOf(url);
   const headings = (await page.locator("h1, h2, h3").allInnerTexts()).map((text) => text.trim()).filter(Boolean).slice(0, 8);
+
   if (jurisdiction?.portalFamily === "click2gov" && location === "permit-search" && headings.includes("Status Detail")) {
     location = "permit-detail";
   }
+
   const candidates: Candidate[] = [];
   let phase: PageObservation["phase"] = "unknown";
   let inputValue = "";
@@ -196,6 +239,7 @@ async function observe(): Promise<PageObservation> {
   } else if (location === "permit-search") {
     phase = "search";
     const adapter = portalAdapter();
+
     if (adapter) {
       const search = await adapter.observe();
       phase = search.phase;
@@ -210,15 +254,19 @@ async function observe(): Promise<PageObservation> {
     } else if (jurisdiction?.portalFamily === "accela") {
       const global = globalSearch();
       const input = global ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
+
       if (await input.count() === 1 && await input.isVisible() && await input.isEnabled()) {
         inputValue = await input.inputValue();
         formLabels.push(global ? "Global Search" : "Record Number");
         visibleControls.push(global ? "Global Search field" : "Record Number field");
+
         if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", description: global
           ? "Fill the portal's Global Search field with the exact requested permit number."
           : "Fill the Record Number field with the exact requested permit number." });
       }
+
       const search = page.locator(SEARCH_BUTTON);
+
       // Global Search submits from its field on Enter; its button can be covered or drawn at zero size.
       if (inputValue === requestedNumber && (global || (await search.count() === 1 && await search.isVisible() && await search.isEnabled()))) {
         if (!global) visibleControls.push("Search button");
@@ -228,10 +276,12 @@ async function observe(): Promise<PageObservation> {
       }
     } else if (jurisdiction?.portalFamily === "tyler-civic-access") {
       const input = page.locator(TYLER_SEARCH_FIELD);
+
       if (await input.count() === 1 && await input.isVisible() && await input.isEnabled()) {
         inputValue = await input.inputValue();
         formLabels.push("Search public records with keywords or addresses");
         visibleControls.push("Public records search field");
+
         if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", description: "Fill the public records keyword field with the exact permit number." });
         else if (!recentActions.includes("search_record_number") && await page.locator(TYLER_SEARCH_BUTTON).isEnabled()) {
           candidates.push({ id: "search_record_number", description: "Submit the exact permit number in Tyler Civic Access public records search." });
@@ -243,20 +293,27 @@ async function observe(): Promise<PageObservation> {
       const parts = parseApplicationNumber(requestedNumber);
       const year = page.locator(ST_PETE_YEAR);
       const number = page.locator(ST_PETE_NUMBER);
+
       if (parts && await year.count() === 1 && await number.count() === 1 && await year.isVisible() && await number.isVisible()) {
         inputValue = `${await year.inputValue()}-${await number.inputValue()}`;
         formLabels.push("Application Number: year and serial number");
         visibleControls.push("Application Number search");
+
         if (inputValue !== `${parts.year}-${parts.serial}`) candidates.push({ id: "fill_record_number", description: "Enter the exact two-digit application year and serial number in Click2Gov." });
         else candidates.push({ id: "search_record_number", description: "Submit the City of St. Petersburg Application Number search." });
       }
     }
+
     // An adapter matches its own results above.
     const links = adapter ? [] : await exactResultLinks();
+
     if (!adapter) resultNumbers = links.map((link) => link.text);
+
     if (links.length > 1) phase = "results";
+
     if (links.length === 1) {
       const target = new URL(links[0]!.href, page.url());
+
       // Global Search result rows open their record through a postback rather than a link.
       if (jurisdiction && (globalSearch() || parsePortalUrl(target.toString(), "detail", jurisdiction.id))) {
         phase = "results";
@@ -269,13 +326,16 @@ async function observe(): Promise<PageObservation> {
   }
 
   const challengeText = await page.locator("body").innerText().then((text) => text.slice(0, 3000)).catch(() => "");
+
   if (/captcha|verify you are human|are you a human|access denied|sign in|log in to continue/i.test(challengeText)) {
     phase = "challenge";
     candidates.length = 0;
   }
+
   const fingerprint = createHash("sha256")
     .update(JSON.stringify({ url, phase, inputValue, displayedNumber, displayedStatus, resultNumbers, headings }))
     .digest("hex").slice(0, 20);
+
   return {
     phase,
     location,
@@ -293,55 +353,74 @@ async function sendObservationOrResult(): Promise<void> {
   if (!page || !currentRun || stopped) return;
   const observation = await observe();
   lastObservation = observation;
+
   if (observation.phase === "challenge") {
     fail({ kind: "failed", runId: currentRun, outcome: "blocked" });
+
     return;
   }
+
   if (observation.phase === "results" && observation.resultNumbers.length > 1) {
     fail({ kind: "failed", runId: currentRun, outcome: "ambiguous" });
+
     return;
   }
+
   if (observation.phase === "search" && recentActions.includes("search_record_number")) {
     const adapter = portalAdapter();
+
     if (adapter) {
       if (await adapter.foundNothing()) {
         fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+
         return;
       }
     } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
       // Global Search matches whole record numbers, so a finished search without the exact row has no such record.
       if (observation.candidates.length === 0 && await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) {
         fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+
         return;
       }
     } else if (jurisdiction?.portalFamily === "accela") {
       const message = page.getByText("Your search returned no results. Please modify your search criteria and try again.", { exact: true });
       const input = page.locator(SEARCH_FIELD);
+
       if (await message.count() === 1 && await message.isVisible() &&
         await input.count() === 1 && await input.inputValue() === requestedNumber) {
         fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+
         return;
       }
     } else if (jurisdiction?.portalFamily === "tyler-civic-access" &&
       /Found 0 results/i.test((await page.locator("body").innerText()).slice(0, 1000))) {
       fail({ kind: "failed", runId: currentRun, outcome: "not_found_in_supported_search" });
+
       return;
     }
   }
+
   if (observation.phase === "detail" && jurisdiction) {
     const { displayedNumber, statusValue, statusLabel: labelText, recordUrl } = await readRecord();
+
     if (!displayedNumber || !sameJurisdictionPermitNumber(requestedNumber, displayedNumber, jurisdiction.id)) {
       fail({ kind: "failed", runId: currentRun, outcome: "identity_mismatch" });
+
       return;
     }
+
     if (!statusValue || !labelText) {
       fail({ kind: "failed", runId: currentRun, outcome: "status_unavailable" });
+
       return;
     }
+
     if (!recordUrl || !parsePortalUrl(recordUrl, "detail", jurisdiction.id)) {
       fail({ kind: "failed", runId: currentRun, outcome: "record_link_unavailable" });
+
       return;
     }
+
     send({
       kind: "verified",
       runId: currentRun,
@@ -353,19 +432,27 @@ async function sendObservationOrResult(): Promise<void> {
       browserVersion: browser?.version() ?? "unknown",
     });
     await closeAll();
+
     return;
   }
+
   if (observation.phase === "unknown" || observation.candidates.length === 0) {
     fail({ kind: "failed", runId: currentRun, outcome: "unsupported_page" });
+
     return;
   }
+
   send({ kind: "observation", runId: currentRun, observation });
 }
 
 async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise<void> {
   currentRun = message.runId;
   jurisdiction = getAutomatedJurisdiction(message.jurisdictionId);
-  if (!jurisdiction) { fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" }); return; }
+
+  if (!jurisdiction) { fail({ kind: "failed", runId: message.runId, outcome: "unsupported_page" });
+
+ return; }
+
   requestedNumber = message.permitNumber;
   stopped = false;
   process.env.PLAYWRIGHT_BROWSERS_PATH = message.browserPath;
@@ -384,34 +471,47 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   });
   const epermitFormReady = jurisdiction.portalFamily === "epermit" ? watchEpermitForm(page) : null;
   const startUrl = jurisdiction.startUrl;
+
   const target = message.previousRecordUrl && parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id) &&
     recordLinkShowsRecord(jurisdiction) ? message.previousRecordUrl : startUrl;
+
   let landed = target;
+
   try {
     await page.goto(target, { waitUntil: "domcontentloaded", timeout: 15_000 });
   } catch {
     if (stopped) return;
+
     // A portal occasionally drops the first connection (SWFWMD's resets HTTP/2), so the search gets a second try.
     if (target === startUrl) await page.waitForTimeout(1_500);
     landed = startUrl;
+
     if (page && !stopped) await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
+
   // RegPermitting's record view settles on the same address as its search, so it is recognized by content.
   const recordOpened = landed !== startUrl && page !== null && !stopped && (jurisdiction.portalFamily === "regpermitting"
     ? await regPermittingRecordShown(page, 15_000) : locationOf(page.url()) === "permit-detail");
+
   if (landed !== startUrl && page && !stopped && !recordOpened) {
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
+
   openedRecordUrl = recordOpened ? target : null;
+
   if (page && !stopped && locationOf(page.url()) === "permit-detail") await waitForDetail();
+
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
     await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
       .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   }
+
   if (jurisdiction.portalFamily === "tyler-civic-access" && page && !stopped) {
     await page.locator("#SearchKeyword, a[href*='#/search']").first().waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   }
+
   if (epermitFormReady && page && !stopped) await epermitFormReady();
+
   if (jurisdiction.portalFamily === "regpermitting" && page && !stopped && !openedRecordUrl) await waitForSearchRecordsLink(page);
   await sendObservationOrResult();
 }
@@ -419,48 +519,61 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
 async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promise<void> {
   if (!page || !currentRun || currentRun !== message.runId || !lastObservation || stopped) return;
   const fresh = await observe();
+
   if (fresh.fingerprint !== message.fingerprint || fresh.candidates.length > 30) {
     await sendObservationOrResult();
+
     return;
   }
+
   if (!fresh.candidates.some((candidate) => candidate.id === message.candidateId)) {
     fail({ kind: "failed", runId: currentRun, outcome: "unsupported_page" });
+
     return;
   }
+
   const adapter = portalAdapter();
+
   switch (message.candidateId) {
     case "open_public_search": {
       if (adapter) {
         await adapter.openSearch?.();
         break;
       }
+
       if (jurisdiction?.portalFamily !== "tyler-civic-access") break;
       await page.goto("https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
         { waitUntil: "domcontentloaded", timeout: 15_000 });
       await page.locator(TYLER_SEARCH_FIELD).waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
       break;
     }
+
     case "fill_record_number": {
       if (adapter) {
         await adapter.fill();
       } else if (jurisdiction?.portalFamily === "click2gov") {
         const parts = parseApplicationNumber(requestedNumber);
+
         if (!parts) break;
         await page.locator(ST_PETE_YEAR).fill(parts.year);
         await page.locator(ST_PETE_NUMBER).fill(parts.serial);
       } else {
         const input = jurisdiction?.portalFamily === "tyler-civic-access" ? page.locator(TYLER_SEARCH_FIELD)
           : globalSearch() ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
+
         if (await input.count() !== 1 || !(await input.isVisible()) || !(await input.isEnabled())) break;
         await input.fill(requestedNumber);
       }
+
       break;
     }
+
     case "search_record_number": {
       if (adapter) {
         await adapter.submit();
       } else if (jurisdiction?.portalFamily === "click2gov") {
         const parts = parseApplicationNumber(requestedNumber);
+
         if (!parts || await page.locator(ST_PETE_YEAR).inputValue() !== parts.year ||
           await page.locator(ST_PETE_NUMBER).inputValue() !== parts.serial) break;
         await page.locator(ST_PETE_SEARCH_BUTTON).click();
@@ -472,6 +585,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         await page.getByText(/Found \d+ results?/).first().waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
       } else if (jurisdiction?.portalFamily === "accela" && globalSearch()) {
         const input = page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true });
+
         if (await input.count() !== 1 || await input.inputValue() !== requestedNumber) break;
         await input.press("Enter", { noWaitAfter: true });
         await page.waitForURL((target) => onGlobalResults(target.toString()) ||
@@ -480,6 +594,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       } else if (jurisdiction?.portalFamily === "accela") {
         const input = page.locator(SEARCH_FIELD);
         const button = page.locator(SEARCH_BUTTON);
+
         if (await input.inputValue() !== requestedNumber || await button.count() !== 1 || !(await button.isVisible()) || !(await button.isEnabled())) break;
         await button.click({ noWaitAfter: true });
         await Promise.any([
@@ -489,27 +604,35 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
             .waitFor({ state: "visible", timeout: 12_000 }),
         ]).catch(() => undefined);
       }
+
       break;
     }
+
     case "open_exact_result": {
       if (adapter) {
         await adapter.openResult();
         break;
       }
+
       const links = await exactResultLinks();
+
       if (links.length !== 1) break;
+
       if (globalSearch()) {
         if (!onGlobalResults(page.url())) break;
         await page.locator(`[id="${links[0]!.id}"]`).click({ noWaitAfter: true });
         await page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
         break;
       }
+
       const target = new URL(links[0]!.href, page.url());
+
       if (!jurisdiction || !parsePortalUrl(target.toString(), "detail", jurisdiction.id)) break;
       await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 12_000 });
       await waitForDetail();
       break;
     }
+
     case "next_results_page": {
       if (!onGlobalResults(page.url())) break;
       const rows = await globalResultRows();
@@ -517,9 +640,11 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       await waitForGlobalResults(rows);
       break;
     }
+
     default:
       break;
   }
+
   actionCount += 1;
   recentActions.push(message.candidateId);
   send({ kind: "action_count", runId: currentRun, count: actionCount });
@@ -528,17 +653,22 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
 
 process.parentPort?.on("message", (event: { data: MainToWorker }) => {
   const message = event.data;
+
   if (message.kind === "cancel") {
     if (message.runId === currentRun) {
       send({ kind: "failed", runId: message.runId, outcome: "cancelled" });
       void closeAll();
     }
+
     return;
   }
+
   const task = message.kind === "start" ? start(message)
     : message.kind === "reobserve" ? sendObservationOrResult() : choose(message);
+
   void task.catch((error: unknown) => {
     if (process.env.PERMIT_PORTAL_SMOKE === "1") process.stderr.write(`Worker smoke error: ${String(error)}\n`);
+
     if (currentRun && !stopped) fail({ kind: "failed", runId: currentRun, outcome: "browser_error" });
   });
 });
