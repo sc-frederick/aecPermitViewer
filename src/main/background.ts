@@ -4,6 +4,7 @@ import path from "node:path";
 // Squirrel.Windows registers shortcuts under com.squirrel.<maker name>.<executable name>.
 // Windows only delivers toast notifications for an app whose ID matches its Start menu shortcut.
 export const APP_USER_MODEL_ID = "com.squirrel.PermitMonitor.PermitMonitor";
+
 export const HIDDEN_LAUNCH_ARG = "--hidden";
 
 export interface BackgroundHooks {
@@ -34,13 +35,16 @@ export class Background {
   /** The packaged product is Windows-only; other platforms keep ordinary close-to-quit behavior. */
   start(): boolean {
     if (process.platform !== "win32") return false;
+
     try {
       this.tray = new Tray(this.image("tray"));
       this.tray.setToolTip("Permit Monitor");
       this.tray.on("click", () => this.hooks.showWindow());
+
       return true;
     } catch {
       this.tray = null;
+
       return false;
     }
   }
@@ -53,17 +57,22 @@ export class Background {
     if (!this.tray) return;
     // Most snapshots leave the tray as it was; rebuilding the native menu each time is wasted work.
     const shown = JSON.stringify(state);
+
     if (shown === this.shownState) return;
     this.shownState = shown;
+
     const summary = state.checking > 0 ? `${state.checking} check${state.checking === 1 ? "" : "s"} running`
       : state.failing > 0 ? `${state.failing} latest check${state.failing === 1 ? "" : "s"} failed`
         : `${state.permits} permit${state.permits === 1 ? "" : "s"} tracked`;
+
     this.tray.setToolTip(`Permit Monitor\n${summary}\nScheduled checks ${state.scheduled ? `at ${state.checkTimes}` : "off"}`);
     const attention = state.failing > 0;
+
     if (attention !== this.attention) {
       this.attention = attention;
       this.tray.setImage(this.image(attention ? "tray-attention" : "tray"));
     }
+
     this.tray.setContextMenu(Menu.buildFromTemplate([
       { label: "Open Permit Monitor", click: () => this.hooks.showWindow() },
       { label: "Check all permits now", enabled: state.permits > 0, click: () => this.hooks.checkAll() },
@@ -82,6 +91,7 @@ export class Background {
     const release = () => this.live.delete(notification);
     notification.on("click", () => {
       release();
+
       if (input.permitId) this.hooks.openPermit(input.permitId); else this.hooks.showWindow();
     });
     notification.on("close", release);
@@ -103,14 +113,16 @@ export function openAtLoginAvailable(): boolean {
   return process.platform === "win32" && app.isPackaged;
 }
 
-function loginItemTarget(): { path: string; args: string[] } {
+function loginItemTarget() {
   // Launch through Squirrel's Update.exe so the login item survives app updates.
   const updateExe = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
+
   return { path: updateExe, args: ["--processStart", `"${path.basename(process.execPath)}"`, "--process-start-args", `"${HIDDEN_LAUNCH_ARG}"`] };
 }
 
 export function getOpenAtLogin(): boolean {
   if (!openAtLoginAvailable()) return false;
+
   return app.getLoginItemSettings(loginItemTarget()).openAtLogin;
 }
 

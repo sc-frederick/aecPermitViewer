@@ -23,9 +23,12 @@ Use Node.js 24. Nothing in the project compiles native code. SQLite comes from N
 npm ci --allow-git=all
 npm run browser:stage
 npm run typecheck
+npm run lint
 npm test
 npm run dev
 ```
+
+`npm run lint` runs Oxlint with the vendored [anti-slop](https://github.com/dmmulroy/anti-slop) rules in `tools/oxlint/anti-slop/` (provenance in its `UPSTREAM.md`). They reject unchecked type assertions and `unknown` inputs, so values from IPC, the worker, SQLite, and the network are parsed with zod where they enter. Fix a finding rather than suppressing it.
 
 `npm run browser:stage` installs Playwright's pinned Chromium and headless shell under `vendor/playwright-browsers`, then writes a SHA-256 manifest for the complete payload. On Windows, `npm run make:win` creates the Squirrel installer. Key storage uses Windows encryption, so saving a key works only on Windows. Elsewhere, use the development key variable described below.
 
