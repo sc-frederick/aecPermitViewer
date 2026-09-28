@@ -12,6 +12,8 @@ import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit
 interface TestBridge {
   historyCalls: string[];
   push(next: AppSnapshot): void;
+  /** Answers the renderer's first direct snapshot request, when the page was opened with it held. */
+  answerSnapshot(): void;
   /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string): void;
 }
@@ -62,8 +64,14 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
   };
 }
 
-function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "permits">> = {}): AppSnapshot {
+let revision = 0;
+
+/** A snapshot as main would send it next: each one takes a higher revision than the one before. */
+function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "revision" | "permits">> = {}): AppSnapshot {
+  revision += 1;
+
   return {
+    revision,
     permits,
     keyState: "configured",
     appVersion: "0.0.0",
@@ -77,18 +85,26 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "pe
   };
 }
 
-/** Opens the renderer with `initial` as main's first snapshot. The bridge records history requests and holds them open. */
-async function open(initial: AppSnapshot): Promise<void> {
+/**
+ * Opens the renderer with `initial` as main's reply to its first snapshot request. The bridge records history requests
+ * and holds them open. With `holdFirstSnapshot`, that first reply also waits until the test answers it.
+ */
+async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<void> {
   await page?.close();
   page = await browser.newPage();
-  await page.addInitScript((first) => {
+  await page.addInitScript(({ first, hold }) => {
     const listeners: Array<(value: AppSnapshot) => void> = [];
     const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void }> = [];
+    let answerFirst: () => void = () => undefined;
+    const firstReply = new Promise<AppSnapshot>((resolve) => { answerFirst = () => resolve(first); });
+
+    if (!hold) answerFirst();
     const ok = async () => ({ ok: true, value: null });
 
     const control: TestBridge = {
       historyCalls: [],
       push: (next) => { for (const listener of listeners) listener(next); },
+      answerSnapshot: () => answerFirst(),
       answerHistory: (index: number, status: string) => {
         const request = pending[index];
 
@@ -103,7 +119,7 @@ async function open(initial: AppSnapshot): Promise<void> {
     Object.assign(window, {
       testBridge: control,
       permitMonitor: {
-        snapshot: async () => first,
+        snapshot: () => firstReply,
         history: (permitId: string) => {
           control.historyCalls.push(permitId);
 
@@ -123,9 +139,10 @@ async function open(initial: AppSnapshot): Promise<void> {
         installUpdate: ok, deleteLocalData: ok,
       },
     });
-  }, initial);
+  }, { first: initial, hold: holdFirstSnapshot });
   await page.goto(pathToFileURL(path.join(directory, "index.html")).href);
-  await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
+
+  if (!holdFirstSnapshot) await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
 }
 
 async function push(next: AppSnapshot): Promise<void> {
@@ -209,6 +226,25 @@ describe("details history", () => {
     await page.evaluate(() => window.testBridge.answerHistory(0, "Older"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newer");
     expect(await page.locator("#history-list").innerText()).not.toContain("Older");
+  });
+});
+
+describe("snapshot order", () => {
+  it("keeps a newer pushed snapshot when an older direct reply arrives after it", async () => {
+    const older = snapshot([permit(1, { lastStatus: "Older" })]);
+    await open(older, true);
+    const status = page.locator("#permit-table tbody tr td:nth-child(2)");
+
+    await push(snapshot([permit(1, { lastStatus: "Newer" })]));
+    await expect.poll(() => status.innerText()).toContain("Newer");
+
+    await page.evaluate(() => window.testBridge.answerSnapshot());
+    // Give the late reply its chance to render before checking that it didn't.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(await status.innerText()).toContain("Newer");
+
+    await push(older);
+    expect(await status.innerText()).toContain("Newer");
   });
 });
 

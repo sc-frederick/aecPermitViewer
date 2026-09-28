@@ -576,6 +576,17 @@ async function saveCheckTimes(times: string[]): Promise<void> {
   }
 }
 
+/**
+ * Shows a snapshot from main unless one with a higher revision is already shown, since pushed snapshots and direct
+ * replies can arrive out of order. Returns whether it was shown.
+ */
+function applySnapshot(snapshot: AppSnapshot): boolean {
+  if (currentSnapshot && snapshot.revision <= currentSnapshot.revision) return false;
+  render(snapshot);
+
+  return true;
+}
+
 function render(snapshot: AppSnapshot): void {
   currentSnapshot = snapshot;
   renderKey(snapshot.keyState);
@@ -1013,7 +1024,7 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
   setInlineError("permit-number", "permit-number-error", null);
 
   if (filter !== "all") setFilter("all");
-  render(await api.snapshot());
+  applySnapshot(await api.snapshot());
   const added = currentSnapshot?.permits.find((entry) => entry.id === result.value);
   const project = added ? await askProjectNumber(added) : null;
   notice(project ? `${number} added to project ${project}.` : `${number} added.`, "info");
@@ -1340,7 +1351,7 @@ element("delete-local-data", HTMLButtonElement).addEventListener("click", async 
 });
 
 api.onSnapshot((snapshot) => {
-  render(snapshot);
+  if (!applySnapshot(snapshot)) return;
   const permit = detailsPermitId ? snapshot.permits.find((entry) => entry.id === detailsPermitId) : undefined;
 
   if (permit && historyKey(permit) !== historyShown) void loadHistory(permit);
@@ -1354,7 +1365,7 @@ api.onOpenDetails((permitId) => {
   finishProject(null);
 
   if (currentSnapshot?.permits.some((permit) => permit.id === permitId)) openDetails(permitId);
-  else void api.snapshot().then((snapshot) => { render(snapshot); openDetails(permitId); });
+  else void api.snapshot().then((snapshot) => { applySnapshot(snapshot); openDetails(permitId); });
 });
 
 api.onAppEvent((event) => notice(`${event.title}: ${event.body}`, event.tone));
@@ -1373,4 +1384,4 @@ for (const input of document.querySelectorAll<HTMLInputElement>("input[data-pref
 // Keeps the "Next check" time current between snapshots.
 setInterval(() => { if (currentSnapshot) element("next-check").textContent = nextCheckSummary(currentSnapshot); }, 60_000);
 
-void api.snapshot().then(render);
+void api.snapshot().then(applySnapshot);
