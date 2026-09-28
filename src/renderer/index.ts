@@ -34,7 +34,8 @@ let noticeTimer: number | null = null;
 
 let filter: Filter = "all";
 
-const knownPermitIds = new Set<string>();
+/** The permits in the last snapshot, so a row for any other permit is marked as new. */
+let knownPermitIds: ReadonlySet<string> = new Set();
 
 let firstRender = true;
 
@@ -262,7 +263,6 @@ function nextCheckSummary(snapshot: AppSnapshot): string {
 /** One permit's row and the controls kept across updates, so a change elsewhere leaves focus where it was. */
 interface PermitRowView {
   row: HTMLTableRowElement;
-  identity: HTMLTableCellElement;
   open: HTMLButtonElement;
   jurisdiction: HTMLSpanElement;
   unscheduled: HTMLSpanElement;
@@ -311,7 +311,7 @@ function createRow(permit: PermitRow): PermitRowView {
   controls.append(actions);
   row.append(identity, status, action, observed, attempt, controls);
 
-  return { row, identity, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
+  return { row, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
 }
 
 /** Brings a row up to date, touching only the cells and controls whose content changed. */
@@ -580,7 +580,7 @@ function render(snapshot: AppSnapshot): void {
   // A filter that matches nothing says only that; it never reads as an all-clear.
   empty.textContent = total === 0 ? "No permits yet." : "No matches.";
 
-  for (const permit of snapshot.permits) knownPermitIds.add(permit.id);
+  knownPermitIds = new Set(snapshot.permits.map((permit) => permit.id));
   firstRender = false;
 
   if (detailsPermitId) {
