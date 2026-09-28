@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
-import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, type RunOutcome } from "../shared/permit.js";
+import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
 import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
+import type { Candidate, MainToWorker, PageObservation, WorkerFailure, WorkerToMain } from "../shared/worker-protocol.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
 import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForLanding, waitForTylerResults, waitForTylerSearch } from "./detail.js";
 import { wmisAdapter } from "./wmis.js";
@@ -72,7 +72,7 @@ async function closeAll(): Promise<void> {
 }
 
 /** Reports the run's outcome and closes the browser. */
-function fail(outcome: RunOutcome): void {
+function fail(outcome: WorkerFailure): void {
   if (currentRun) send({ kind: "failed", runId: currentRun, outcome });
   void closeAll();
 }

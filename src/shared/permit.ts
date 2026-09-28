@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { KeyState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
 
@@ -79,11 +80,15 @@ export interface AppPreferences {
 export type { PreferenceKey } from "./bridge.js";
 
 export interface AppSnapshot {
+  /**
+   * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
+   * any lower one that arrives later.
+   */
+  revision: number;
   permits: PermitRow[];
   preferences: AppPreferences;
-  keyState: "configured" | "missing" | "unavailable";
+  keyState: KeyState;
   appVersion: string;
-  browserVersion: string;
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */
   checkTimes: string[];
@@ -538,7 +543,7 @@ export function parseDisplayedStatus(input: {
   statusValue: string;
   recordUrl: string;
   observedAt: string;
-}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: RunOutcome } {
+}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
   const { jurisdictionId } = input;
   const profile = getAutomatedJurisdiction(jurisdictionId);
 
