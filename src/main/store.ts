@@ -159,6 +159,9 @@ export class PermitStore {
 
     if (version > 3) throw new Error("Database was created by a newer app version.");
 
+    // permits.interval_hours is retired: scheduling now uses the check times in settings, and nothing reads or writes
+    // the column. It stays in the schema because dropping a column rewrites every permit row, which isn't worth the
+    // risk on its own. Remove it in a future migration that has another reason to rewrite permits.
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
