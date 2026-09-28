@@ -23,6 +23,7 @@ export const runOutcomeSchema = z.enum([
 
 export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 
+/** A saved permit as the window shows it, with its latest verified status and latest check attempt. */
 export interface PermitRow {
   id: string;
   jurisdictionId: JurisdictionId;
@@ -50,6 +51,7 @@ export interface CheckRunRow {
   requestCount: number;
 }
 
+/** A status read from the portal's record page after the displayed permit number and record link were verified. */
 export interface ObservationRow {
   id: string;
   runId: string;
@@ -79,6 +81,7 @@ export interface AppPreferences {
 
 export type { PreferenceKey } from "./bridge.js";
 
+/** Everything the window renders, sent whole from main on each change. */
 export interface AppSnapshot {
   /**
    * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
@@ -125,6 +128,7 @@ export function resolveJurisdiction(input: string): JurisdictionId | null {
   return JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ?? null;
 }
 
+/** Exact comparison after trimming, for portals that display the number exactly as it is entered. */
 export function samePermitNumber(requested: string, displayed: string): boolean {
   return requested.trim() === displayed.trim();
 }
@@ -536,6 +540,14 @@ export function statusLabels(profile: AutomatedJurisdictionProfile): readonly [s
   return ["statusLabel" in profile ? profile.statusLabel : STATUS_LABELS[profile.portalFamily]];
 }
 
+/**
+ * Decide whether what the worker read from a record page can be saved as the permit's status. The displayed number
+ * must match the requested one under the jurisdiction's comparison rules, the label must be one of its record-level
+ * status labels (for SFWMD, the one for the record's kind), the status must be nonblank plain text, the record link
+ * must be the portal's own detail link for this same record, and `observedAt` must be a canonical ISO timestamp.
+ *
+ * @returns The observation to save, or the run outcome that explains why nothing was saved.
+ */
 export function parseDisplayedStatus(input: {
   jurisdictionId: JurisdictionId;
   requestedNumber: string;

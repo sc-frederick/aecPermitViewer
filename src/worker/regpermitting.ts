@@ -219,6 +219,7 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
     .waitFor({ state: "visible", timeout: 20_000 }).catch(() => undefined);
 }
 
+/** Wait up to 20 seconds for the Search Records link to attach. Returns either way; the next observation decides. */
 export async function waitForSearchRecordsLink(page: Page): Promise<void> {
   await page.locator(SEARCH_RECORDS_LINK).first().waitFor({ state: "attached", timeout: 20_000 }).catch(() => undefined);
 }
@@ -259,6 +260,12 @@ async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile
   };
 }
 
+/**
+ * Drive SFWMD RegPermitting's Search Records for one requested application or permit number.
+ *
+ * @param openedRecordUrl - The saved record link this run opened, if any; it is reported as the record link when the
+ *   record view's frame carries no key.
+ */
 export function regPermittingAdapter(page: Page, profile: RegPermittingProfile, requested: string,
   openedRecordUrl: string | null): PortalAdapter {
   return {

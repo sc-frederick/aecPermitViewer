@@ -44,6 +44,17 @@ function newer(candidate: string, current: string): boolean {
   return false;
 }
 
+/**
+ * Verify a signed update feed envelope and return the release it describes.
+ *
+ * @param text - The feed response body: JSON holding the base64 signed payload and its Ed25519 signature.
+ * @param publicKeySpkiBase64 - The app's pinned Ed25519 public key, as base64 DER SPKI.
+ * @param expectedPublisher - The publisher the release must name; the installer's Authenticode signer is checked
+ *   against it after download.
+ * @returns The payload, only after its signature verified against the pinned key.
+ * @throws Error or ZodError when the envelope or payload is malformed, the signature is invalid, the installer URL is
+ *   not a plain HTTPS URL, or the publisher differs. Callers treat any throw as "no trustworthy update".
+ */
 export function verifyReleaseEnvelope(text: string, publicKeySpkiBase64: string, expectedPublisher: string): UpdatePayload {
   const envelope = envelopeSchema.parse(JSON.parse(text));
   const signedBytes = Buffer.from(envelope.signed, "base64");

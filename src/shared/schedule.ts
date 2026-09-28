@@ -17,6 +17,7 @@ export const DEFAULT_CHECK_TIMES: CheckTimes = [
   { hour: 16, minute: 30 },
 ];
 
+/** The most daily check times a user can set. */
 export const MAX_CHECK_TIMES = 8;
 
 const WINDOW_GRACE_MINUTES = 30;
@@ -30,6 +31,7 @@ export function formatCheckTime(time: CheckTime): string {
   return `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
 }
 
+/** Parse a 24-hour "HH:MM" time with two-digit fields, or return null. */
 export function parseCheckTime(value: string): CheckTime | null {
   const match = TIME_PATTERN.exec(value);
 

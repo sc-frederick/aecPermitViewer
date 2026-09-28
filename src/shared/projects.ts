@@ -1,5 +1,6 @@
 import type { PermitRow } from "./permit.js";
 
+/** Permits that share one project number, compared by `projectKey`. */
 export interface ProjectGroup {
   /** Null holds the permits without a project number. */
   projectNumber: string | null;
@@ -9,6 +10,7 @@ export interface ProjectGroup {
 /** A project number as typed: letters and digits first, then those with spaces and - . _ /. Empty clears it. */
 export const PROJECT_NUMBER_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9 ._/-]*)?$/;
 
+/** The longest project number accepted, in characters. */
 export const PROJECT_NUMBER_MAX = 40;
 
 const projectOrder = new Intl.Collator("en-US", { numeric: true, sensitivity: "base" });

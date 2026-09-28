@@ -5,6 +5,7 @@ export const PREFERENCE_KEYS = ["notifyStatusChanges", "notifyFailures", "runInB
 
 export type PreferenceKey = typeof PREFERENCE_KEYS[number];
 
+/** An IPC call's result. Failures carry a message safe to show the user; details stay in main. */
 export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
@@ -23,13 +24,19 @@ export type StoredKeyState = "configured" | "missing" | "unavailable" | "unreada
  */
 export type KeyState = StoredKeyState | "rejected";
 
+/** A manual update check: no feed configured (`unavailable`), up to date, or a verified newer release. */
 export type UpdateCheck =
   | { state: "unavailable" }
   | { state: "current" }
   | { state: "available"; version: string; size: number };
 
+/** A check result shown in the window while it is in front; `permitId` links it to that permit's details. */
 export interface AppEvent { tone: "info" | "error"; title: string; body: string; permitId?: string }
 
+/**
+ * The API the preload script exposes to the renderer. Every input is parsed again in main; the renderer is not trusted
+ * with keys or file paths. Subscriptions return a function that removes the listener.
+ */
 export interface PermitBridge {
   snapshot(): Promise<AppSnapshot>;
   addAndCheck(input: { jurisdiction: string; permitNumber: string }): Promise<BridgeResult<string>>;

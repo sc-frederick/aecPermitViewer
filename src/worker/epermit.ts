@@ -205,6 +205,7 @@ async function readEpermitRecord(page: Page, profile: EpermitProfile, requested:
   };
 }
 
+/** Drive a district's ePermit search for one requested permit number with its sequence. */
 export function epermitAdapter(page: Page, profile: EpermitProfile, requested: string): PortalAdapter {
   return {
     observe: () => observeEpermitSearch(page, profile, requested),

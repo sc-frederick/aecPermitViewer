@@ -123,6 +123,11 @@ function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
   };
 }
 
+/**
+ * The app's SQLite database of permits, check runs, status observations, and settings. Opening it migrates older
+ * schema versions after writing a backup, and marks runs left unfinished by an earlier exit as interrupted.
+ * All methods are synchronous; failures other than the typed results below throw.
+ */
 export class PermitStore {
   private readonly db: DatabaseSync;
   private readonly statements = new Map<string, StatementSync>();
@@ -269,6 +274,7 @@ export class PermitStore {
     });
   }
 
+  /** Close the database. The store must not be used afterward. */
   close(): void {
     this.statements.clear();
     this.db.close();
@@ -343,11 +349,17 @@ export class PermitStore {
     return { _tag: "ok", value: id };
   }
 
+  /**
+   * Saved permits, newest first. Permits whose jurisdiction the app no longer supports are left out but kept on disk.
+   *
+   * @param checkingIds - Permits with a check in progress, reported with `checking: true`.
+   */
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`)
       .flatMap((row) => mapPermit(row, checkingIds.has(row.id)) ?? []);
   }
 
+  /** The permit, or null when it doesn't exist or its jurisdiction is no longer supported. `checking` is always false. */
   getPermit(id: string): PermitRow | null {
     const row = this.row(storedPermitSchema, `${PERMIT_SELECT} WHERE p.id = ?`, id);
 
@@ -380,6 +392,12 @@ export class PermitStore {
     return id;
   }
 
+  /**
+   * Complete a run started by `startRun` and schedule the permit's next check from the outcome. The observation is saved,
+   * and becomes the permit's latest status and record link, only when the outcome is `success`.
+   *
+   * @throws Error when the run doesn't exist.
+   */
   finishRun(input: {
     runId: string;
     permitId: string;
@@ -444,6 +462,7 @@ export class PermitStore {
     });
   }
 
+  /** The permit's check runs, newest start first, and its saved observations, newest observation first. */
   history(permitId: string): PermitHistory {
     const runs = this.rows(checkRunSchema, `SELECT id, permit_id AS permitId, started_at AS startedAt,
       finished_at AS finishedAt, outcome, action_count AS actionCount,
@@ -464,6 +483,7 @@ export class PermitStore {
       FROM status_observations WHERE id = ?`, id);
   }
 
+  /** The jurisdiction of the permit an observation belongs to, or null when either is gone or no longer supported. */
   getObservationJurisdictionId(id: string): JurisdictionId | null {
     const row = this.row(jurisdictionRefSchema, `SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
       JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`, id);
@@ -485,6 +505,7 @@ export class PermitStore {
     this.sql("INSERT INTO settings(key, value) VALUES ('monitoring', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(mode);
   }
 
+  /** Whether scheduled checks run. Defaults to scheduled when never set. */
   getMonitoring(): "manual" | "scheduled" {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
 
@@ -492,6 +513,7 @@ export class PermitStore {
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
+  /** The saved daily check times, or the defaults when none are saved or the saved value no longer parses. */
   getCheckTimes(): CheckTimes {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'check_times'");
     const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
@@ -506,6 +528,7 @@ export class PermitStore {
     this.alignSchedule(now);
   }
 
+  /** A boolean setting, or `fallback` when it has never been saved. */
   getFlag(key: string, fallback: boolean): boolean {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key);
 
@@ -517,6 +540,12 @@ export class PermitStore {
       .run(key, value ? "1" : "0");
   }
 
+  /**
+   * Included permits whose next check is unset or at or before `now`, earliest due first. Hand-checked permits are
+   * never returned.
+   *
+   * @param now - An ISO timestamp, compared as text with the stored ISO due times.
+   */
   duePermitIds(now: string): string[] {
     return this.rows(dueSchema, `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
       AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`, now)
@@ -529,6 +558,7 @@ export class PermitStore {
     this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(value, id, value);
   }
 
+  /** Delete the permit with its runs and observations. Returns false when no permit had that id. */
   removePermit(id: string): boolean {
     return this.sql("DELETE FROM permits WHERE id = ?").run(id).changes === 1;
   }
@@ -545,6 +575,11 @@ export class PermitStore {
       .run(projectNumber?.trim() || null, id).changes === 1;
   }
 
+  /**
+   * Include or exclude a permit from scheduled checks. Including it makes it due immediately.
+   *
+   * @throws Error when including a hand-checked permit, which scheduled checks can't read.
+   */
   setPermitMonitoring(id: string, enabled: boolean): void {
     const permit = this.getPermit(id);
 
