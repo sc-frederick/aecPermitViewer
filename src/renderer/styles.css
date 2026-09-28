@@ -270,6 +270,7 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .timeline time { display: block; margin-top: 2px; font-size: 11px; color: var(--color-graphite); }
 .timeline p { margin: 4px 0 0; font-size: var(--fs-body-sm); color: var(--color-graphite); }
 .timeline .link-button { margin-top: 6px; }
+.timeline li.timeline-error { grid-template-columns: 1fr; }
 .timeline li.timeline-empty { grid-template-columns: 1fr; padding: 14px 0; font-family: var(--font-display); font-size: var(--fs-title-md); color: var(--color-graphite); }
 .link-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); text-transform: uppercase; color: var(--color-ink); text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 5px; text-decoration-thickness: 1px; }
 .link-button:hover { text-decoration-color: currentColor; }
