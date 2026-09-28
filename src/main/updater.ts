@@ -128,15 +128,18 @@ function sameHex(left: string, right: string): boolean {
 }
 
 /**
- * Writes a download to `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure the
- * stream is cancelled, the file is closed and removed, and the error is rethrown. `onProgress` runs after each read.
+ * Writes a download to a new `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure
+ * the stream is cancelled, the file is closed, and the error is rethrown. The file is removed only if this call created
+ * it; an existing file at `file` fails the call and is left alone. `onProgress` runs after each read.
  */
 export async function saveDownload(body: ReadableStream<Uint8Array>, file: string, size: number, onProgress: () => void): Promise<string> {
   const reader = body.getReader();
   let handle: FileHandle | null = null;
+  let created = false;
 
   try {
     handle = await open(file, "wx", 0o600);
+    created = true;
     const hash = createHash("sha256");
     let bytes = 0;
 
@@ -167,23 +170,74 @@ export async function saveDownload(body: ReadableStream<Uint8Array>, file: strin
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     await handle?.close().catch(() => undefined);
-    await rm(file, { force: true });
+
+    if (created) await rm(file, { force: true });
     throw error;
   }
 }
 
+/** A newer check or a cancellation replaced the update this operation was working on, so its result was discarded. */
+export class UpdateSuperseded extends Error {
+  readonly _tag = "UpdateSuperseded" as const;
+
+  constructor(readonly operation: "check" | "download" | "install", readonly cause?: unknown) {
+    super(`Update ${operation} was superseded`);
+  }
+}
+
+/** The operation needs a verified update the updater doesn't currently hold: one offered by a check, or one downloaded. */
+export class UpdateNotReady extends Error {
+  readonly _tag = "UpdateNotReady" as const;
+
+  constructor(readonly needed: "available" | "downloaded") {
+    super(needed === "available" ? "No verified update available" : "No verified update downloaded");
+  }
+}
+
+/**
+ * The update on offer and how far it has got. A download belongs to the payload it started with; `abort` stops it when
+ * that payload is withdrawn, and only the download that still owns the current offer may make it `ready`.
+ */
+type UpdateState =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "available"; readonly payload: UpdatePayload }
+  | { readonly _tag: "downloading"; readonly payload: UpdatePayload; readonly operation: Promise<string>; readonly abort: AbortController }
+  | { readonly _tag: "ready"; readonly payload: UpdatePayload; readonly file: string };
+
+function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
+  return left.version === right.version && left.url === right.url && left.sha256 === right.sha256 &&
+    left.size === right.size && left.publisher === right.publisher;
+}
+
+/**
+ * Checks the signed feed, downloads and verifies the offered installer, and hands it over for installation. Operations
+ * that would conflict are ordered rather than raced: concurrent downloads of one offer share a single transfer, a
+ * check that changes the offer stops the old download, and a failed check leaves the current offer untouched.
+ */
 export class UpdateManager {
   private readonly config: { feedUrl: string; publicKeySpkiBase64: string; expectedPublisher: string };
-  private available: UpdatePayload | null = null;
-  private downloadedPath: string | null = null;
+  private state: UpdateState = { _tag: "idle" };
+  /** Advances whenever the offer is replaced or withdrawn; work started under an older value is stale. */
+  private generation = 0;
+  /** Advances with each check, so only the most recent one may apply its answer. */
+  private checkSequence = 0;
+  /** Settles once the latest download has finished all its file work, successful or not. Never rejects. */
+  private downloadSettled: Promise<void> = Promise.resolve();
 
   constructor(private readonly dataRoot: string, private readonly currentVersion: string, private readonly scriptPath: string, configPath: string) {
     this.config = configSchema.parse(JSON.parse(readFileSync(configPath, "utf8")));
   }
 
+  /**
+   * Reads the signed feed and offers its release if it is newer than this app. A different release replaces the offer
+   * and stops any download of the old one; the same release keeps a download in flight or already finished. Rejects,
+   * leaving the offer as it was, when the feed can't be read or verified; rejects with `UpdateSuperseded` when a later
+   * check or `cancel()` overtook this one.
+   */
   async check(): Promise<UpdateCheck> {
-    this.available = null;
-    this.downloadedPath = null;
+    this.checkSequence += 1;
+    const sequence = this.checkSequence;
+    const generation = this.generation;
     const feed = safeHttpsUrl(this.config.feedUrl);
 
     if (!feed || !this.config.publicKeySpkiBase64) return { state: "unavailable" };
@@ -197,16 +251,101 @@ export class UpdateManager {
     const text = await boundedText(response, 32_768);
     const payload = verifyReleaseEnvelope(text, this.config.publicKeySpkiBase64, this.config.expectedPublisher);
 
-    if (!newer(payload.version, this.currentVersion)) return { state: "current" };
-    this.available = payload;
+    if (sequence !== this.checkSequence || generation !== this.generation) throw new UpdateSuperseded("check");
+
+    if (!newer(payload.version, this.currentVersion)) {
+      this.offer(null);
+
+      return { state: "current" };
+    }
+
+    this.offer(payload);
 
     return { state: "available", version: payload.version, size: payload.size };
   }
 
+  /**
+   * Downloads and verifies the offered installer and resolves with its version. A download already running for the
+   * offer is joined, and a finished one resolves at once. Rejects with `UpdateNotReady` when nothing is offered and with
+   * `UpdateSuperseded` when the offer changes or is cancelled first; any other failure returns to the offered state.
+   */
   async download(): Promise<string> {
-    const payload = this.available;
+    const state = this.state;
 
-    if (!payload) throw new Error("No verified update available");
+    if (state._tag === "idle") throw new UpdateNotReady("available");
+
+    if (state._tag === "downloading") return state.operation;
+
+    if (state._tag === "ready") return state.payload.version;
+    const { payload } = state;
+    const generation = this.generation;
+    const abort = new AbortController();
+
+    // A superseded download may still be finishing its file work; this one waits for it so the two never touch the
+    // update folder at once.
+    const operation = this.downloadSettled
+      .then(() => this.saveInstaller(payload, abort.signal))
+      .then((file) => {
+        if (generation !== this.generation) throw new UpdateSuperseded("download");
+        this.state = { _tag: "ready", payload, file };
+
+        return payload.version;
+      }, (cause) => {
+        if (generation !== this.generation) throw new UpdateSuperseded("download", cause);
+        this.state = { _tag: "available", payload };
+        throw cause;
+      });
+
+    this.downloadSettled = operation.then(() => undefined, () => undefined);
+    this.state = { _tag: "downloading", payload, operation, abort };
+
+    return operation;
+  }
+
+  /**
+   * Withdraws the offer, stops any download, and discards the answer of a check still in flight. Resolves once the
+   * stopped download has released its connection and finished with its files, so the update folder can be removed.
+   */
+  async cancel(): Promise<void> {
+    this.offer(null);
+    await this.downloadSettled;
+  }
+
+  /**
+   * Re-verifies the downloaded installer's size, hash, and publisher just before it is launched and returns its path.
+   * Rejects with `UpdateNotReady` when no download finished for the current offer.
+   */
+  async installerForApprovedHandoff(): Promise<string> {
+    const state = this.state;
+
+    if (state._tag !== "ready") throw new UpdateNotReady("downloaded");
+    const { payload, file } = state;
+
+    if ((await stat(file)).size !== payload.size || !sameHex(await sha256File(file), payload.sha256)) {
+      throw new Error("Downloaded update changed");
+    }
+
+    await this.verifyPublisher(file, payload.publisher);
+
+    if (this.state !== state) throw new UpdateSuperseded("install");
+
+    return file;
+  }
+
+  /** Replaces the offer with `payload`, or withdraws it. Re-offering the same release keeps its download. */
+  private offer(payload: UpdatePayload | null): void {
+    const state = this.state;
+
+    if (payload && state._tag !== "idle" && samePayload(state.payload, payload)) return;
+
+    if (state._tag === "downloading") state.abort.abort();
+    this.generation += 1;
+    this.state = payload ? { _tag: "available", payload } : { _tag: "idle" };
+  }
+
+  /** Downloads `payload`'s installer into the update folder, verifies it, and returns its final path. */
+  private async saveInstaller(payload: UpdatePayload, signal: AbortSignal): Promise<string> {
+    if (signal.aborted) throw new UpdateSuperseded("download");
     const updateDir = path.join(this.dataRoot, "updates");
     await mkdir(updateDir, { recursive: true });
     const temporary = path.join(updateDir, `${randomUUID()}.partial.exe`);
@@ -220,7 +359,7 @@ export class UpdateManager {
     let hash: string;
 
     try {
-      const response = await fetchHttps(installerUrl, stall.signal);
+      const response = await fetchHttps(installerUrl, AbortSignal.any([stall.signal, signal]));
 
       if (!response.ok || !response.body) {
         await response.body?.cancel().catch(() => undefined);
@@ -231,10 +370,12 @@ export class UpdateManager {
         clearTimeout(stallTimer);
         stallTimer = setTimeout(() => stall.abort(), 60_000);
       });
-    } catch (error) {
+    } catch (cause) {
       // Aborting ends the connection, whatever step failed.
       stall.abort();
-      throw error;
+
+      if (signal.aborted) throw new UpdateSuperseded("download", cause);
+      throw cause;
     } finally {
       clearTimeout(stallTimer);
     }
@@ -245,7 +386,10 @@ export class UpdateManager {
     }
 
     try {
-      await this.verifyPublisher(temporary, payload.publisher);
+      await this.verifyPublisher(temporary, payload.publisher, signal);
+
+      // A withdrawn offer must not replace the installer or clear the folder.
+      if (signal.aborted) throw new UpdateSuperseded("download");
       await rm(final, { force: true });
       await rename(temporary, final);
 
@@ -253,32 +397,15 @@ export class UpdateManager {
         if ((entry.startsWith("PermitMonitorSetup-") && entry.endsWith(".exe") && entry !== path.basename(final)) ||
           entry.endsWith(".partial.exe")) await rm(path.join(updateDir, entry), { force: true });
       }
-    } catch (error) {
+    } catch (cause) {
       await rm(temporary, { force: true });
-      throw error;
+      throw cause;
     }
 
-    this.downloadedPath = final;
-
-    return payload.version;
+    return final;
   }
 
-  async installerForApprovedHandoff(): Promise<string> {
-    const payload = this.available;
-    const file = this.downloadedPath;
-
-    if (!payload || !file) throw new Error("No verified update downloaded");
-
-    if ((await stat(file)).size !== payload.size || !sameHex(await sha256File(file), payload.sha256)) {
-      throw new Error("Downloaded update changed");
-    }
-
-    await this.verifyPublisher(file, payload.publisher);
-
-    return file;
-  }
-
-  private async verifyPublisher(file: string, publisher: string): Promise<void> {
+  private async verifyPublisher(file: string, publisher: string, signal?: AbortSignal): Promise<void> {
     // verifyReleaseEnvelope already required publisher === config.expectedPublisher, so an empty value
     // only reaches here from an unsigned-build configuration.
     if (!publisher) return;
@@ -286,7 +413,7 @@ export class UpdateManager {
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");
     await new Promise<void>((resolve, reject) => {
       const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", this.scriptPath,
-        "-InstallerPath", file, "-ExpectedPublisher", publisher], { windowsHide: true, stdio: "ignore" });
+        "-InstallerPath", file, "-ExpectedPublisher", publisher], { windowsHide: true, stdio: "ignore", signal });
 
       child.once("error", reject);
       child.once("exit", (code) => code === 0 ? resolve() : reject(new Error("Update publisher verification failed")));

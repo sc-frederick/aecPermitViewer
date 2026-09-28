@@ -211,3 +211,24 @@ describe("details history", () => {
     expect(await page.locator("#history-list").innerText()).not.toContain("Older");
   });
 });
+
+describe("update controls", () => {
+  it("keeps Check for updates unavailable while a download is running", async () => {
+    await page.evaluate(() => {
+      Object.assign(window.permitMonitor, {
+        checkForUpdate: async () => ({ ok: true, value: { state: "available", version: "1.1.0", size: 5_000_000 } }),
+        downloadUpdate: () => new Promise((resolve) => {
+          document.addEventListener("test-download-finished", () => resolve({ ok: true, value: "1.1.0" }), { once: true });
+        }),
+      });
+    });
+    await page.locator("#open-settings").click();
+    await page.locator("#check-update").click();
+    await page.locator("#download-update").click();
+    expect(await page.locator("#check-update").isDisabled()).toBe(true);
+
+    await page.evaluate(() => document.dispatchEvent(new Event("test-download-finished")));
+    await expect.poll(() => page.locator("#update-status").innerText()).toBe("Version 1.1.0 is ready to install.");
+    expect(await page.locator("#check-update").isDisabled()).toBe(false);
+  });
+});

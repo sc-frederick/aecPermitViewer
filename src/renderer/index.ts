@@ -1284,7 +1284,9 @@ checkUpdate.addEventListener("click", async () => {
 element("download-update", HTMLButtonElement).addEventListener("click", async () => {
   const control = element("download-update", HTMLButtonElement);
   element("update-status").textContent = "Downloading… This can take a few minutes.";
-  const result = await busy(control, () => api.downloadUpdate());
+  // A check during the download could replace the update being downloaded.
+  checkUpdate.disabled = true;
+  const result = await busy(control, () => api.downloadUpdate()).finally(() => { checkUpdate.disabled = false; });
 
   if (!result.ok) {
     element("update-status").textContent = result.error;
