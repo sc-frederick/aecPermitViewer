@@ -311,6 +311,16 @@ describe("manual installer upload", () => {
     expect(bucket.storedText(key)).toBeNull();
   });
 
+  it("removes a completed installer when the completion declares a different hash than the start", async () => {
+    const { bucket, env } = feed();
+    const key = "PermitMonitorSetup-0.8.0.exe";
+    const started = await (await uploadCall(env, key, "POST", JSON.stringify({ sha256: sha256("abc"), size: 3 }))).json();
+    const part = await (await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "abd")).json();
+    const completion = { sha256: sha256("abd"), size: 3, parts: [part] };
+    expect((await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", JSON.stringify(completion))).status).toBe(409);
+    expect(bucket.storedText(key)).toBeNull();
+  });
+
   it("rejects malformed start and completion requests before calling storage", async () => {
     const { bucket, env } = feed();
     const key = "PermitMonitorSetup-0.8.0.exe";

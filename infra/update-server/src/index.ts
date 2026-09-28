@@ -377,8 +377,10 @@ async function completeInstaller(request: Request, env: FeedEnv, key: string, up
   const object = await stored("complete_multipart", key, () => multipart.complete(completion.data.parts));
 
   if (object._tag !== "ok") return unavailable(object);
+  // The hash recorded when the upload started; absent only if R2 dropped the metadata, leaving size as the check.
+  const recorded = recordedSha256(object.value);
 
-  if (object.value.size === completion.data.size && recordedSha256(object.value) === completion.data.sha256) {
+  if (object.value.size === completion.data.size && (recorded === null || recorded === completion.data.sha256)) {
     return Response.json({ status: "published", size: object.value.size });
   }
 
