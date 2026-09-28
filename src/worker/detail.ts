@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
-import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl } from "../shared/permit.js";
+import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
+import { readAccelaReviews } from "./accela-reviews.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
 
@@ -101,12 +102,22 @@ export async function readDetail(page: Page, profile: AutomatedJurisdictionProfi
 
   if (!fields) return NOTHING_DISPLAYED;
 
-  return {
+  const record: DisplayedRecord = {
     displayedNumber: await visibleText(page, fields.number),
     statusValue: await visibleText(page, fields.status),
     statusLabel: fields.label ? await visibleText(page, fields.label) : `${expectedStatusLabel(profile)}:`,
     recordUrl: profile.portalFamily === "click2gov" ? stPeteRecordUrl(requestedNumber) : page.url(),
   };
+
+  if (profile.portalFamily === "accela" && record.displayedNumber &&
+    sameJurisdictionPermitNumber(requestedNumber, record.displayedNumber, profile.id)) {
+    const reviews = await readAccelaReviews(page);
+
+    if (reviews._tag === "err") return { ...record, statusValue: null };
+    record.reviews = reviews.value;
+  }
+
+  return record;
 }
 
 /** Tyler renders a record after load, so this waits until its number and status hold text. Other families load ready. */

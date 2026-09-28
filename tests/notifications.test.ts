@@ -4,7 +4,7 @@ import type { PermitRow } from "../src/shared/permit.js";
 
 const base: PermitRow = {
   id: "00000000-0000-4000-8000-000000000001", jurisdictionId: "hillsborough-county-building",
-  permitNumber: "HC-BLD-26-0087599", projectNumber: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null,
+  permitNumber: "HC-BLD-26-0087599", projectNumber: null, reviews: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null,
   lastRecordUrl: null, latestAttemptAt: null, latestOutcome: null, nextDueAt: null, checking: false,
 };
 
@@ -30,6 +30,33 @@ describe("check notifications", () => {
 
   it("stays quiet when the status is unchanged", () => {
     expect(describeCheckEvent(verified, verified, "success")).toBeNull();
+  });
+
+  it("announces additional disciplines and new correction rounds even when the record status stays unchanged", () => {
+    const review = { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" };
+    const before = { ...verified, reviews: [review] };
+    const additional = { ...review, process: "Site Engineer Review", date: "2026-09-28" };
+    const event = describeCheckEvent(before, { ...before, reviews: [review, additional] }, "success");
+    expect(event).toMatchObject({ kind: "review-action", body: expect.stringContaining("Site Engineer Review") });
+    expect(event?.body).not.toContain("Natural Resources Review");
+    expect(describeCheckEvent(before, { ...before, reviews: [review, { ...review, date: "2026-10-20", dueDate: "2026-10-20" }] }, "success"))
+      .toMatchObject({ kind: "review-action", body: expect.stringContaining("2026-10-20") });
+  });
+
+  it("does not repeat requests after reordered history, case changes, or failed checks", () => {
+    const review = { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" };
+    const before = { ...verified, reviews: [review, { ...review, date: "2026-07-16", dueDate: "2026-07-14" }] };
+    const after = { ...before, reviews: [...before.reviews].reverse().map((entry) => ({ ...entry, status: " corrections  required " })) };
+    expect(describeCheckEvent(before, after, "success")).toBeNull();
+    expect(describeCheckEvent(before, { ...before, reviews: [{ ...review, dueDate: "2026-09-30" }] }, "success")).toBeNull();
+    expect(describeCheckEvent({ ...before, latestOutcome: "status_unavailable" }, after, "success")).toBeNull();
+    expect(describeCheckEvent(verified, before, "status_unavailable")?.kind).toBe("check-failed");
+  });
+
+  it("does not announce superseded corrections or a newly pending review round", () => {
+    const old = { process: "Stormwater Review", status: "Corrections Required", date: "2026-07-16", dueDate: "2026-07-14" };
+    expect(describeCheckEvent(verified, { ...verified, reviews: [old, { ...old, date: null, status: null, dueDate: "2026-09-22" }] }, "success")).toBeNull();
+    expect(describeCheckEvent(verified, { ...verified, reviews: [old, { ...old, status: "Approved", date: "2026-09-22" }] }, "success")).toBeNull();
   });
 
   it("reports the first failure", () => {

@@ -357,7 +357,7 @@ async function sendObservationOrResult(): Promise<void> {
   }
 
   if (observation.phase === "detail" && jurisdiction) {
-    const { displayedNumber, statusValue, statusLabel: labelText, recordUrl } = record ?? await readRecord();
+    const { displayedNumber, statusValue, statusLabel: labelText, recordUrl, reviews } = record ?? await readRecord();
 
     if (!displayedNumber || !sameJurisdictionPermitNumber(requestedNumber, displayedNumber, jurisdiction.id)) {
       fail("identity_mismatch");
@@ -383,6 +383,7 @@ async function sendObservationOrResult(): Promise<void> {
       displayedNumber,
       statusLabel: labelText,
       statusValue,
+      reviews: reviews ?? null,
       observedAt: new Date().toISOString(),
       recordUrl,
       browserVersion: browser?.version() ?? "unknown",

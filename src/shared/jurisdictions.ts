@@ -12,7 +12,7 @@ export const JURISDICTIONS = [
     globalSearch: true,
     modules: ["Building", "LandDevelopment", "Fire", "Enforcement", "Administrative"],
     coverageNote: "County government records in HillsGovHub, found with its Global Search across Building, Land Development (including utility and site permits), Fire, Enforcement, and Administrative; municipalities are separate authorities.",
-    adapterVersion: "accela-global-1",
+    adapterVersion: "accela-global-reviews-1",
   },
   {
     id: "pasco-county-building",
@@ -26,7 +26,7 @@ export const JURISDICTIONS = [
     globalSearch: true,
     modules: ["Building", "Permits", "Planning", "Enforcement"],
     coverageNote: "Pasco County records in PascoGateway, found with its Global Search across Building, Permits, Planning, and Enforcement.",
-    adapterVersion: "accela-global-1",
+    adapterVersion: "accela-global-reviews-1",
   },
   {
     id: "tampa-building",
@@ -37,7 +37,7 @@ export const JURISDICTIONS = [
     tenant: "TAMPA",
     module: "Building",
     coverageNote: "City of Tampa Building records in the city's Accela portal.",
-    adapterVersion: "accela-2",
+    adapterVersion: "accela-reviews-1",
   },
   {
     id: "pinellas-county-building",
@@ -48,7 +48,7 @@ export const JURISDICTIONS = [
     tenant: "PINELLAS",
     module: "Building",
     coverageNote: "County and partner-community Building records in the Pinellas County Access Portal.",
-    adapterVersion: "accela-2",
+    adapterVersion: "accela-reviews-1",
   },
   {
     id: "st-petersburg-building",
@@ -82,7 +82,7 @@ export const JURISDICTIONS = [
     tenant: "POLKCO",
     module: "Building",
     coverageNote: "Polk County Building records in Accela; historical permits use a separate county lookup.",
-    adapterVersion: "accela-2",
+    adapterVersion: "accela-reviews-1",
   },
   // SWFWMD's public WMIS searches each cover one permit program. Record pages are served from a second host.
   {

@@ -1,4 +1,5 @@
 import type { Candidate, PageObservation } from "../shared/worker-protocol.js";
+import type { ReviewEntry } from "../shared/reviews.js";
 
 /** What a record showed: its identity, record-level status and label, and the record page link to save. */
 export interface DisplayedRecord {
@@ -6,6 +7,8 @@ export interface DisplayedRecord {
   statusLabel: string | null;
   statusValue: string | null;
   recordUrl: string | null;
+  /** Populated by adapters that read individual review processes. */
+  reviews?: ReviewEntry[] | null;
 }
 
 export const NOTHING_DISPLAYED: DisplayedRecord = { displayedNumber: null, statusLabel: null, statusValue: null, recordUrl: null };

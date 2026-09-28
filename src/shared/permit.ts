@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reviewsSchema, type ReviewEntry } from "./reviews.js";
 import type { KeyState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
@@ -32,6 +33,8 @@ export interface PermitRow {
   projectNumber: string | null;
   monitoringEnabled: boolean;
   lastStatus: string | null;
+  /** Workflow history from the latest successful check; null before review tracking or on other portal families. */
+  reviews: ReviewEntry[] | null;
   lastObservedAt: string | null;
   lastRecordUrl: string | null;
   latestAttemptAt: string | null;
@@ -59,6 +62,7 @@ export interface ObservationRow {
   verifiedPermitNumber: string;
   statusLabel: string;
   statusValue: string;
+  reviews: ReviewEntry[] | null;
   observedAt: string;
   recordUrl: string;
 }
@@ -554,6 +558,7 @@ export function parseDisplayedStatus(input: {
   displayedNumber: string;
   statusLabel: string;
   statusValue: string;
+  reviews?: ReviewEntry[] | null;
   recordUrl: string;
   observedAt: string;
 }): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
@@ -571,8 +576,9 @@ export function parseDisplayedStatus(input: {
 
   if (regNumber && (regNumber.kind === "permit") !== (label === "Permit Status")) return { _tag: "err", outcome: "status_unavailable" };
   const status = input.statusValue.trim();
+  const reviews = reviewsSchema.safeParse(input.reviews ?? null);
 
-  if (!status || /\p{Cc}/u.test(status)) return { _tag: "err", outcome: "status_unavailable" };
+  if (!status || /\p{Cc}/u.test(status) || !reviews.success) return { _tag: "err", outcome: "status_unavailable" };
   const recordUrl = parsePortalUrl(input.recordUrl, "detail", jurisdictionId);
 
   if (!recordUrl) return { _tag: "err", outcome: "record_link_unavailable" };
@@ -608,6 +614,7 @@ export function parseDisplayedStatus(input: {
       verifiedPermitNumber: input.displayedNumber.trim(),
       statusLabel: input.statusLabel.trim(),
       statusValue: status,
+      reviews: profile.portalFamily === "accela" ? reviews.data : null,
       observedAt: input.observedAt,
       recordUrl: input.recordUrl,
     },

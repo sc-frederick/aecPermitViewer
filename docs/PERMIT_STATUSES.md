@@ -43,7 +43,11 @@ Record Status usually changes when a request goes to the applicant, and every re
 - Pasco COMALT-2026-000516 reads "Plan Review In Process" while six of seven reviews already show "Revisions Required". Pasco releases the requests once every review finishes.
 - Tampa's guide shows "In Process" with a certification task marked "Awaiting Client Reply" for fees due before the CO.
 
-The public Processing Status workflow (Record Info > Processing Status, in the page's initial HTML under `#tab-processing_status`) shows these task-level requests. Reading it reliably means comparing the latest request against later "Plans Submitted", "Resubmitted", "Revisions Received", or "Document Uploaded" entries on any task, because resubmittals are often logged on a different task. The app does not read it yet.
+The app now reads the public workflow under **Record Info > Processing Status** (`#tab-processing_status`), opening the tab when a tenant loads the history on demand. It retains each process’s status, decision date, and due date with every observation. The latest dated entry per process determines whether a response is required; a new pending round uses its due date and replaces that discipline’s older corrections. Same-day events follow the portal’s chronological row order.
+
+Explicit requests such as “Corrections Required”, “Revisions Required”, and “Awaiting Client Reply” set AEC action even while Record Status still says “In Process”. Later “Plans Submitted”, “Plans Received”, “Resubmitted”, “Revisions Received”, “Resubmittal Received”, “Routed for Review”, or “Routed for Electronic Review” events on Application Submittal, Application Review, Plans Distribution, or Plans Coordination supersede older requests. A resubmittal on a single discipline does not clear another discipline’s corrections. Same-day requests remain actionable because no time is supplied. A document upload or payment alone does not prove the applicant answered the corrections. The app preserves the exact Record Status and shows the review evidence separately.
+
+Confirmed September 28, 2026 on HC-SITECON-26-0000004: Record Status is “In Process”; Natural Resources requires corrections dated September 24 and Site Engineer September 22, while Stormwater has a new pending round due September 22. The older July Stormwater and Plans Coordination corrections do not drive the current action. Each newly seen discipline or correction date sends a notification under the existing status-change preference; unchanged requests stay quiet.
 
 ## Tyler Civic Access: Hernando
 

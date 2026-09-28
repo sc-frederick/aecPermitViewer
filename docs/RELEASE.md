@@ -74,6 +74,14 @@ If a certificate becomes available, `forge.config.cjs` signs the app and install
 
 The release is blocked until all checks pass. CI package success alone is not clean-machine qualification.
 
+## Desktop notifications
+
+With status-change notifications enabled, check a permit whose latest discipline review newly requires corrections while its Record Status stays unchanged. Verify the notice names the discipline and correction date, and the permit shows AEC action. Repeat the check and confirm it stays quiet. A newly completed discipline or later correction date should notify again.
+
+Check each display state: focused (in-app notice, including above open dialogs), unfocused, minimized, and closed to the tray (Windows notification). Click both a banner and its retained Notification Center entry and confirm the window opens the correct permit. Turn off status-change notifications and confirm review notices stop; failure notifications have a separate setting. If native delivery fails, verify a diagnostic is recorded and the retained notice appears when the window regains focus. Windows may deliver directly to Notification Center when banners are disabled or Do Not Disturb is active; an Electron `show` event alone does not prove a visible banner.
+
+On September 28, 2026, the source notification adapter was exercised on native Windows using Electron 44.4.5 and the installed `com.squirrel.PermitMonitor.PermitMonitor` identity. Electron reported `show`, and Windows notification history contained the test title and body. The user confirmed seeing the notification and that Do Not Disturb had been enabled. Native click-through was not manually verified. This verifies native receipt on that host; it does not replace a banner/click check of the packaged release. Automated tests cover preferences, foreground routing, failed-delivery recovery, notice visibility above dialogs, and opening the selected permit from the notification event.
+
 ## Update trust
 
 The app accepts only an HTTPS feed with an Ed25519-signed payload containing version, installer URL, SHA-256, size, and expected publisher. It downloads to a temporary file, enforces size, checks the hash (and the Authenticode publisher when one is configured), then offers an explicit installation. For unsigned builds the Ed25519 key is the only trust anchor: whoever holds it can ship code to every install, so keep it only in the Actions secret and the offline backup. The installer is rechecked before handoff. Updates replace the tested app, Playwright library, browser revision, adapter, and prompt together.

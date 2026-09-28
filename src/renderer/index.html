@@ -101,6 +101,12 @@
         </div>
         <label id="details-daily-option" class="checkbox"><input id="details-daily" class="checkbox-input" type="checkbox"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Include in scheduled checks</strong><small id="details-daily-help"></small></span></label>
       </div>
+      <section id="details-reviews" class="review-section" aria-labelledby="details-review-title" hidden>
+        <h3 id="details-review-title" class="sheet-section-title">Processing status</h3>
+        <p class="detail-meta">Latest entry for each process. A response may be required while other reviews are pending.</p>
+        <ul id="details-review-list" class="review-list"></ul>
+        <p id="details-review-empty" class="detail-meta" hidden>No review processes listed.</p>
+      </section>
       <div class="rule-head"><h3 class="sheet-section-title">History</h3></div>
       <ol id="history-list" class="timeline"></ol>
       <button id="details-remove" class="btn btn-ghost remove-link" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"/></svg>Remove permit</button>

@@ -18,11 +18,12 @@ import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
 import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openAtLoginAvailable, setOpenAtLogin } from "./background.js";
 import { describeCheckEvent, keyNotice, type CheckEvent } from "./notifications.js";
+import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
 import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot, type RunOutcome } from "../shared/permit.js";
 import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
-import { PREFERENCE_KEYS, type AppEvent, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
 import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
@@ -77,7 +78,7 @@ let quitting = false;
 
 let background: Background | null = null;
 
-let keyNoticeShown = false;
+let notifier: CheckNotifier;
 
 /** Failures the user only sees as a generic message are recorded here, without their messages or any user data. */
 let diagnostics: DiagnosticLog;
@@ -117,32 +118,7 @@ function keepsRunningInBackground(): boolean {
 
 /** Desktop notification when the window is out of view; an in-app notice when the user is already looking. */
 function announce(event: CheckEvent): void {
-  const wanted = event.kind === "first-status" || event.kind === "status-changed"
-    ? store.getFlag(PREF_FLAGS.notifyStatusChanges, true)
-    : store.getFlag(PREF_FLAGS.notifyFailures, true);
-
-  if (!wanted) return;
-
-  if (event.kind === "key-needed") {
-    if (keyNoticeShown) return;
-    keyNoticeShown = true;
-  }
-
-  const notice: AppEvent = { tone: event.kind === "check-failed" || event.kind === "key-needed" ? "error" : "info", title: event.title, body: event.body };
-
-  if (event.permitId) notice.permitId = event.permitId;
-  const windowInFront = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused());
-
-  // Desktop toasts are a Windows feature here; on other development platforms (for example WSL,
-  // where no notification service may answer) the message stays inside the app window.
-  if (windowInFront || process.platform !== "win32") {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("permit:app-event", notice);
-
-    return;
-  }
-
-  background?.notify(notice);
+  void notifier.announce(event).catch((cause: unknown) => diagnostics.record("notification:deliver", null, cause));
 }
 
 /** Records the result and, when it changes what the user knows, tells them. */
@@ -345,7 +321,7 @@ function createQueue(): CheckQueue {
     defer: (permitId) => store.deferDue(permitId, nextSlotAfter(new Date(), store.getCheckTimes())),
     keyUnavailable: (problem, requested) => {
       // Someone who asked for a check hears why it didn't run, even after the first notice.
-      if (requested) keyNoticeShown = false;
+      if (requested) notifier.resetKeyNotice();
 
       // A notification problem must never stop the queue.
       try { announce(keyNotice(problem)); } catch { /* the key banner still shows in the window */ }
@@ -429,6 +405,19 @@ async function startApp(): Promise<void> {
 
   diagnostics = new DiagnosticLog(path.join(dataRoot(), "logs", "diagnostics.jsonl"));
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
+  notifier = new CheckNotifier({
+    state: () => ({
+      statusChanges: store.getFlag(PREF_FLAGS.notifyStatusChanges, true),
+      failures: store.getFlag(PREF_FLAGS.notifyFailures, true),
+      windows: process.platform === "win32",
+      windowInFront: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+    }),
+    inApp: (notice) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("permit:app-event", notice);
+    },
+    desktop: (notice) => background?.notify(notice) ?? Promise.resolve({ _tag: "failed", error: new DesktopNotificationFailed("unsupported") }),
+    failed: (error) => diagnostics.record("notification:desktop", null, error),
+  });
   store.alignSchedule(new Date());
   checks = createQueue();
   keys = new KeyStore(dataRoot());
@@ -467,6 +456,7 @@ async function startApp(): Promise<void> {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  mainWindow.on("focus", () => notifier.windowFocused());
   mainWindow.on("close", (event) => {
     if (quitting || !keepsRunningInBackground()) return;
     event.preventDefault();
@@ -474,7 +464,7 @@ async function startApp(): Promise<void> {
 
     if (!store.getFlag(BACKGROUND_HINT_SHOWN, false)) {
       store.setFlag(BACKGROUND_HINT_SHOWN, true);
-      background?.notify({ title: "Still running in the tray", body: "Right-click the icon to quit." });
+      void background?.notify({ title: "Still running in the tray", body: "Right-click the icon to quit." });
     }
   });
 
@@ -575,7 +565,7 @@ async function startApp(): Promise<void> {
       return { ok: false, error: "The key couldn't be saved. Try again." };
     }
 
-    keyNoticeShown = false;
+    notifier.resetKeyNotice();
     // Work paused for want of a key picks up now rather than at the next slot.
     checks.resume();
     scheduleDue();
