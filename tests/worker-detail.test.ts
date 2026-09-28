@@ -32,7 +32,6 @@ async function serve(url: string, html: string): Promise<void> {
 }
 
 beforeAll(async () => {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = path.resolve("vendor/playwright-browsers");
   browser = await chromium.launch({ headless: true });
 }, 60_000);
 
