@@ -4,8 +4,9 @@ The first user is a permit professional reviewing several saved public records. 
 
 ## Truthfulness rules
 
-- Portal status text is shown exactly as the portal displayed it, in neutral styling. It never gets a color, icon, or interpretation. "In Process" is not an action request.
-- Color only marks the app's own check results in the "Last check" column and the history timeline: an ink dot for verified, oxide red (`#a8331a`) for a failed attempt, and a pulsing ember dot for a queued or running check. Cancelled and never-checked use neutral text.
+- Portal status text is shown exactly as the portal displayed it, in neutral styling. It never gets a color or icon itself.
+- The Action column is the one interpretation, and it sits beside the status rather than on it: AEC (the applicant owes the next step), AHJ (the authority has it), or None (issued, finished, or withdrawn), looked up per authority from the wording in [the status survey](PERMIT_STATUSES.md). When in doubt it says AEC, including for wording not on the authority's list, whose badge tooltip says so. Water management district permits show a dash.
+- Otherwise color marks the app's own check results in the "Last check" column and the history timeline: an ink dot for verified, oxide red (`#a8331a`) for a failed attempt, and a pulsing ember dot for a queued or running check. Cancelled and never-checked use neutral text.
 - When the latest check failed, the row keeps the older verified status and its original time; the failure shows only in the Last check column.
 - The filter tabs use facts the app recorded ("Failed", "No status yet"), never portal-status meaning.
 - Record links are available only after a verified observation.
@@ -14,17 +15,17 @@ The first user is a permit professional reviewing several saved public records. 
 
 - Header: the app icon and "Permit *Monitor*" wordmark (the page heading), when the next scheduled check runs, and Settings. The layout stays minimal: copy is kept to labels and short messages. No headlines, stat readouts, section titles, subtitles, helper paragraphs, decorative imagery, or footer.
 - A hairline-framed banner with an ember left rule appears whenever the key is missing or key storage is unavailable.
-- Add a permit: one card with an explicit issuing-jurisdiction select, the full permit number, "Add permit", and the Show filter (with counts). The select groups "Counties and cities" and "Water management districts". The jurisdiction's coverage and access note appears before saving, and the number field's placeholder shows that authority's number format when it has one. Validation errors appear inline under the form.
-- Permits: a table with Permit, Status, Verified, Last check, and row actions (Check now or Cancel, plus open the verified record). The permit number opens the details sheet. A "Not scheduled" tag marks permits excluded from scheduled checks. The empty state is one serif line.
+- Add a permit: one card with an explicit issuing-jurisdiction select, the full permit number, "Add permit", and the Show filter (All permits, AEC action, Failed, No status yet, with counts). The select groups "Counties and cities" and "Water management districts". The jurisdiction's coverage and access note appears before saving, and the number field's placeholder shows that authority's number format when it has one. Validation errors appear inline under the form.
+- Permits: a table with Permit, Status, Action, Verified, Last check, and row actions (Check now or Cancel, plus open the verified record). The permit number opens the details sheet. The Action cell is a Zephyr badge: AEC has a 1px ember frame, an ember dot, and semibold ink text (ink rather than ember text keeps small type above AA contrast), and its row gets a 2px ember rule on the left edge, like the key banner; AHJ has a fog frame and a prism-cyan dot; None is plain graphite mono text. A "Not scheduled" tag marks permits excluded from scheduled checks. The empty state is one serif line.
 - Projects: after a permit is added, a small dialog asks for the user's own project number (Skip or Add), prefilled with the last one used and offering recent ones as chips. Once any permit has a project number, the table groups permits under parchment band headers ("Project 28069 · 3 permits") in natural order, with "No project" last; each group is its own `tbody`.
-- Details sheet: current status and verification time, Check now, Open record, the project number (saved on Enter or leaving the field; blank clears it), the scheduled-check toggle with that permit's next check time, the full check history, and Remove permit.
+- Details sheet: current status, verification time, and its Action badge, Check now, Open record, the project number (saved on Enter or leaving the field; blank clears it), the scheduled-check toggle with that permit's next check time, the full check history, and Remove permit.
 - Settings sheet: TypeSafe key (a password field that sends the key once for encryption, clears itself, and never shows the key again; replace or remove), background and notification switches, signed full-installer updates, and local-data deletion.
 - Destructive or disruptive actions (remove permit, delete local data, install update) use an in-app confirm dialog.
 
 ## Background and notifications
 
 - Closing the window hides it; Permit Monitor keeps running from the notification area. The first time this happens, one notification explains where the app went. The tray menu offers Open, Check all permits now, a Scheduled checks toggle, and Quit. The tray icon gains an ember dot while any permit's latest check has failed.
-- Desktop notifications fire only for facts the app recorded: the first status for a new permit, a change in the portal's exact wording (old and new quoted), and the first failure in a row. Repeat failures and unchanged statuses stay quiet, and a missing key produces one notice per session. When the window is in front, the same message shows as an in-app notice instead.
+- Desktop notifications fire only for facts the app recorded: the first status for a new permit, a change in the portal's exact wording (old and new quoted, followed by "Action: AEC" when the new wording waits on the applicant), and the first failure in a row. Repeat failures and unchanged statuses stay quiet, and a missing key produces one notice per session. When the window is in front, the same message shows as an in-app notice instead.
 - Clicking a notification opens that permit's details sheet.
 - Settings has four switches: keep running when closed, start at Windows sign-in (installed app only, off by default), status-change notifications, and failure notifications.
 
@@ -32,7 +33,7 @@ The first user is a permit professional reviewing several saved public records. 
 
 The renderer follows the Zephyr Atlas design system: an editorial, print-like look with parchment paper, ink hairlines, and three type voices. Tokens live at the top of `src/renderer/styles.css`. It is light-only; there is no dark theme.
 
-- Palette: parchment `#f1ede4` page, bone `#f8f5ec` raised surfaces, ink `#141312` for type, rules, and primary buttons, graphite and fog for secondary text and soft rules. Ember `#c8521c` is reserved for live things (a running check, the missing-key banner rule). Oxide `#a8331a` marks failed checks and field errors. The design system's prism colors are not used.
+- Palette: parchment `#f1ede4` page, bone `#f8f5ec` raised surfaces, ink `#141312` for type, rules, and primary buttons, graphite and fog for secondary text and soft rules. Ember `#c8521c` is reserved for live things and things waiting on the user: a running check, the missing-key banner rule, and permits waiting on AEC. Oxide `#a8331a` marks failed checks and field errors. Prism cyan `#1fb5c8` appears only as the AHJ status dot; the system allows prism colors in status dots, and no other prism color is used.
 - Type: Instrument Serif for the wordmark, sheet and dialog titles, and quoted portal status; Inter Tight for body and controls; JetBrains Mono for permit numbers, timestamps, uppercase tracked labels, and buttons. The fonts are bundled latin subsets in `assets/fonts` (SIL OFL, see `LICENSES.txt`) because the CSP allows no remote fonts.
 - Surfaces: parchment page; the add card and table card are bone with a 1px ink frame.
 - Shape and depth: flat. Radius is 0 except the 2px micro-radius on buttons; the orb and dots are the only circles. Depth comes from 1px ink hairlines and 2px ink rules, not shadows. Focus is a two-stop ink ring.

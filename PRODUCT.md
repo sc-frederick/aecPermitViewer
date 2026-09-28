@@ -30,7 +30,7 @@ The authority selector includes Hillsborough, Pasco, Pinellas, Hernando, Polk, a
 - Runs from the Windows notification area when its window is closed, can start at sign-in, and sends local desktop notifications when a displayed status changes or a check starts failing.
 - No document analysis, response recommendations, inspection scheduling, payments, applications, email notifications, or cloud browser execution.
 - The user's TypeSafe key is typed into the app's settings, sent once to the main process, and encrypted there for the Windows user. It is never displayed again or returned to the renderer, and it stays out of the worker, logs, and database.
-- Portal status wording is preserved exactly. "In Process" is not interpreted as an action request.
+- Portal status wording is preserved exactly. A separate Action column says who the saved wording waits on: AEC (the applicant), the AHJ, or no one once the record is issued or closed. It is looked up from each county's and city's own observed wording ([status survey](docs/PERMIT_STATUSES.md)). When in doubt it says AEC: unclear wording, records that stopped short, and wording not on the authority's list all count as AEC. The water management districts stay unclassified. The status text itself is never rewritten.
 - Jurisdiction support requires an explicit profile, a portal-specific search, and a verified permit-level status field. A portal login or human challenge produces a failed check, not an inferred status.
 
 ## Evidence on hand

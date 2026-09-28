@@ -18,6 +18,7 @@
   --color-fog: #a8a39a;
   --color-border-soft: #d8d2c4;
   --color-ember: #c8521c;
+  --color-prism-cyan: #1fb5c8;
   --color-error: #a8331a;
 
   --font-display: "Instrument Serif", "Times New Roman", Georgia, serif;
@@ -164,10 +165,11 @@ select.field-control option::checkmark { order: 1; margin-left: auto; content: "
 .table th { text-align: left; font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); text-transform: uppercase; color: var(--color-graphite); padding: 12px 16px 10px; border-bottom: var(--hairline); white-space: nowrap; }
 .table th:first-child, .table td:first-child { padding-left: 20px; }
 .table th:last-child, .table td:last-child { padding-right: 20px; }
-.table th:nth-child(1) { width: 26%; }
-.table th:nth-child(3) { width: 16%; }
-.table th:nth-child(4) { width: 20%; }
-.table th:nth-child(5) { width: 180px; }
+.table th:nth-child(1) { width: 216px; }
+.table th:nth-child(3) { width: 104px; }
+.table th:nth-child(4) { width: 15%; }
+.table th:nth-child(5) { width: 17%; }
+.table th:nth-child(6) { width: 176px; }
 .table td { padding: 14px 16px; vertical-align: top; border-bottom: var(--hairline-soft); font-size: var(--fs-body-sm); color: var(--color-graphite); }
 .table tbody tr { transition: background-color var(--duration-fast) var(--ease-out); }
 .table tbody:last-child tr:last-child td { border-bottom: 0; }
@@ -202,6 +204,17 @@ time.cell-sub { font-size: 11px; }
 .outcome[data-kind="failed"] .outcome-label { color: var(--color-error); font-weight: 600; }
 .outcome[data-kind="checking"] .outcome-label { color: var(--color-ember); }
 
+/* Action: who the verified status waits on. Ember frames AEC's turn and rules its row, like the key banner;
+   a cyan status dot marks the AHJ's; issued and closed records recede. */
+.action { display: inline-flex; align-items: center; gap: 7px; padding: 3px 8px; border: 1px solid transparent; font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-label-sm); line-height: 1.4; letter-spacing: var(--tracking-label-sm); text-transform: uppercase; color: var(--color-graphite); white-space: nowrap; }
+.action .dot { width: 6px; height: 6px; }
+.action[data-action-on="applicant"] { border-color: var(--color-ember); color: var(--color-ink); font-weight: 600; }
+.action[data-action-on="applicant"] .dot { background: var(--color-ember); }
+.action[data-action-on="authority"] { border-color: var(--color-fog); }
+.action[data-action-on="authority"] .dot { background: var(--color-prism-cyan); }
+.action[data-action-on="none"] { padding-inline: 0; }
+.table tbody tr[data-action-on="applicant"] td:first-child { box-shadow: inset 2px 0 0 var(--color-ember); }
+
 .row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
 .row-actions .btn { height: 32px; padding: 0 12px; font-size: var(--fs-label-sm); letter-spacing: var(--tracking-label-sm); }
 
@@ -224,6 +237,7 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .detail-status-block { display: flex; flex-direction: column; }
 .detail-status { margin-top: 8px; font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.12; overflow-wrap: anywhere; }
 .detail-status.muted { color: var(--color-fog); }
+.detail-action { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .detail-meta { display: block; margin-top: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--color-graphite); }
 .detail-meta.failed { margin-top: 4px; color: var(--color-error); }
 .detail-actions { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -329,6 +343,15 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
   [data-kind="checking"] > .dot { animation: none; }
   .btn[aria-busy="true"]::before { animation-duration: 1.6s; }
   .btn:active:not(:disabled) { transform: none; }
+}
+
+/* Narrower windows: timestamps and check results wrap so the quoted status keeps its room. */
+@media (max-width: 1100px) {
+  .table th:nth-child(1) { width: 200px; }
+  .table th:nth-child(3) { width: 88px; }
+  .table th:nth-child(4) { width: 13%; }
+  .table th:nth-child(5) { width: 14%; }
+  .table th:nth-child(6) { width: 172px; }
 }
 
 @media (max-width: 960px) {
