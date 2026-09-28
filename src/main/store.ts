@@ -556,6 +556,17 @@ export class PermitStore {
       .run(key, value ? "1" : "0");
   }
 
+  /** A text setting, or null when it has never been saved or was cleared. */
+  getText(key: string): string | null {
+    return this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key)?.value ?? null;
+  }
+
+  /** Saves a text setting; null clears it. */
+  setText(key: string, value: string | null): void {
+    if (value === null) this.sql("DELETE FROM settings WHERE key = ?").run(key);
+    else this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
   /**
    * Included permits whose next check is unset or at or before `now`, earliest due first. Hand-checked permits are
    * never returned.

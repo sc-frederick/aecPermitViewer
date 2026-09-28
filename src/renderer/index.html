@@ -165,6 +165,38 @@
           <button id="install-update" class="btn btn-primary btn-sm" type="button" hidden>Install</button>
         </div>
       </section>
+      <section aria-labelledby="settings-share-title">
+        <h3 id="settings-share-title" class="sheet-section-title">Shared list</h3>
+        <p id="share-status" aria-live="polite"></p>
+        <div id="share-off" class="share-group">
+          <div class="settings-actions">
+            <button id="share-start" class="btn btn-secondary btn-sm" type="button">Share this list</button>
+          </div>
+          <form id="follow-form" novalidate>
+            <div class="field">
+              <label for="follow-input" class="field-label">Follow a shared list</label>
+              <div class="key-row">
+                <input id="follow-input" class="field-control" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="200" placeholder="Paste a share code" aria-describedby="follow-error">
+                <button id="follow-save" class="btn btn-secondary btn-sm" type="submit">Follow</button>
+              </div>
+              <p id="follow-error" class="field-error" hidden></p>
+            </div>
+          </form>
+        </div>
+        <div id="share-on" class="share-group" hidden>
+          <div class="key-row">
+            <input id="share-code" class="field-control" type="text" readonly aria-label="Share code">
+            <button id="share-copy" class="btn btn-secondary btn-sm" type="button">Copy</button>
+          </div>
+          <button id="share-stop" class="btn btn-ghost remove-link" type="button">Stop sharing</button>
+        </div>
+        <div id="follow-on" class="share-group" hidden>
+          <div class="settings-actions">
+            <button id="follow-refresh" class="btn btn-secondary btn-sm" type="button">Refresh now</button>
+          </div>
+          <button id="follow-stop" class="btn btn-ghost remove-link" type="button">Stop following</button>
+        </div>
+      </section>
       <section aria-labelledby="settings-data-title">
         <h3 id="settings-data-title" class="sheet-section-title">Data</h3>
         <button id="delete-local-data" class="btn btn-secondary btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"/></svg>Delete all data</button>

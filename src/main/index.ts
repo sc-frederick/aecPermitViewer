@@ -17,7 +17,7 @@ import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
 import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
 import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openAtLoginAvailable, setOpenAtLogin } from "./background.js";
-import { describeCheckEvent, keyNotice, type CheckEvent } from "./notifications.js";
+import { describeCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
@@ -25,6 +25,8 @@ import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePorta
 import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
 import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
+import { loadShareService, type ShareService } from "./share-service.js";
+import { Sharing } from "./sharing.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
 // Electron's default so development builds can still show toasts.
@@ -80,6 +82,11 @@ let background: Background | null = null;
 
 let notifier: CheckNotifier;
 
+let sharing: Sharing;
+
+/** The sharing service this build is configured for, or null when it has none. */
+let shareService: ShareService | null = null;
+
 /** Failures the user only sees as a generic message are recorded here, without their messages or any user data. */
 let diagnostics: DiagnosticLog;
 
@@ -98,6 +105,9 @@ const PREF_FLAGS = {
 const BACKGROUND_HINT_SHOWN = "background_hint_shown";
 
 const PLAYWRIGHT_VERSION = "1.63.0";
+
+/** The answer to a change to this app's own permits while the window shows a followed list instead. */
+const FOLLOWING: BridgeResult<never> = { ok: false, error: "You're viewing a shared list. Stop following it in Settings to change permits." };
 
 function showWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -175,7 +185,7 @@ async function snapshot(): Promise<AppSnapshot> {
 
   return {
     revision: snapshotRevision,
-    permits: store.listPermits(checks.checkingIds()),
+    permits: sharing.following ? [...sharing.permits()] : store.listPermits(checks.checkingIds()),
     keyState: effectiveKeyState(stored),
     appVersion: app.getVersion(),
     monitoring: store.getMonitoring(),
@@ -188,6 +198,7 @@ async function snapshot(): Promise<AppSnapshot> {
       backgroundAvailable: Boolean(background?.available),
       openAtLoginAvailable: openAtLoginAvailable(),
     },
+    share: sharing.state(),
   };
 }
 
@@ -199,6 +210,9 @@ async function snapshot(): Promise<AppSnapshot> {
 const broadcast = serialBroadcast(sendSnapshot);
 
 async function sendSnapshot(): Promise<void> {
+  // Every change to this app's list passes through here, so a shared copy follows it.
+  sharing.listChanged();
+
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   try {
@@ -249,7 +263,7 @@ function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
 
 /** Whether a scheduled check may start now: scheduling on, inside the check window, and the permit included. */
 function scheduledEligible(permitId: string): boolean {
-  if (shuttingDown || store.getMonitoring() !== "scheduled" || !withinCheckWindow(new Date(), store.getCheckTimes())) return false;
+  if (shuttingDown || sharing.following || store.getMonitoring() !== "scheduled" || !withinCheckWindow(new Date(), store.getCheckTimes())) return false;
 
   return store.getPermit(permitId)?.monitoringEnabled === true;
 }
@@ -356,7 +370,7 @@ function resumeAfterFailedShutdown(): void {
 
 /** Queues due permits. The interval and resume listener are stopped before the store closes, and this checks as well. */
 function scheduleDue(): void {
-  if (shuttingDown || checks.keyPaused || store.getMonitoring() !== "scheduled") return;
+  if (shuttingDown || sharing.following || checks.keyPaused || store.getMonitoring() !== "scheduled") return;
   const now = new Date();
 
   // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
@@ -383,6 +397,22 @@ function scheduleChanged(): void {
   checks.prune();
   scheduleDue();
   void broadcast();
+}
+
+/** Sharing over the current store. Recreated when the store is reopened after a failed update or deletion. */
+function createSharing(): Sharing {
+  return new Sharing(store, shareService, {
+    changed: () => { void broadcast(); },
+    listUpdated: (before, after) => {
+      // The first list after following is just what there is; only later lists bring news.
+      if (!before) return;
+
+      for (const event of describeSharedUpdate(before.permits, after.permits)) {
+        try { announce(event); } catch { /* the list still reaches the window */ }
+      }
+    },
+    report: (operation, cause) => diagnostics.record(operation, null, cause),
+  });
 }
 
 async function startApp(): Promise<void> {
@@ -420,6 +450,9 @@ async function startApp(): Promise<void> {
   });
   store.alignSchedule(new Date());
   checks = createQueue();
+  shareService = loadShareService(path.join(__dirname, "sync-config.json"));
+  sharing = createSharing();
+  await sharing.start();
   keys = new KeyStore(dataRoot());
   updates = new UpdateManager(dataRoot(), app.getVersion(),
     app.isPackaged ? path.join(process.resourcesPath, "authenticode.ps1") : path.join(__dirname, "authenticode.ps1"),
@@ -428,7 +461,11 @@ async function startApp(): Promise<void> {
   background = new Background(path.join(__dirname, "assets"), {
     showWindow,
     openPermit: openPermitInWindow,
-    checkAll: () => { for (const permit of store.listPermits()) checks.enqueue(permit.id, "manual"); },
+    checkAll: () => {
+      if (sharing.following) return;
+
+      for (const permit of store.listPermits()) checks.enqueue(permit.id, "manual");
+    },
     setScheduled: (enabled) => {
       store.setMonitoring(enabled ? "scheduled" : "manual");
       scheduleChanged();
@@ -478,6 +515,7 @@ async function startApp(): Promise<void> {
     });
   });
   handle("permit:add-and-check", addPermitSchema, "Enter a permit number.", (input) => {
+    if (sharing.following) return FOLLOWING;
     const jurisdictionId = resolveJurisdiction(input.jurisdiction);
 
     if (!jurisdictionId) {
@@ -496,6 +534,7 @@ async function startApp(): Promise<void> {
     return { ok: true, value: added.value };
   });
   handle("permit:check", permitIdSchema, "Permit not found.", async (id) => {
+    if (sharing.following) return FOLLOWING;
     const permit = store.getPermit(id);
 
     if (!permit) return { ok: false, error: "Permit not found." };
@@ -511,6 +550,7 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:open-portal", permitIdSchema, "Permit not found.", async (id) => {
+    if (sharing.following) return FOLLOWING;
     const permit = store.getPermit(id);
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
@@ -522,6 +562,7 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:record-manual-status", manualStatusSchema, "Enter the status shown on the portal.", async (input) => {
+    if (sharing.following) return FOLLOWING;
     const permit = store.getPermit(input.permitId);
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
@@ -544,6 +585,12 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:history", permitIdSchema, "Permit not found.", (id) => {
+    if (sharing.following) {
+      const history = sharing.history(id);
+
+      return history ? { ok: true, value: history } : { ok: false, error: "Permit not found." };
+    }
+
     if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
 
     return { ok: true, value: store.history(id) };
@@ -580,7 +627,8 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:open-record", permitIdSchema, "No record link yet.", async (id) => {
-    const permit = store.getPermit(id);
+    // A followed list's links come from another app, so they get the same portal check as this app's own.
+    const permit = sharing.following ? sharing.permit(id) : store.getPermit(id);
 
     if (!permit?.lastRecordUrl || !parsePortalUrl(permit.lastRecordUrl, "detail", permit.jurisdictionId)) {
       return { ok: false, error: "No record link yet." };
@@ -591,8 +639,9 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:open-observation-record", permitIdSchema, "No record link for this entry.", async (id) => {
-    const observation = store.getObservation(id);
-    const jurisdictionId = store.getObservationJurisdictionId(id);
+    const followed = sharing.following ? sharing.observation(id) : null;
+    const observation = sharing.following ? followed?.observation : store.getObservation(id);
+    const jurisdictionId = sharing.following ? followed?.permit.jurisdictionId : store.getObservationJurisdictionId(id);
 
     if (!observation || !jurisdictionId || !parsePortalUrl(observation.recordUrl, "detail", jurisdictionId)) {
       return { ok: false, error: "No record link for this entry." };
@@ -603,6 +652,8 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:remove", permitIdSchema, "Permit not found.", (id) => {
+    if (sharing.following) return FOLLOWING;
+
     if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
 
     if (!checks.remove(id)) return { ok: false, error: "Cancel the running check first." };
@@ -630,6 +681,8 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:set-permit-monitoring", z.object({ permitId: permitIdSchema, enabled: z.boolean() }), "Permit not found.", (input) => {
+    if (sharing.following) return FOLLOWING;
+
     if (!store.getPermit(input.permitId)) return { ok: false, error: "Permit not found." };
     store.setPermitMonitoring(input.permitId, input.enabled);
     scheduleChanged();
@@ -639,6 +692,8 @@ async function startApp(): Promise<void> {
   // Any other permit ID is simply not found, so only the project number can be invalid.
   handle("permit:set-project-number", setProjectNumberSchema.extend({ permitId: z.string() }),
     `Use letters, numbers, spaces, and - . _ / only (${PROJECT_NUMBER_MAX} at most).`, (input) => {
+    if (sharing.following) return FOLLOWING;
+
     if (!store.setProjectNumber(input.permitId, input.projectNumber)) return { ok: false, error: "Permit not found." };
     void broadcast();
 
@@ -694,6 +749,8 @@ async function startApp(): Promise<void> {
       return { ok: false, error: "A check is still running. Try again." };
     }
 
+    await sharing.stop();
+
     try {
       store.close();
       await new Promise<void>((resolve, reject) => {
@@ -708,6 +765,8 @@ async function startApp(): Promise<void> {
     } catch (cause) {
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
       diagnostics.record("permit:install-update:start", null, cause);
+      sharing = createSharing();
+      await sharing.start();
       resumeAfterFailedShutdown();
 
       return { ok: false, error: "The installer couldn't start. Restart the app and try again." };
@@ -722,6 +781,9 @@ async function startApp(): Promise<void> {
 
     // An update download writes inside the data folder, so it has to stop and let go of its files first.
     await updates.cancel();
+    // The shared copy goes with the local data, so the code others hold stops working.
+    await sharing.removeSharedCopy();
+    await sharing.stop();
     store.close();
     // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.
     diagnostics.stop();
@@ -734,6 +796,8 @@ async function startApp(): Promise<void> {
       diagnostics.restart();
       diagnostics.record("permit:delete-local-data", null, cause);
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
+      sharing = createSharing();
+      await sharing.start();
       resumeAfterFailedShutdown();
 
       return { ok: false, error: "Some local data couldn't be deleted. Try again." };
@@ -744,6 +808,32 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
+
+  handle("permit:share-start", NO_INPUT, "Invalid request.", () => sharing.startSharing());
+  handle("permit:share-stop", NO_INPUT, "Invalid request.", () => sharing.stopSharing());
+  handle("permit:share-copy", NO_INPUT, "Invalid request.", () => {
+    const code = sharing.code();
+
+    if (!code) return { ok: false, error: "This list isn't shared." };
+    clipboard.writeText(code);
+
+    return { ok: true, value: null };
+  });
+  handle("permit:follow", z.string().max(200), "That isn't a share code.", async (code) => {
+    const result = await sharing.follow(code);
+
+    // This app's own scheduled work stops while another list is shown; a check already running finishes.
+    if (result.ok) checks.prune();
+
+    return result;
+  });
+  handle("permit:follow-stop", NO_INPUT, "Invalid request.", async () => {
+    const result = await sharing.stopFollowing();
+    scheduleDue();
+
+    return result;
+  });
+  handle("permit:follow-refresh", NO_INPUT, "Invalid request.", () => sharing.refresh());
 
   // Handlers are registered before the page loads so its first snapshot request never races them.
   await mainWindow.loadFile(path.join(__dirname, "index.html"));
@@ -766,7 +856,7 @@ app.on("before-quit", (event) => {
 
   event.preventDefault();
   // A stopped update download removes its partial file instead of leaving it for the next run.
-  void Promise.all([stopChecks(), updates.cancel()]).then(([stopped]) => {
+  void Promise.all([stopChecks(), updates.cancel(), sharing.stop()]).then(([stopped]) => {
     if (stopped) store.close();
     quitAllowed = true;
     app.quit();

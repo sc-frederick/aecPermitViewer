@@ -30,6 +30,19 @@ export type UpdateCheck =
   | { state: "current" }
   | { state: "available"; version: string; size: number };
 
+/**
+ * Whether this app shares its list or follows someone else's:
+ * - `off`: neither. `available` is false when this build has no sharing service.
+ * - `sharing`: others can follow this app's list with `code`. `publishedAt` is when the service last accepted it.
+ * - `following`: the window shows another app's list, read-only. `publishedAt` is when that app last sent it, and
+ *   `checkedAt` when this app last heard from the service.
+ * `problem` says why the latest publication or fetch failed, until one succeeds.
+ */
+export type ShareState =
+  | { mode: "off"; available: boolean }
+  | { mode: "sharing"; code: string; publishedAt: string | null; problem: string | null }
+  | { mode: "following"; publishedAt: string | null; checkedAt: string | null; problem: string | null };
+
 /** A check result shown in the window while it is in front; `permitId` links it to that permit's details. */
 export interface AppEvent { tone: "info" | "error"; title: string; body: string; permitId?: string }
 
@@ -64,6 +77,18 @@ export interface PermitBridge {
   downloadUpdate(): Promise<BridgeResult<string>>;
   installUpdate(): Promise<BridgeResult<null>>;
   deleteLocalData(confirmation: string): Promise<BridgeResult<null>>;
+  /** Starts sharing this app's list and returns the code others follow it with. */
+  startSharing(): Promise<BridgeResult<null>>;
+  /** Stops sharing and deletes the shared copy, so the code stops working. */
+  stopSharing(): Promise<BridgeResult<null>>;
+  /** Copies the share code to the clipboard. */
+  copyShareCode(): Promise<BridgeResult<null>>;
+  /** Shows the list a share code opens, read-only, in place of this app's own. */
+  follow(code: string): Promise<BridgeResult<null>>;
+  /** Goes back to this app's own list. */
+  stopFollowing(): Promise<BridgeResult<null>>;
+  /** Asks the service for a newer followed list now. */
+  refreshShared(): Promise<BridgeResult<null>>;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onLocalError(callback: (message: string) => void): () => void;
   /** A notification or tray action asked to show one permit's details. */

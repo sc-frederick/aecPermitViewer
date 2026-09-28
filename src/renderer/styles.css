@@ -306,6 +306,13 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .key-row .field-control { flex: 1; min-width: 0; font-family: var(--font-mono); letter-spacing: .04em; }
 .key-row .field-control::placeholder { font-family: var(--font-body); letter-spacing: 0; }
 .settings-body section > .remove-link { margin-top: 0; justify-self: start; }
+.share-group { display: grid; gap: 16px; }
+.share-group > .remove-link { margin-top: 0; justify-self: start; }
+/* Following another app's list: the window is read-only, so controls that change permits or run checks go. */
+body[data-following] :is(.jurisdiction-field, .number-field, #add-button, #jurisdiction-help, #permit-number-error, #key-banner),
+body[data-following] .row-actions [data-action="check"], body[data-following] .row-actions [data-action="cancel"],
+body[data-following] :is(#details-check, #details-daily-option, #details-remove) { display: none; }
+body[data-following] .filter-field { padding-left: 0; border-left: 0; }
 .pref-list { display: grid; gap: 14px; }
 .version { margin-top: 16px; padding-top: 16px; border-top: var(--hairline); }
 

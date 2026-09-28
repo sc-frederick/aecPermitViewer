@@ -53,6 +53,10 @@ UPDATE_SERVER_URL=https://permitmon-updates.sc-frederick.workers.dev UPDATE_UPLO
 
 The private key's offline backup lives outside the repository with the maintainer. If it's lost, create a new key pair, update the public key in `windows.yml` and the secret, and have users install the next release by hand. To rotate the upload token, set the new value as the Worker's `UPLOAD_TOKEN` secret and wherever you keep it for manual publishing.
 
+## Shared-list service
+
+Shared lists use the `permitmon-sync` Worker (`infra/sync-server`) with a SQLite-backed Durable Object class in the same Cloudflare account. Release builds get `SHARE_SERVICE_URL=https://permitmon-sync.sc-frederick.workers.dev` from `windows.yml`. Deploy the Worker before the first release that includes sharing, and whenever `infra/sync-server` or `src/shared/share-protocol.ts` changes: `npx wrangler deploy` from `infra/sync-server`, after `npm ci --allow-git=all`. It has no secrets. Changing the share-code format or the room derivation strands existing codes, so give a new format a new `PMS` prefix and keep the old one working. See [shared lists](SHARING.md).
+
 ## Signed build inputs (not wired into CI)
 
 If a certificate becomes available, `forge.config.cjs` signs the app and installer when these are set:

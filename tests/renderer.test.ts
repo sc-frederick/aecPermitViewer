@@ -96,6 +96,7 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "re
       notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
       backgroundAvailable: false, openAtLoginAvailable: false,
     },
+    share: { mode: "off", available: true },
     ...overrides,
   };
 }
@@ -154,7 +155,8 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
 
     const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
       "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
-      "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData"];
+      "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData", "startSharing", "stopSharing", "copyShareCode",
+      "follow", "stopFollowing", "refreshShared"];
 
     Object.assign(window, {
       testBridge: control,
@@ -512,5 +514,68 @@ describe("key banner", () => {
     expect(await page.locator("#key-banner").isVisible()).toBe(true);
     expect(await page.locator("#key-banner-title").innerText()).toBe("Your saved TypeSafe key can't be read. Checks are paused.");
     expect(await page.locator("#banner-add-key").textContent()).toBe("Save key again");
+  });
+});
+
+describe("shared lists", () => {
+  it("shows a followed list read-only, without this app's key or schedule prompts", async () => {
+    await open(snapshot([permit(1)], { keyState: "missing", monitoring: "scheduled",
+      share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: "2026-09-24T12:05:00.000Z", problem: null } }));
+
+    expect(await page.locator("#next-check").textContent()).toMatch(/^Shared list · updated Sep 24,/);
+    expect(await page.locator("#key-banner").isVisible()).toBe(false);
+    expect(await page.locator("#add-button").isVisible()).toBe(false);
+    expect(await page.locator("#permit-number").isVisible()).toBe(false);
+    expect(await page.locator("#permit-filter").isVisible()).toBe(true);
+    expect(await page.locator('#permit-table button[data-action="check"]').first().isVisible()).toBe(false);
+    expect(await page.locator('#permit-table button[data-action="open"]').first().isVisible()).toBe(true);
+
+    await page.locator('#permit-table button[data-action="details"]').first().click();
+    expect(await page.locator("#details-check").isVisible()).toBe(false);
+    expect(await page.locator("#details-remove").isVisible()).toBe(false);
+    expect(await page.locator("#details-daily-option").isVisible()).toBe(false);
+    expect(await page.locator("#details-project").evaluate((node) => node instanceof HTMLInputElement && node.readOnly)).toBe(true);
+    await page.keyboard.press("Escape");
+
+    await page.locator("#open-settings").click();
+    expect(await page.locator("#follow-on").isVisible()).toBe(true);
+    expect(await page.locator("#share-off").isVisible()).toBe(false);
+
+    // A failed fetch keeps the list and says the copy may be old.
+    await push(snapshot([permit(1)], { share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: null,
+      problem: "Couldn't reach the sharing service. Retrying." } }));
+    expect(await page.locator("#next-check").textContent()).toBe("Shared list · couldn't update");
+    expect(await page.locator("#share-status").textContent()).toBe("Couldn't reach the sharing service. Retrying.");
+
+    // Leaving follow mode brings the controls back.
+    await push(snapshot([permit(1)]));
+    expect(await page.locator("#share-off").isVisible()).toBe(true);
+    await page.keyboard.press("Escape");
+    expect(await page.locator("#add-button").isVisible()).toBe(true);
+    expect(await page.locator('#permit-table button[data-action="check"]').first().isVisible()).toBe(true);
+  });
+
+  it("shows the code while sharing and hides sharing in a build without a service", async () => {
+    await open(snapshot([permit(1)], { share: { mode: "sharing", code: "PMS1-example", publishedAt: null, problem: null } }));
+    await page.locator("#open-settings").click();
+
+    expect(await page.locator("#share-code").inputValue()).toBe("PMS1-example");
+    expect(await page.locator("#share-status").textContent()).toBe("Anyone with this code can view this list. Sending…");
+    expect(await page.locator("#share-off").isVisible()).toBe(false);
+
+    await push(snapshot([permit(1)], { share: { mode: "off", available: false } }));
+    expect(await page.locator("#share-status").textContent()).toBe("Sharing isn't available in this build.");
+    expect(await page.locator("#share-off").isVisible()).toBe(false);
+    expect(await page.locator("#share-on").isVisible()).toBe(false);
+  });
+
+  it("asks before a followed list replaces this app's own permits", async () => {
+    await page.locator("#open-settings").click();
+    await page.locator("#follow-input").fill("PMS1-code");
+    await page.locator("#follow-save").click();
+
+    expect(await page.locator("#confirm-body").textContent()).toBe("Your own 50 permits stay on this computer but aren't shown or checked until you stop following.");
+    await page.locator('#confirm-dialog button[value="cancel"]').click();
+    expect(await page.locator("#follow-input").inputValue()).toBe("PMS1-code");
   });
 });

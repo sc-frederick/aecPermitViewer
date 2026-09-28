@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { reviewsSchema, type ReviewEntry } from "./reviews.js";
-import type { KeyState } from "./bridge.js";
+import type { KeyState, ShareState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
 
@@ -99,6 +99,8 @@ export interface AppSnapshot {
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */
   checkTimes: string[];
+  /** While following, `permits` is the followed list and this app's own permits are neither shown nor checked. */
+  share: ShareState;
 }
 
 /** Label stored on observations the user entered from a hand-checked portal. */
