@@ -78,6 +78,15 @@ If a certificate becomes available, `forge.config.cjs` signs the app and install
 
 The release is blocked until all checks pass. CI package success alone is not clean-machine qualification.
 
+## Install experience
+
+Squirrel.Windows has no installer pages. While it installs, it plays `assets/install-splash.gif` and then starts the app with `--squirrel-firstrun`. The app handles Squirrel's install, update, and uninstall events itself in `src/main/squirrel.ts`:
+
+- Install and update create only the Start menu shortcut, which carries the notification identity, and copy `icon.ico` over Squirrel's `app.ico`. Squirrel otherwise downloads Electron's icon there, and Installed apps shows it.
+- The first launch after a fresh install asks whether to add a desktop shortcut. **Settings → Shortcut on the desktop** changes it later. Updates leave an existing desktop shortcut alone, and uninstall removes both shortcuts.
+
+On a clean install, check the splash, the first-run question (both answers), the Settings toggle, the icon in Installed apps and on the taskbar, and that an update doesn't bring back a desktop shortcut the user removed. Copies installed before this change keep their desktop shortcut and get the right `app.ico` with their next update.
+
 ## Desktop notifications
 
 With status-change notifications enabled, check a permit whose latest discipline review newly requires corrections while its Record Status stays unchanged. Verify the notice names the discipline and correction date, and the permit shows AEC action. Repeat the check and confirm it stays quiet. A newly completed discipline or later correction date should notify again.

@@ -16,7 +16,8 @@ import { NAVIGATION_MODEL } from "./jev.js";
 import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
 import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
-import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openAtLoginAvailable, setOpenAtLogin } from "./background.js";
+import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, setOpenAtLogin } from "./background.js";
+import { FIRST_RUN_ARG, handleSquirrelEvent, hasDesktopShortcut, installedApp, setDesktopShortcut } from "./squirrel.js";
 import { describeCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import { isFailure } from "../shared/outcomes.js";
@@ -32,14 +33,10 @@ import { Sharing } from "./sharing.js";
 // Electron's default so development builds can still show toasts.
 if (process.platform === "win32" && app.isPackaged) app.setAppUserModelId(APP_USER_MODEL_ID);
 
-if (process.argv.includes("--squirrel-uninstall")) {
-  try { setOpenAtLogin(false); } catch { /* the uninstaller continues regardless */ }
-}
+// Squirrel runs the app to handle install, update, and uninstall events; those launches do their work and quit.
+const squirrelEvent = handleSquirrelEvent(process.argv, () => setOpenAtLogin(false));
 
-// electron-squirrel-startup exports true while a Squirrel install or update event is being handled.
-const squirrelStartup = require("electron-squirrel-startup") === true;
-
-if (squirrelStartup || !app.requestSingleInstanceLock()) {
+if (squirrelEvent || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => showWindow());
@@ -103,6 +100,9 @@ const PREF_FLAGS = {
 } as const;
 
 const BACKGROUND_HINT_SHOWN = "background_hint_shown";
+
+/** Squirrel has no installer pages, so the first launch after installing asks about the desktop shortcut instead. */
+let offerDesktopShortcut = installedApp() && process.argv.includes(FIRST_RUN_ARG);
 
 const PLAYWRIGHT_VERSION = "1.63.0";
 
@@ -195,8 +195,10 @@ async function snapshot(): Promise<AppSnapshot> {
       notifyFailures: store.getFlag(PREF_FLAGS.notifyFailures, true),
       runInBackground: keepsRunningInBackground(),
       openAtLogin: getOpenAtLogin(),
+      desktopShortcut: hasDesktopShortcut(),
       backgroundAvailable: Boolean(background?.available),
-      openAtLoginAvailable: openAtLoginAvailable(),
+      installedApp: installedApp(),
+      offerDesktopShortcut,
     },
     share: sharing.state(),
   };
@@ -704,10 +706,22 @@ async function startApp(): Promise<void> {
   handle("permit:set-preference", z.object({
     key: z.enum(PREFERENCE_KEYS),
     value: z.boolean(),
-  }), "Invalid setting.", ({ key, value }) => {
+  }), "Invalid setting.", async ({ key, value }) => {
+    if ((key === "openAtLogin" || key === "desktopShortcut") && !installedApp()) return { ok: false, error: "Available in the installed app." };
+
     if (key === "openAtLogin") {
-      if (!openAtLoginAvailable()) return { ok: false, error: "Available in the installed app." };
       setOpenAtLogin(value);
+    } else if (key === "desktopShortcut") {
+      offerDesktopShortcut = false;
+
+      try {
+        await setDesktopShortcut(value);
+      } catch (cause) {
+        diagnostics.record("permit:desktop-shortcut", null, cause);
+        void broadcast();
+
+        return { ok: false, error: "The desktop shortcut couldn't be changed." };
+      }
     } else {
       store.setFlag(PREF_FLAGS[key], value);
     }

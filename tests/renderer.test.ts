@@ -14,6 +14,8 @@ interface TestBridge {
   historyCalls: string[];
   /** Each schedule the renderer asked main to save, in order. */
   checkTimeCalls: string[][];
+  /** Each setting the renderer asked main to change, in order. */
+  preferenceCalls: Array<[string, boolean]>;
   /** Reasons of promise rejections nothing in the page handled. */
   unhandled: string[];
   push(next: AppSnapshot): void;
@@ -93,8 +95,8 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "re
     monitoring: "manual",
     checkTimes: ["08:30"],
     preferences: {
-      notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
-      backgroundAvailable: false, openAtLoginAvailable: false,
+      notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false, desktopShortcut: false,
+      backgroundAvailable: false, installedApp: false, offerDesktopShortcut: false,
     },
     share: { mode: "off", available: true },
     ...overrides,
@@ -132,6 +134,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
     const control: TestBridge = {
       historyCalls: [],
       checkTimeCalls: [],
+      preferenceCalls: [],
       unhandled: [],
       push: (next) => { for (const listener of listeners) listener(next); },
       appEvent: (event) => { for (const listener of appEvents) listener(event); },
@@ -172,6 +175,11 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
           control.checkTimeCalls.push(times);
 
           return answer("setCheckTimes")();
+        },
+        setPreference: async (key: string, value: boolean) => {
+          control.preferenceCalls.push([key, value]);
+
+          return answer("setPreference")();
         },
         onSnapshot: (callback: (value: AppSnapshot) => void) => {
           listeners.push(callback);
@@ -484,11 +492,51 @@ describe("snapshot order", () => {
   });
 });
 
+describe("desktop shortcut", () => {
+  const firstRun = { notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
+    desktopShortcut: false, backgroundAvailable: true, installedApp: true, offerDesktopShortcut: true };
+
+  it("asks once on the first launch after installing and saves a no as the setting", async () => {
+    await open(snapshot([permit(1)], { preferences: firstRun }));
+
+    expect(await page.locator("#confirm-dialog").isVisible()).toBe(true);
+    expect(await page.locator("#confirm-title").innerText()).toBe("Add a desktop shortcut?");
+    await page.locator("#confirm-cancel").click();
+    expect(await page.evaluate(() => window.testBridge.preferenceCalls)).toEqual([["desktopShortcut", false]]);
+
+    // A snapshot main sent before it heard the answer doesn't ask again.
+    await push(snapshot([permit(1)], { preferences: firstRun }));
+    expect(await page.locator("#confirm-dialog").isVisible()).toBe(false);
+    expect(await page.locator("#confirm-cancel").textContent()).toBe("Not now");
+  });
+
+  it("adds the shortcut when accepted, and later confirmations keep their usual wording", async () => {
+    await open(snapshot([permit(1)], { preferences: firstRun }));
+
+    await page.locator("#confirm-accept").click();
+    expect(await page.evaluate(() => window.testBridge.preferenceCalls)).toEqual([["desktopShortcut", true]]);
+
+    await page.locator("#open-settings").click();
+    await page.locator("#delete-local-data").click();
+    expect(await page.locator("#confirm-cancel").textContent()).toBe("Cancel");
+  });
+
+  it("is a Settings choice only in the installed app", async () => {
+    const toggle = page.locator("input[data-pref='desktopShortcut']");
+
+    expect(await toggle.isDisabled()).toBe(true);
+
+    await push(snapshot(fifty, { preferences: { ...firstRun, desktopShortcut: true, offerDesktopShortcut: false } }));
+    expect(await toggle.isDisabled()).toBe(false);
+    expect(await toggle.isChecked()).toBe(true);
+  });
+});
+
 describe("key banner", () => {
   it("stays up after the key is turned down, even with failure notices off, and leads to Settings", async () => {
     await open(snapshot([permit(1)], { monitoring: "scheduled", keyState: "rejected",
       preferences: { notifyStatusChanges: true, notifyFailures: false, runInBackground: false,
-        openAtLogin: false, backgroundAvailable: false, openAtLoginAvailable: false } }));
+        openAtLogin: false, desktopShortcut: false, backgroundAvailable: false, installedApp: false, offerDesktopShortcut: false } }));
 
     const banner = page.locator("#key-banner");
     expect(await banner.isVisible()).toBe(true);

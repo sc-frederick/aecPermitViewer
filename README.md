@@ -41,7 +41,7 @@ On Linux, the same commands run the tests, a build, and `npm run smoke:portal`.
 
 ### Testing on Windows from a WSL checkout
 
-Windows npm cannot run from a `\\wsl.localhost\...` folder: `cmd.exe` rejects UNC working directories, and that `node_modules` holds Linux binaries. Mirror the source to a Windows folder instead. `npm run sync:windows` copies it to `C:\Users\<you>\dev\aecPermitViewer` by default, and you can pass another `/mnt/c/...` path after `--`. Each side keeps its own `node_modules`, browser payload, and build output. Run it again after each change, then install and start as above in PowerShell in that folder. Paste your key under **Settings → TypeSafe key**. Start-at-sign-in is available only in an installed build.
+Windows npm cannot run from a `\\wsl.localhost\...` folder: `cmd.exe` rejects UNC working directories, and that `node_modules` holds Linux binaries. Mirror the source to a Windows folder instead. `npm run sync:windows` copies it to `C:\Users\<you>\dev\aecPermitViewer` by default, and you can pass another `/mnt/c/...` path after `--`. Each side keeps its own `node_modules`, browser payload, and build output. Run it again after each change, then install and start as above in PowerShell in that folder. Paste your key under **Settings → TypeSafe key**. Start-at-sign-in and the desktop shortcut setting are available only in an installed build.
 
 ### Running the app against live permits on Linux or WSL
 

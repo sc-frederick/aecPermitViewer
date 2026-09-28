@@ -77,10 +77,13 @@ export interface AppPreferences {
   notifyFailures: boolean;
   runInBackground: boolean;
   openAtLogin: boolean;
+  desktopShortcut: boolean;
   /** False when the platform has no usable notification area, so closing the window quits. */
   backgroundAvailable: boolean;
-  /** Start-at-sign-in is only offered for the installed Windows app. */
-  openAtLoginAvailable: boolean;
+  /** Start-at-sign-in and the desktop shortcut are only offered for the installed Windows app. */
+  installedApp: boolean;
+  /** True on the first launch after a fresh install, until the user says whether they want a desktop shortcut. */
+  offerDesktopShortcut: boolean;
 }
 
 export type { PreferenceKey } from "./bridge.js";

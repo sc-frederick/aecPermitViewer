@@ -1,6 +1,7 @@
 import { app, Menu, nativeImage, Notification, Tray, type NativeImage } from "electron";
 import path from "node:path";
 import { DesktopNotificationFailed, type DesktopDelivery } from "./notification-delivery.js";
+import { installedApp, updateExePath } from "./squirrel.js";
 
 // Squirrel.Windows registers shortcuts under com.squirrel.<maker name>.<executable name>.
 // Windows only delivers toast notifications for an app whose ID matches its Start menu shortcut.
@@ -134,24 +135,18 @@ export class Background {
   }
 }
 
-export function openAtLoginAvailable(): boolean {
-  return process.platform === "win32" && app.isPackaged;
-}
-
 function loginItemTarget() {
   // Launch through Squirrel's Update.exe so the login item survives app updates.
-  const updateExe = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
-
-  return { path: updateExe, args: ["--processStart", `"${path.basename(process.execPath)}"`, "--process-start-args", `"${HIDDEN_LAUNCH_ARG}"`] };
+  return { path: updateExePath(), args: ["--processStart", `"${path.basename(process.execPath)}"`, "--process-start-args", `"${HIDDEN_LAUNCH_ARG}"`] };
 }
 
 export function getOpenAtLogin(): boolean {
-  if (!openAtLoginAvailable()) return false;
+  if (!installedApp()) return false;
 
   return app.getLoginItemSettings(loginItemTarget()).openAtLogin;
 }
 
 export function setOpenAtLogin(enabled: boolean): void {
-  if (!openAtLoginAvailable()) return;
+  if (!installedApp()) return;
   app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemTarget() });
 }

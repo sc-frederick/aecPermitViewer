@@ -1,7 +1,7 @@
 import type { AppSnapshot, PermitHistory } from "./permit.js";
 
 /** The settings the window can switch, listed here because the renderer checks them without bundling zod. */
-export const PREFERENCE_KEYS = ["notifyStatusChanges", "notifyFailures", "runInBackground", "openAtLogin"] as const;
+export const PREFERENCE_KEYS = ["notifyStatusChanges", "notifyFailures", "runInBackground", "openAtLogin", "desktopShortcut"] as const;
 
 export type PreferenceKey = typeof PREFERENCE_KEYS[number];
 
