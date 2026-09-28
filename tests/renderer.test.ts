@@ -62,7 +62,7 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
   };
 }
 
-function snapshot(permits: PermitRow[]): AppSnapshot {
+function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "permits">> = {}): AppSnapshot {
   return {
     permits,
     keyState: "configured",
@@ -73,6 +73,7 @@ function snapshot(permits: PermitRow[]): AppSnapshot {
       notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
       backgroundAvailable: false, openAtLoginAvailable: false,
     },
+    ...overrides,
   };
 }
 
@@ -208,5 +209,38 @@ describe("details history", () => {
     await page.evaluate(() => window.testBridge.answerHistory(0, "Older"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newer");
     expect(await page.locator("#history-list").innerText()).not.toContain("Older");
+  });
+});
+
+describe("key banner", () => {
+  it("stays up after the key is turned down, even with failure notices off, and leads to Settings", async () => {
+    await open(snapshot([permit(1)], { monitoring: "scheduled", keyState: "rejected",
+      preferences: { notifyStatusChanges: true, notifyFailures: false, runInBackground: false,
+        openAtLogin: false, backgroundAvailable: false, openAtLoginAvailable: false } }));
+
+    const banner = page.locator("#key-banner");
+    expect(await banner.isVisible()).toBe(true);
+    expect(await page.locator("#key-banner-title").innerText()).toBe("TypeSafe turned down your key. Scheduled checks are paused.");
+    expect(await page.locator("#next-check").textContent()).toBe("Scheduled checks paused");
+
+    await page.locator("#banner-add-key").click();
+    expect(await page.locator("#settings-sheet").isVisible()).toBe(true);
+    expect(await page.locator("#key-input").evaluate((node) => node === document.activeElement)).toBe(true);
+    expect(await page.locator("#settings-key-state").innerText()).toContain("Paste a working key");
+    expect(await page.locator("#key-remove").isVisible()).toBe(true);
+
+    // Saving a key that works brings a snapshot without the pause.
+    await push(snapshot([permit(1)], { monitoring: "scheduled" }));
+    expect(await banner.isVisible()).toBe(false);
+    expect(await page.locator("#settings-key-state").isVisible()).toBe(false);
+    expect(await page.locator("#next-check").textContent()).not.toBe("Scheduled checks paused");
+  });
+
+  it("asks for the key again when the saved one can't be read", async () => {
+    await open(snapshot([permit(1)], { keyState: "unreadable" }));
+
+    expect(await page.locator("#key-banner").isVisible()).toBe(true);
+    expect(await page.locator("#key-banner-title").innerText()).toBe("Your saved TypeSafe key can't be read. Checks are paused.");
+    expect(await page.locator("#banner-add-key").textContent()).toBe("Save key again");
   });
 });

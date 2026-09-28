@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { KeyState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
 
@@ -81,7 +82,7 @@ export type { PreferenceKey } from "./bridge.js";
 export interface AppSnapshot {
   permits: PermitRow[];
   preferences: AppPreferences;
-  keyState: "configured" | "missing" | "unavailable";
+  keyState: KeyState;
   appVersion: string;
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */

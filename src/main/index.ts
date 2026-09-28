@@ -21,7 +21,7 @@ import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
 import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot, type RunOutcome } from "../shared/permit.js";
 import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
-import { PREFERENCE_KEYS, type AppEvent, type BridgeResult } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type AppEvent, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
 import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
@@ -163,10 +163,34 @@ function dataRoot(): string {
   return path.join(local || app.getPath("userData"), "PermitMonitorData");
 }
 
+/** The saved key's state, treating a key-storage failure as storage being unavailable. */
+async function storedKeyState(operation: string): Promise<StoredKeyState> {
+  return keys.state().catch((cause: unknown) => {
+    diagnostics.record(operation, null, cause);
+
+    return "unavailable" as const;
+  });
+}
+
+/** Why a check someone asked for can't run with the saved key, or null when it can. */
+function keyStateProblem(state: StoredKeyState): string | null {
+  switch (state) {
+    case "configured": return null;
+    case "missing": return "Add your TypeSafe key in Settings first.";
+    case "unreadable": return "Your saved key can't be read. Save it again in Settings.";
+    case "unavailable": return "Key storage isn't available on this computer.";
+  }
+}
+
+/** Whether checks can run for want of a key: what storage knows, plus the queue's pause after the service turned the key down. */
+function effectiveKeyState(stored: StoredKeyState): KeyState {
+  return stored === "configured" && checks.keyPaused ? "rejected" : stored;
+}
+
 async function snapshot(): Promise<AppSnapshot> {
   return {
     permits: store.listPermits(checks.checkingIds()),
-    keyState: await keys.state().catch(() => "unavailable"),
+    keyState: effectiveKeyState(await storedKeyState("snapshot:key-state")),
     appVersion: app.getVersion(),
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
@@ -484,12 +508,11 @@ async function startApp(): Promise<void> {
     if (!permit) return { ok: false, error: "Permit not found." };
 
     if (isManualJurisdiction(permit.jurisdictionId)) return { ok: false, error: "This permit is checked by hand." };
-    const keyState = await keys.state().catch(() => "unavailable");
+    const problem = keyStateProblem(await storedKeyState("permit:check"));
 
-    if (keyState !== "configured") {
-      return { ok: false, error: keyState === "missing" ? "Add your TypeSafe key in Settings first." : "Key storage isn't available on this computer." };
-    }
+    if (problem) return { ok: false, error: problem };
 
+    // A rejected key may have been fixed on the service's side, so asking for a check still tries it.
     checks.enqueue(permit.id, "manual");
 
     return { ok: true, value: null };
