@@ -8,8 +8,8 @@ import { installerPath, manifestPath, readLocalRelease } from "./release-feed.mj
 // CI publishing path (.github/workflows/windows.yml). Cloudflare challenges GitHub's runners on the Worker
 // hosts, so this writes to R2's S3 endpoint with the AWS CLI. It applies the Worker's upload rules: a
 // versioned installer is written once (an identical rerun is skipped, different bytes fail the job), and the
-// manifest only moves to a newer version. The workflow runs one publication at a time, so nothing else writes
-// between this script's reads and writes.
+// manifest only moves to a newer version. The workflow serializes CI releases, and the manifest's final
+// conditional write refuses a concurrent change through the manual publisher.
 
 const endpoint = process.env.R2_ENDPOINT;
 
@@ -25,6 +25,7 @@ const NOT_FOUND = /\(404\)|NoSuchKey|Not Found/;
 
 const headText = jsonText.pipe(z.object({
   ContentLength: z.number().int().nonnegative(),
+  ETag: z.string().min(1),
   Metadata: z.object({ sha256: z.string().optional() }).optional(),
 }));
 
@@ -79,20 +80,36 @@ async function hashStored(key) {
 
 /** The published manifest and its version, or null before the first release. */
 async function publishedManifest() {
+  // Read the etag before the body: if the object changes during either read, the conditional write fails closed.
+  const headResult = await aws(["s3api", "head-object", "--bucket", bucket, "--key", MANIFEST, "--output", "json"]);
+
+  if (headResult.code !== 0) {
+    if (NOT_FOUND.test(headResult.stderr)) return null;
+
+    throw failure(`HEAD ${MANIFEST}`, headResult);
+  }
+
+  const etag = headText.parse(headResult.stdout).ETag;
   const result = await aws(["s3", "cp", `s3://${bucket}/${MANIFEST}`, "-", "--only-show-errors"]);
 
-  if (result.code !== 0) {
-    if (NOT_FOUND.test(result.stderr)) return null;
-
-    throw failure(`Download ${MANIFEST}`, result);
-  }
+  if (result.code !== 0) throw failure(`Download ${MANIFEST}`, result);
 
   const payload = parseManifest(result.stdout);
 
   // Replacing an unreadable manifest would bypass the version rule, so that is left to a person.
   if (!payload) throw new Error(`The published ${MANIFEST} is unreadable; inspect the feed and replace it by hand.`);
 
-  return { version: payload.version, text: result.stdout };
+  return { version: payload.version, text: result.stdout, etag };
+}
+
+/** Writes the manifest only if the version decision still applies to the same published object. */
+async function uploadManifest(etag) {
+  const condition = etag ? ["--if-match", etag] : ["--if-none-match", "*"];
+
+  const result = await aws(["s3api", "put-object", "--bucket", bucket, "--key", MANIFEST,
+    "--body", manifestPath, "--content-type", "application/json", ...condition]);
+
+  if (result.code !== 0) throw failure(`Upload ${MANIFEST}`, result);
 }
 
 async function upload(file, key, contentType, extra) {
@@ -126,7 +143,9 @@ if (installer._tag === "upload") {
   process.stdout.write(`${release.key} is already published with these bytes; skipped.\n`);
 }
 
-const manifest = decideManifestReplacement(await publishedManifest(), { version: release.payload.version, text: release.text });
+const published = await publishedManifest();
+
+const manifest = decideManifestReplacement(published, { version: release.payload.version, text: release.text });
 
 if (manifest._tag === "conflict") {
   throw new Error(`A different manifest for ${manifest.published} is already published. Release a new version instead.`);
@@ -137,6 +156,6 @@ if (manifest._tag === "stale") {
 } else if (manifest._tag === "unchanged") {
   process.stdout.write(`The feed already offers this ${release.payload.version.text} manifest; skipped.\n`);
 } else {
-  await upload(manifestPath, MANIFEST, "application/json", []);
+  await uploadManifest(published?.etag);
   process.stdout.write(`Published ${release.payload.version.text} to the update feed.\n`);
 }

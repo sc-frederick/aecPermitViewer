@@ -430,7 +430,7 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
 
   const put = await stored("put", MANIFEST, () => current._tag === "found"
     ? env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: { etagMatches: current.etag } })
-    : env.BUCKET.put(MANIFEST, read.text, { httpMetadata }));
+    : env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: new Headers({ "if-none-match": "*" }) }));
 
   if (put._tag !== "ok") return unavailable(put);
 

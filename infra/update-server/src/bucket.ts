@@ -40,10 +40,10 @@ export interface FeedMultipartUpload {
   abort(): Promise<void>;
 }
 
-/** Options for a text object write. With `onlyIf`, the write happens only while the stored etag still matches. */
+/** Options for a text object write. `onlyIf` matches an etag or requires that the key is still absent. */
 export interface FeedPutOptions {
   readonly httpMetadata: { readonly contentType: string };
-  readonly onlyIf?: { readonly etagMatches: string };
+  readonly onlyIf?: { readonly etagMatches: string } | Headers;
 }
 
 /** Options for starting a multipart upload; `customMetadata` is attached to the completed object. */

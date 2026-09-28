@@ -1,4 +1,5 @@
 import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 // Stands in for the AWS CLI in tests of scripts/publish-feed.mjs, supporting only the commands that script
@@ -32,13 +33,37 @@ function requireObject(file) {
   if (!existsSync(file)) exit("An error occurred (404) when calling the HeadObject operation: Not Found", 254);
 }
 
+function etag(file) {
+  return `"${createHash("md5").update(readFileSync(file)).digest("hex")}"`;
+}
+
 if (process.env.FAKE_AWS_FAIL === args[1]) exit("An error occurred (InternalError) when calling the operation: We encountered an internal error.", 255);
 
 if (args[0] === "s3api" && args[1] === "head-object") {
   const file = path.join(root, option("--bucket") ?? "", option("--key") ?? "");
   requireObject(file);
   const meta = JSON.parse(readFileSync(`${file}.meta.json`, "utf8"));
-  process.stdout.write(JSON.stringify({ ContentLength: statSync(file).size, ContentType: meta.contentType, Metadata: meta.metadata }));
+  process.stdout.write(JSON.stringify({ ContentLength: statSync(file).size, ContentType: meta.contentType,
+    Metadata: meta.metadata, ETag: etag(file) }));
+} else if (args[0] === "s3api" && args[1] === "put-object") {
+  const key = option("--key") ?? "";
+  const file = path.join(root, option("--bucket") ?? "", key);
+  const raced = process.env.FAKE_AWS_RACE_MANIFEST;
+  mkdirSync(path.dirname(file), { recursive: true });
+
+  if (key === "release-manifest.json" && raced) {
+    copyFileSync(raced, file);
+    writeFileSync(`${file}.meta.json`, JSON.stringify({ contentType: "application/json", metadata: {} }));
+  }
+
+  if ((option("--if-none-match") === "*" && existsSync(file)) ||
+    (option("--if-match") && (!existsSync(file) || etag(file) !== option("--if-match")))) {
+    exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
+  }
+
+  copyFileSync(option("--body") ?? "", file);
+  writeFileSync(`${file}.meta.json`, JSON.stringify({ contentType: option("--content-type"), metadata: {} }));
+  appendFileSync(path.join(root, "writes.log"), `${path.relative(root, file)}\n`);
 } else if (args[0] === "s3" && args[1] === "cp" && args[3] === "-") {
   const file = objectFile(args[2] ?? "");
   requireObject(file);

@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type FeedEnv } from "../infra/update-server/src/index.js";
+import type { FeedPutOptions } from "../infra/update-server/src/bucket.js";
 import { parseReleaseVersion } from "../infra/update-server/src/manifest.js";
 import {
   compareReleaseVersions, decideInstallerUpload, decideManifestReplacement, type VersionedManifest,
@@ -383,6 +384,25 @@ describe("manual manifest upload", () => {
     const older = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.7.0", "seven"));
     expect(older.status).toBe(409);
     expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
+  });
+
+  it("does not overwrite a manifest first published while this upload was in progress", async () => {
+    const newer = manifest("0.9.0", "nine");
+
+    class ManifestAppearsOnPut extends MemoryBucket {
+      override async put(key: string, value: string, options: FeedPutOptions) {
+        if (key === "release-manifest.json") this.seed(key, newer, "application/json");
+
+        return super.put(key, value, options);
+      }
+    }
+
+    const bucket = new ManifestAppearsOnPut();
+    bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE, sha256("eight"));
+    const { env } = feed(bucket);
+    const response = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    expect(response.status).toBe(409);
+    expect(bucket.storedText("release-manifest.json")).toBe(newer);
   });
 
   it("accepts an identical retry and refuses a different manifest for the published version", async () => {
