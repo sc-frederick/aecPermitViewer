@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -106,6 +106,15 @@ describe("installer download", () => {
     const { body } = stream(["Permit"], "end");
     await expect(saveDownload(body, file, 13, () => undefined)).rejects.toThrow("Update ended early");
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("leaves a file it didn't create in place", async () => {
+    const file = target();
+    writeFileSync(file, "someone else's file");
+    const { body, state } = stream(["Permit"], "end");
+    await expect(saveDownload(body, file, 6, () => undefined)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(state.cancelled).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe("someone else's file");
   });
 
   it("releases the connection when the file can't be written", async () => {
