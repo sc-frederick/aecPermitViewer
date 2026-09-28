@@ -1,26 +1,57 @@
-import { utilityProcess } from "electron";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { TypeSafeClient } from "@typesafe-ai/sdk";
 import { chooseNavigation, navigationClient, type NavigationDecision } from "./jev.js";
 import { parseDisplayedStatus, type ObservationRow, type PermitRow, type RunOutcome } from "../shared/permit.js";
-import { workerToMainSchema, type MainToWorker, type WorkerToMain } from "../shared/worker-protocol.js";
+import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
 
-export interface CheckResult {
-  outcome: RunOutcome;
-  observation?: Omit<ObservationRow, "id" | "runId" | "permitId">;
+/** A status verified on the permit's record page, ready to save with its run. */
+export type VerifiedObservation = Omit<ObservationRow, "id" | "runId" | "permitId">;
+
+/** How a check ended: only a success carries an observation, and every success does. */
+export type CheckEnding =
+  | { outcome: "success"; observation: VerifiedObservation }
+  | { outcome: Exclude<RunOutcome, "success"> };
+
+/** A finished check: how it ended, and what it cost. */
+export type CheckResult = CheckEnding & {
   actionCount: number;
   requestCount: number;
   actualModel: string | null;
   browserVersion: string | null;
-}
+};
 
+/** A check under way. `cancel` ends it as cancelled unless it has already ended. */
 export interface ActiveCheck {
   result: Promise<CheckResult>;
   closed: Promise<void>;
   cancel: () => void;
 }
+
+/** A started browser worker process, as a check drives it. The adapter parses what the process sends before delivering it. */
+export interface CheckWorker {
+  /** Sends a message; throws when the process can no longer receive one. */
+  send(message: MainToWorker): void;
+  kill(): void;
+  onMessage(listener: (message: WorkerToMain) => void): void;
+  /** The process has exited, for any reason. */
+  onExit(listener: () => void): void;
+  /** The process reported a fatal error. */
+  onError(listener: () => void): void;
+}
+
+/** Starting the worker process gave either the worker or why the process couldn't be created. */
+export type WorkerStart = { _tag: "started"; worker: CheckWorker } | { _tag: "failed"; cause: unknown };
+
+/** Local steps of a check whose failure is reported for diagnosis. */
+export type CheckOperation = "start-worker" | "handle-message" | "cache-cleanup";
+
+/**
+ * Receives a check's local failures, which the user only sees as the check's outcome. It must not throw; the check
+ * settles the same way whether or not the report was kept.
+ */
+export type CheckFailureReport = (operation: CheckOperation, cause: unknown) => void;
 
 const MAX_ACTIONS = 20;
 
@@ -47,13 +78,19 @@ export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
   return environment;
 }
 
+/**
+ * Starts a browser check for one permit in its own worker process and cache folder. `result` settles once the check has
+ * an outcome. `closed` settles once the worker has exited and its cache folder is removed, or reported as left behind.
+ * Throws only when the cache folder can't be created, before anything has started.
+ */
 export function runCheck(input: {
   runId: string;
   permit: PermitRow;
   key: string;
   browserPath: string;
   cacheRoot: string;
-  workerPath: string;
+  startWorker: (environment: NodeJS.ProcessEnv) => WorkerStart;
+  report: CheckFailureReport;
 }): ActiveCheck {
   const controller = new AbortController();
   const deadline = Date.now() + DEADLINE_MS;
@@ -62,6 +99,14 @@ export function runCheck(input: {
   const closed = new Promise<void>((resolve) => { markClosed = resolve; });
   const cachePath = path.join(input.cacheRoot, input.runId);
   mkdirSync(cachePath, { recursive: true });
+
+  // A folder that can't be removed is reported and left behind; `closed` settles either way.
+  const removeCache = () => {
+    void rm(cachePath, { recursive: true, force: true }).then(markClosed, (cause: unknown) => {
+      markClosed();
+      input.report("cache-cleanup", cause);
+    });
+  };
 
   const result = new Promise<CheckResult>((resolve) => {
     let done = false;
@@ -77,56 +122,64 @@ export function runCheck(input: {
     const environment = workerEnvironment(input.browserPath);
     environment.TEMP = cachePath;
     environment.TMP = cachePath;
-    let worker: Electron.UtilityProcess;
+    const started = input.startWorker(environment);
 
-    try {
-      worker = utilityProcess.fork(path.resolve(input.workerPath), [], {
-        env: environment,
-        serviceName: "Permit Browser",
-      });
-    } catch {
-      rmSync(cachePath, { recursive: true, force: true });
-      markClosed();
+    if (started._tag === "failed") {
+      input.report("start-worker", started.cause);
+      removeCache();
       resolve({ outcome: "browser_error", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
 
       return;
     }
 
-    const finish = (outcome: RunOutcome, observation?: CheckResult["observation"]) => {
+    const worker = started.worker;
+
+    const finish = (ending: CheckEnding) => {
       if (done) return;
       done = true;
       controller.abort();
       clearTimeout(timer);
 
       if (!exited) {
-        try { worker.postMessage({ kind: "cancel", runId: input.runId } satisfies MainToWorker); } catch { /* already exited */ }
+        try { worker.send({ kind: "cancel", runId: input.runId }); } catch { /* already exited */ }
 
         forceKillTimer = setTimeout(() => { worker.kill(); }, 5_000);
         forceKillTimer.unref();
       }
 
-      const result: CheckResult = { outcome, actionCount, requestCount, actualModel, browserVersion };
-
-      if (observation) result.observation = observation;
-      resolve(result);
+      resolve({ ...ending, actionCount, requestCount, actualModel, browserVersion });
     };
 
-    const timer = setTimeout(() => finish("timeout"), DEADLINE_MS);
-    cancel = () => finish("cancelled");
-    worker.on("exit", () => {
+    const timer = setTimeout(() => finish({ outcome: "timeout" }), DEADLINE_MS);
+    cancel = () => finish({ outcome: "cancelled" });
+    worker.onExit(() => {
       exited = true;
 
       if (forceKillTimer) clearTimeout(forceKillTimer);
 
-      if (!done) finish("browser_error");
-      void rm(cachePath, { recursive: true, force: true }).finally(markClosed);
+      if (!done) finish({ outcome: "browser_error" });
+      removeCache();
     });
-    worker.on("error", () => { if (!done) finish("browser_error"); });
-    worker.on("message", (raw) => {
-      const message = workerToMainSchema.safeParse(raw);
+    worker.onError(() => { if (!done) finish({ outcome: "browser_error" }); });
 
-      if (message.success) void handleMessage(message.data).catch(() => finish("api_unavailable"));
+    // Service and model failures come back from chooseNavigation as decisions, so a failure here is local: the worker
+    // couldn't be reached or main failed. That isn't a TypeSafe outage, so it isn't recorded or retried as one.
+    const failLocally = (cause: unknown) => {
+      finish({ outcome: "browser_error" });
+      input.report("handle-message", cause);
+    };
+
+    const sendOrFail = (message: MainToWorker) => {
+      try {
+        worker.send(message);
+      } catch (cause) {
+        failLocally(cause);
+      }
+    };
+
+    worker.onMessage((message) => {
+      void handleMessage(message).catch(failLocally);
     });
 
     async function handleMessage(message: WorkerToMain): Promise<void> {
@@ -136,11 +189,11 @@ export function runCheck(input: {
         case "action_count":
           actionCount = message.count;
 
-          if (actionCount >= MAX_ACTIONS) finish("timeout");
+          if (actionCount >= MAX_ACTIONS) finish({ outcome: "timeout" });
 
           return;
         case "failed":
-          finish(message.outcome);
+          finish({ outcome: message.outcome });
 
           return;
         case "verified": {
@@ -156,8 +209,8 @@ export function runCheck(input: {
             recordUrl: message.recordUrl,
           });
 
-          if (parsed._tag === "err") finish(parsed.outcome);
-          else finish("success", parsed.value);
+          if (parsed._tag === "err") finish({ outcome: parsed.outcome });
+          else finish({ outcome: "success", observation: parsed.value });
 
           return;
         }
@@ -166,7 +219,7 @@ export function runCheck(input: {
           if (decisionPending) return;
 
           if (requestCount >= MAX_REQUESTS || actionCount >= MAX_ACTIONS || Date.now() >= deadline) {
-            finish("timeout");
+            finish({ outcome: "timeout" });
 
             return;
           }
@@ -174,7 +227,7 @@ export function runCheck(input: {
           const observation = message.observation;
 
           if (observation.candidates.length === 0 || observation.candidates.length > MAX_CANDIDATES) {
-            finish("unsupported_page");
+            finish({ outcome: "unsupported_page" });
 
             return;
           }
@@ -208,7 +261,7 @@ export function runCheck(input: {
           if (decision.actualModel) actualModel = decision.actualModel;
 
           if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page") {
-            finish(decision._tag);
+            finish({ outcome: decision._tag });
 
             return;
           }
@@ -218,45 +271,45 @@ export function runCheck(input: {
           repeated.set(pair, times);
 
           if (times >= 2) {
-            finish("unsupported_page");
+            finish({ outcome: "unsupported_page" });
 
             return;
           }
 
           if (decision._tag === "stop") {
-            finish("unsupported_page");
+            finish({ outcome: "unsupported_page" });
 
             return;
           }
 
           if (decision._tag === "wait") {
             setTimeout(() => {
-              if (!done) worker.postMessage({ kind: "reobserve", runId: input.runId } satisfies MainToWorker);
+              if (!done) sendOrFail({ kind: "reobserve", runId: input.runId });
             }, 800).unref();
 
             return;
           }
 
-          worker.postMessage({
+          worker.send({
             kind: "choose",
             runId: input.runId,
             fingerprint: observation.fingerprint,
             candidateId: decision.candidateId,
-          } satisfies MainToWorker);
+          });
 
           return;
         }
       }
     }
 
-    worker.postMessage({
+    sendOrFail({
       kind: "start",
       runId: input.runId,
       jurisdictionId: input.permit.jurisdictionId,
       permitNumber: input.permit.permitNumber,
       previousRecordUrl: input.permit.lastRecordUrl,
       browserPath: input.browserPath,
-    } satisfies MainToWorker);
+    });
   });
 
   return { result, closed, cancel: () => cancel() };

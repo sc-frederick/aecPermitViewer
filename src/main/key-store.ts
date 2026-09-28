@@ -14,6 +14,28 @@ function developmentKey(): string | null {
   return value ? value : null;
 }
 
+/** This computer can't encrypt a key for the current user, so nothing was saved. */
+export class KeyStorageUnavailable extends Error {
+  readonly _tag = "KeyStorageUnavailable" as const;
+
+  constructor() {
+    super("Key storage is unavailable on this computer");
+  }
+}
+
+/** Encrypting or writing the key failed. A key saved earlier, if any, is left as it was. */
+export class KeyWriteFailed extends Error {
+  readonly _tag = "KeyWriteFailed" as const;
+
+  constructor(readonly cause: unknown) {
+    super("The key couldn't be written");
+  }
+}
+
+/** The result of saving a key. */
+export type KeySave = { _tag: "saved" } | { _tag: "failed"; error: KeyStorageUnavailable | KeyWriteFailed };
+
+/** The TypeSafe key, encrypted for the current Windows user in the app's data folder. */
 export class KeyStore {
   private readonly secretPath: string;
   private readonly devKey = developmentKey();
@@ -39,12 +61,19 @@ export class KeyStore {
   }
 
   /** Encrypts the key for this Windows user. The plaintext is never returned or persisted. */
-  async save(key: string): Promise<void> {
-    if (!(await this.encryptionAvailable())) throw new Error("unavailable");
+  async save(key: string): Promise<KeySave> {
+    if (!(await this.encryptionAvailable())) return { _tag: "failed", error: new KeyStorageUnavailable() };
 
-    await this.writeEncrypted(await safeStorage.encryptStringAsync(key));
+    try {
+      await this.writeEncrypted(await safeStorage.encryptStringAsync(key));
+    } catch (cause) {
+      return { _tag: "failed", error: new KeyWriteFailed(cause) };
+    }
+
+    return { _tag: "saved" };
   }
 
+  /** Deletes the saved key, if there is one. Rejects when the file exists but can't be deleted. */
   async remove(): Promise<void> {
     await rm(this.secretPath, { force: true });
   }
