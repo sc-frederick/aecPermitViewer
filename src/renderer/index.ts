@@ -701,7 +701,7 @@ function renderDetailsSummary(permit: PermitRow): void {
   const daily = element("details-daily", HTMLInputElement);
   daily.checked = permit.monitoringEnabled;
   // Scheduled checks can't read a hand-checked portal, so the option isn't offered.
-  daily.closest<HTMLElement>("label")!.hidden = manual;
+  element("details-daily-option").hidden = manual;
 
   const next = currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
     ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;

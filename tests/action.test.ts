@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { actionLabel, actionReason, STATUS_WORDING, statusAction, wordingKey } from "../src/shared/action.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
+import { defined } from "./support/defined.js";
 
 function actionOn(jurisdictionId: JurisdictionId, status: string) {
   return statusAction(jurisdictionId, status)?.action;
@@ -68,9 +69,8 @@ describe("who a status waits on", () => {
   it("covers every county and city, and files each wording under one action", () => {
     for (const profile of JURISDICTIONS) {
       if (profile.authorityType === "water-management-district") continue;
-      const wording = STATUS_WORDING[profile.id];
-      expect(wording, profile.id).toBeDefined();
-      const keys = Object.values(wording!).flatMap((statuses) => statuses.map(wordingKey));
+      const wording = defined(STATUS_WORDING[profile.id], `status wording for ${profile.id}`);
+      const keys = Object.values(wording).flatMap((statuses) => statuses.map(wordingKey));
       expect(new Set(keys).size, profile.id).toBe(keys.length);
     }
   });

@@ -1,5 +1,6 @@
 import type { Browser, Frame, Locator, Page } from "playwright";
 import { parseRegPermittingNumber, regPermittingRecordUrl, statusLabels } from "../shared/permit.js";
+import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter, type SearchObservation } from "./adapter.js";
@@ -208,9 +209,10 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
 
   if (!links) return;
   const exact = (await links.allInnerTexts()).flatMap((text, index) => isRequested(text.trim(), requested) ? [index] : []);
+  const only = onlyElement(exact);
 
-  if (exact.length !== 1) return;
-  await links.nth(exact[0]!).click();
+  if (only === null) return;
+  await links.nth(only).click();
   const record = await waitForFrameShowing(page, RECORD_HEADING, 30_000);
   // The heading appears before the fields fill in.
   await record?.locator("span.field-caption.dataLabelForRead").filter({ hasText: /Status$/ }).first()

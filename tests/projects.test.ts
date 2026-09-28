@@ -23,8 +23,7 @@ describe("project groups", () => {
 
   it("treats case and surrounding spaces as the same project", () => {
     const groups = groupByProject([permit("a", "job-12"), permit("b", " JOB-12 ")]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]!.permits).toHaveLength(2);
+    expect(groups.map((group) => group.permits.length)).toEqual([2]);
   });
 
   it("lists distinct recent projects, newest permit first", () => {

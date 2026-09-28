@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
+import { defined } from "./support/defined.js";
 
 const directories: string[] = [];
 
@@ -19,6 +20,11 @@ function newStore(): PermitStore {
   directories.push(directory);
 
   return new PermitStore(path.join(directory, "data.sqlite"));
+}
+
+/** The directory of the store `newStore` created most recently. */
+function newestDirectory(): string {
+  return defined(directories.at(-1), "a store created by newStore");
 }
 
 /** Adds a permit that the test expects to be new, returning its id. */
@@ -43,7 +49,7 @@ function verifiedRecord(observedAt: string) {
 
 /** Runs raw SQL on the newest store's file over a second connection, for states the store's API never writes. */
 function withDatabase<T>(work: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(path.join(directories[directories.length - 1]!, "data.sqlite"));
+  const db = new DatabaseSync(path.join(newestDirectory(), "data.sqlite"));
 
   try {
     return work(db);
@@ -72,7 +78,7 @@ describe("observation history", () => {
       expect(permit).toMatchObject({ lastStatus: "In Process", lastObservedAt: observedAt, latestOutcome: "blocked" });
       expect(store.history(permitId).observations).toHaveLength(1);
       expect(store.history(permitId).runs).toHaveLength(2);
-      const observation = store.history(permitId).observations[0]!;
+      const observation = defined(store.history(permitId).observations[0], "the recorded observation");
       expect(store.getObservation(observation.id)?.recordUrl).toBe(observation.recordUrl);
     } finally {
       store.close();
@@ -141,7 +147,7 @@ describe("permit removal", () => {
         actualModel: "jev-1.13.0", browserVersion: "test",
         observation: verifiedRecord("2026-09-24T12:00:00.000Z"),
       });
-      const observationId = store.history(permitId).observations[0]!.id;
+      const observationId = defined(store.history(permitId).observations[0], "the recorded observation").id;
       expect(store.removePermit(permitId)).toBe(true);
       expect(store.getPermit(permitId)).toBeNull();
       expect(store.history(permitId)).toEqual({ runs: [], observations: [] });
@@ -198,7 +204,7 @@ describe("jurisdiction persistence", () => {
 
   it.each([1, 2])("restores missing profiles when opening a version %i database", (version) => {
     const store = newStore();
-    const directory = directories[directories.length - 1]!;
+    const directory = newestDirectory();
     const filePath = path.join(directory, "data.sqlite");
     store.close();
     withDatabase((db) => {
@@ -240,7 +246,7 @@ describe("scheduled checks", () => {
       const permitId = addPermit(store, "HC-BLD-26-0087599");
       const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null });
-      const due = new Date(store.getPermit(permitId)!.nextDueAt!);
+      const due = new Date(defined(defined(store.getPermit(permitId), "the added permit").nextDueAt, "a next scheduled check"));
       expect([[8, 30], [12, 30], [16, 30]]).toContainEqual([due.getHours(), due.getMinutes()]);
 
       const now = new Date(2026, 8, 24, 10, 0);
@@ -344,7 +350,7 @@ describe("project numbers", () => {
 
   it("adds the project column to a version 2 database and keeps its permits", () => {
     const store = newStore();
-    const directory = directories[directories.length - 1]!;
+    const directory = newestDirectory();
     const filePath = path.join(directory, "data.sqlite");
     let permitId = "";
 
@@ -374,7 +380,7 @@ describe("project numbers", () => {
 describe("migration backups", () => {
   it("includes a commit left in the WAL by a writer that exited without closing", () => {
     const store = newStore();
-    const directory = directories[directories.length - 1] ?? "";
+    const directory = newestDirectory();
     const filePath = path.join(directory, "data.sqlite");
     store.close();
 

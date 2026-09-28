@@ -33,9 +33,12 @@ function newer(candidate: string, current: string): boolean {
   const b = current.split(".").map(Number);
 
   for (let index = 0; index < 3; index += 1) {
-    if (a[index]! > (b[index] ?? 0)) return true;
+    const left = a[index] ?? 0;
+    const right = b[index] ?? 0;
 
-    if (a[index]! < (b[index] ?? 0)) return false;
+    if (left > right) return true;
+
+    if (left < right) return false;
   }
 
   return false;
@@ -180,7 +183,7 @@ export async function saveDownload(body: ReadableStream<Uint8Array>, file: strin
 export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
-  constructor(readonly operation: "check" | "download" | "install", readonly cause?: unknown) {
+  constructor(readonly operation: "check" | "download" | "install", override readonly cause?: unknown) {
     super(`Update ${operation} was superseded`);
   }
 }
