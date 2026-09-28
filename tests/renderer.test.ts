@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { BridgeResult } from "../src/shared/bridge.js";
+import type { AppEvent, BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
 
@@ -17,6 +17,10 @@ interface TestBridge {
   /** Reasons of promise rejections nothing in the page handled. */
   unhandled: string[];
   push(next: AppSnapshot): void;
+  /** Delivers a foreground notice from main. */
+  appEvent(event: AppEvent): void;
+  /** Delivers the permit selected from a native notification. */
+  openDetails(permitId: string): void;
   /** Answers the renderer's first direct snapshot request, when the page was opened with it held. */
   answerSnapshot(): void;
   /** Answers the index-th history request with one observation showing `status`. */
@@ -63,7 +67,7 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
     jurisdictionId: "hillsborough-county-building",
     permitNumber: `HC-BLD-26-${String(index).padStart(7, "0")}`,
     projectNumber: null,
-    monitoringEnabled: true,
+    reviews: null, monitoringEnabled: true,
     lastStatus: "In Process",
     lastObservedAt: "2026-09-24T12:00:00.000Z",
     lastRecordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx",
@@ -105,6 +109,8 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
   page = await browser.newPage();
   await page.addInitScript(({ first, hold }) => {
     const listeners: Array<(value: AppSnapshot) => void> = [];
+    const appEvents: Array<(value: AppEvent) => void> = [];
+    const openDetails: Array<(value: string) => void> = [];
 
     const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void; reject: (cause: Error) => void }> = [];
 
@@ -127,6 +133,8 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
       checkTimeCalls: [],
       unhandled: [],
       push: (next) => { for (const listener of listeners) listener(next); },
+      appEvent: (event) => { for (const listener of appEvents) listener(event); },
+      openDetails: (permitId) => { for (const listener of openDetails) listener(permitId); },
       answerSnapshot: () => answerFirst(),
       failHistory: (index, error) => { pending[index]?.resolve({ ok: false, error }); },
       rejectHistory: (index) => { pending[index]?.reject(new Error("IPC channel closed")); },
@@ -137,7 +145,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
         request?.resolve({ ok: true, value: { runs: [{ id: "r1", permitId: request.permitId, startedAt: "2026-09-24T12:00:00.000Z",
           finishedAt: "2026-09-24T12:01:00.000Z", outcome: "success", actionCount: 0, requestCount: 0 }],
         observations: [{ id: "o1", runId: "r1", permitId: request.permitId,
-          verifiedPermitNumber: "x", statusLabel: "Record Status:", statusValue: status, observedAt: "2026-09-24T12:00:00.000Z",
+          verifiedPermitNumber: "x", statusLabel: "Record Status:", statusValue: status, reviews: null, observedAt: "2026-09-24T12:00:00.000Z",
           recordUrl: "https://example.test" }] } });
       },
     };
@@ -169,8 +177,16 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
           return () => undefined;
         },
         onLocalError: () => () => undefined,
-        onOpenDetails: () => () => undefined,
-        onAppEvent: () => () => undefined,
+        onOpenDetails: (callback: (value: string) => void) => {
+          openDetails.push(callback);
+
+          return () => undefined;
+        },
+        onAppEvent: (callback: (value: AppEvent) => void) => {
+          appEvents.push(callback);
+
+          return () => undefined;
+        },
       },
     });
   }, { first: initial, hold: holdFirstSnapshot });
@@ -311,7 +327,57 @@ describe("notices over dialogs", () => {
   });
 });
 
+describe("notification surfaces", () => {
+  it("shows a review alert above an open settings dialog", async () => {
+    await page.locator("#open-settings").click();
+    await page.evaluate(() => window.testBridge.appEvent({ tone: "info", title: "HC-SITECON-26-0000004",
+      body: "Natural Resources Review: Corrections Required · Action: AEC" }));
+    expect(await page.locator("#notice").innerText()).toContain("Corrections Required · Action: AEC");
+    expect(await noticeOnTop()).toBe(true);
+  });
+
+  it("opens the notification's permit and closes an unrelated dialog", async () => {
+    const target = defined(fifty[9], "tenth permit");
+    await page.locator("#open-settings").click();
+    await page.evaluate((id) => window.testBridge.openDetails(id), target.id);
+    expect(await page.locator("#settings-sheet").isVisible()).toBe(false);
+    expect(await page.locator("#details-sheet").isVisible()).toBe(true);
+    expect(await page.locator("#details-title").innerText()).toBe(target.permitNumber);
+    expect(await historyCalls()).toEqual([target.id]);
+  });
+});
+
 describe("AEC filter", () => {
+  it("shows review-driven AEC action and the latest discipline statuses while preserving the portal's In Process wording", async () => {
+    const reviews = [
+      { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" },
+      { process: "Stormwater Review", status: "Corrections Required", date: "2026-07-16", dueDate: "2026-07-14" },
+      { process: "Stormwater Review", status: null, date: null, dueDate: "2026-09-22" },
+    ];
+
+    await open(snapshot([permit(1, { reviews }), permit(2)]));
+    await page.selectOption("#permit-filter", "applicant");
+    expect(await page.locator("#permit-table tbody tr").count()).toBe(1);
+    const row = page.locator("#permit-table tbody tr");
+    expect(await row.locator(".status-value").innerText()).toBe("In Process");
+    expect(await row.locator(".action").innerText()).toBe("AEC");
+    expect(await row.locator(".action").getAttribute("data-tentative")).toBeNull();
+    expect(await row.locator(".action").getAttribute("title")).toContain("2026-09-24");
+    expect(await row.innerText()).toContain("Review response required");
+    await row.locator('button[data-action="details"]').click();
+    expect(await page.locator("#details-status").innerText()).toBe("In Process");
+    expect(await page.locator("#details-action").innerText()).toContain("AEC");
+    expect(await page.locator("#details-reviews").isVisible()).toBe(true);
+    expect(await page.locator("#details-review-list li").count()).toBe(2);
+    expect(await page.locator("#details-review-list li").nth(0).innerText()).toContain("AEC response required");
+    expect(await page.locator("#details-review-list li").nth(1).innerText()).toContain("Pending");
+    expect(await page.locator("#details-review-list li").nth(1).innerText()).not.toContain("Corrections Required");
+
+    await push(snapshot([permit(1, { reviews: [{ ...defined(reviews[0], "Natural Resources"), status: "Approved", date: "2026-09-28" }] }), permit(2)]));
+    expect(await page.locator("#details-action").innerText()).toContain("AHJ");
+    expect(await page.locator("#empty-state").innerText()).toBe("No matches.");
+  });
+
   it("includes cautious AEC? badges, leaves unclassified permits out, and never reads as an all-clear", async () => {
     await open(snapshot([
       permit(1, { lastStatus: "Awaiting Client Reply" }),

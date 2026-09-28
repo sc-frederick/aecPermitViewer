@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
+import { reviewsSchema } from "../shared/reviews.js";
 import {
   HILLSBOROUGH_ID,
   MANUAL_STATUS_LABEL,
@@ -29,6 +30,8 @@ const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
 
+const storedReviewsSchema = z.string().transform((value) => JSON.parse(value)).pipe(reviewsSchema);
+
 const storedPermitSchema = z.object({
   id: z.string(),
   jurisdiction_id: z.string(),
@@ -36,6 +39,7 @@ const storedPermitSchema = z.object({
   project_number: z.string().nullable(),
   monitoring_enabled: z.number(),
   last_status: z.string().nullable(),
+  reviews: storedReviewsSchema.nullable(),
   last_observed_at: z.string().nullable(),
   last_record_url: z.string().nullable(),
   latest_attempt_at: z.string().nullable(),
@@ -62,6 +66,7 @@ const observationSchema = z.object({
   verifiedPermitNumber: z.string(),
   statusLabel: z.string(),
   statusValue: z.string(),
+  reviews: storedReviewsSchema,
   observedAt: z.string(),
   recordUrl: z.string(),
 }) satisfies z.ZodType<ObservationRow>;
@@ -95,7 +100,7 @@ function userVersion(db: DatabaseSync): number {
 
 const PERMIT_SELECT = `
   SELECT p.id, p.jurisdiction_id, p.permit_number, p.project_number, p.monitoring_enabled,
-    o.status_value AS last_status, o.observed_at AS last_observed_at,
+    o.status_value AS last_status, o.observed_at AS last_observed_at, o.reviews,
     p.last_record_url, r.started_at AS latest_attempt_at, r.outcome AS latest_outcome, p.next_due_at
   FROM permits p
   LEFT JOIN status_observations o ON o.id = p.last_observation_id
@@ -114,6 +119,7 @@ function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
     projectNumber: row.project_number,
     monitoringEnabled: row.monitoring_enabled === 1,
     lastStatus: row.last_status,
+    reviews: row.reviews,
     lastObservedAt: row.last_observed_at,
     lastRecordUrl: row.last_record_url,
     latestAttemptAt: row.latest_attempt_at,
@@ -143,7 +149,7 @@ export class PermitStore {
 
         // VACUUM INTO writes one standalone file through SQLite, so commits still sitting in the WAL after an abrupt
         // exit are included. Copying the main file alone would leave them out.
-        if (version < 3) prior.prepare("VACUUM INTO ?").run(`${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+        if (version < 4) prior.prepare("VACUUM INTO ?").run(`${filePath}.before-v${version + 1}-${Date.now()}.bak`);
       } finally {
         prior.close();
       }
@@ -160,7 +166,7 @@ export class PermitStore {
   private migrate(): void {
     const version = userVersion(this.db);
 
-    if (version > 3) throw new Error("Database was created by a newer app version.");
+    if (version > 4) throw new Error("Database was created by a newer app version.");
 
     // permits.interval_hours is retired: scheduling now uses the check times in settings, and nothing reads or writes
     // the column. It stays in the schema because dropping a column rewrites every permit row, which isn't worth the
@@ -238,6 +244,16 @@ export class PermitStore {
     if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
 
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
+
+    if (version < 4) this.transaction(() => {
+      const observationColumns = this.db.prepare("PRAGMA table_info(status_observations)").all().map((column) => columnSchema.parse(column));
+
+      if (!observationColumns.some((column) => column.name === "reviews")) {
+        this.db.exec("ALTER TABLE status_observations ADD COLUMN reviews TEXT NOT NULL DEFAULT 'null'");
+      }
+
+      this.db.exec("PRAGMA user_version = 4");
+    });
     // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
     // kept rather than dropped by a migration of its own. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
@@ -425,11 +441,11 @@ export class PermitStore {
         const observationId = randomUUID();
         const observation = input.observation;
         this.sql(`INSERT INTO status_observations
-          (id, run_id, permit_id, verified_permit_number, status_label, status_value, observed_at, record_url, extractor_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          (id, run_id, permit_id, verified_permit_number, status_label, status_value, observed_at, record_url, extractor_version, reviews)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(observationId, input.runId, input.permitId, observation.verifiedPermitNumber,
             observation.statusLabel, observation.statusValue, observation.observedAt, observation.recordUrl,
-            this.jurisdictionAdapterVersion(input.permitId));
+            this.jurisdictionAdapterVersion(input.permitId), JSON.stringify(observation.reviews));
         this.sql(`UPDATE permits SET last_observation_id = ?, last_record_url = ?,
           next_due_at = ? WHERE id = ?`).run(observationId, observation.recordUrl,
             nextDueAfter(new Date(), "success", this.getCheckTimes()).toISOString(), input.permitId);
@@ -458,7 +474,7 @@ export class PermitStore {
       runId, permitId: input.permitId, outcome: "success", actionCount: 0, requestCount: 0,
       actualModel: null, browserVersion: null,
       observation: { verifiedPermitNumber: permit.permitNumber, statusLabel: MANUAL_STATUS_LABEL,
-        statusValue: input.status, observedAt: now, recordUrl: input.recordUrl },
+        statusValue: input.status, reviews: null, observedAt: now, recordUrl: input.recordUrl },
     });
   }
 
@@ -470,7 +486,7 @@ export class PermitStore {
 
     const observations = this.rows(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
-      status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl
+      status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl, reviews
       FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`, permitId);
 
     return { runs, observations };
@@ -479,7 +495,7 @@ export class PermitStore {
   getObservation(id: string): ObservationRow | null {
     return this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
-      status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl
+      status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl, reviews
       FROM status_observations WHERE id = ?`, id);
   }
 

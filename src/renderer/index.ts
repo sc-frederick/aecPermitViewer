@@ -6,7 +6,8 @@ import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitR
 import { dailyHistory } from "../shared/history.js";
 import { groupByProject, PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN, projectKey, recentProjects, type ProjectGroup } from "../shared/projects.js";
 import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
-import { actionLabel, actionReason, statusAction, type StatusAction } from "../shared/action.js";
+import { actionLabel, actionReason, permitAction, type StatusAction } from "../shared/action.js";
+import { describeReview, latestReviews, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -225,7 +226,7 @@ function actionBadge(classified: StatusAction | null): HTMLElement {
   badge.dataset.actionOn = classified.action;
   const reason = actionReason(classified);
 
-  if (classified.action === "applicant" && classified.basis !== "listed") badge.dataset.tentative = "";
+  if (classified.basis === "cautious" || classified.basis === "unlisted") badge.dataset.tentative = "";
 
   if (reason) badge.title = reason;
 
@@ -348,8 +349,13 @@ function updateRow(view: PermitRowView, permit: PermitRow, classified: StatusAct
   view.jurisdiction.textContent = label;
   view.unscheduled.hidden = !(monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId));
 
-  setCell(view.status, JSON.stringify([permit.lastStatus]), () =>
-    [permit.lastStatus ? make("span", "status-value", permit.lastStatus) : make("span", "muted", "—")]);
+  setCell(view.status, JSON.stringify([permit.lastStatus, classified]), () => {
+    const nodes = [permit.lastStatus ? make("span", "status-value", permit.lastStatus) : make("span", "muted", "—")];
+
+    if (classified?.basis === "review") nodes.push(make("span", "cell-sub", "Review response required"));
+
+    return nodes;
+  });
 
   setCell(view.action, JSON.stringify([classified]), () => [actionBadge(classified)]);
 
@@ -644,7 +650,7 @@ function render(snapshot: AppSnapshot): void {
 
   const total = snapshot.permits.length;
   // Each permit is classified once per render, for its badge, the AEC count, and the filter.
-  const classified = new Map(snapshot.permits.map((permit) => [permit.id, statusAction(permit.jurisdictionId, permit.lastStatus)]));
+  const classified = new Map(snapshot.permits.map((permit) => [permit.id, permitAction(permit)]));
   const failed = snapshot.permits.filter((permit) => matchesFilter(permit, "failed", null)).length;
   const unverified = snapshot.permits.filter((permit) => matchesFilter(permit, "unverified", null)).length;
   const applicant = snapshot.permits.filter((permit) => matchesFilter(permit, "applicant", classified.get(permit.id) ?? null)).length;
@@ -682,10 +688,38 @@ function renderDetailsSummary(permit: PermitRow): void {
   const status = element("details-status");
   status.textContent = permit.lastStatus ?? "No status yet";
   status.classList.toggle("muted", !permit.lastStatus);
-  const action = statusAction(permit.jurisdictionId, permit.lastStatus);
+  const action = permitAction(permit);
   const actionSlot = element("details-action");
   actionSlot.hidden = !action;
   actionSlot.replaceChildren(...(action ? [make("span", "field-label", "Action"), actionBadge(action)] : []));
+  const reviewSection = element("details-reviews");
+  reviewSection.hidden = permit.reviews === null;
+  const requests = new Set(outstandingReviews(permit.reviews ?? []).map(reviewRequestKey));
+
+  const reviews = latestReviews(permit.reviews ?? []).sort((left, right) => {
+    const leftRequired = requests.has(reviewRequestKey(left));
+    const rightRequired = requests.has(reviewRequestKey(right));
+
+    if (leftRequired !== rightRequired) return leftRequired ? -1 : 1;
+
+    return leftRequired ? (right.date ?? "").localeCompare(left.date ?? "") : 0;
+  });
+
+  element("details-review-list").replaceChildren(...reviews.map((review) => {
+    const item = make("li");
+    const required = requests.has(reviewRequestKey(review));
+    item.append(make("strong", "", review.process));
+    item.append(make("span", "", review.status ?? "Pending"));
+
+    if (review.date) item.append(make("span", "detail-meta", `Updated ${review.date}`));
+    else if (review.dueDate) item.append(make("span", "detail-meta", `Due ${review.dueDate}`));
+
+    if (required) item.append(make("span", "review-request", "AEC response required"));
+    else if (outstandingReviews([review]).length > 0) item.append(make("span", "detail-meta", "Superseded by a later submission"));
+
+    return item;
+  }));
+  element("details-review-empty").hidden = reviews.length > 0;
   const manual = isManualJurisdiction(permit.jurisdictionId);
   element("details-observed").textContent = permit.lastObservedAt
     ? `${manual ? "Entered" : "Verified"} ${stamp(permit.lastObservedAt)}` : "";
@@ -747,6 +781,11 @@ function renderHistory(history: PermitHistory): void {
 
     if (observation) {
       body.append(make("strong", "", observation.statusValue));
+
+      for (const review of outstandingReviews(observation.reviews ?? [])) {
+        body.append(make("span", "cell-sub", describeReview(review)));
+      }
+
       body.append(timeNode(observation.observedAt, undefined, dateOnly));
       const link = make("button", "link-button", "Open record");
       link.type = "button";

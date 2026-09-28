@@ -239,6 +239,11 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .detail-action { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .detail-meta { display: block; margin-top: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--color-graphite); }
 .detail-meta.failed { margin-top: 4px; color: var(--color-error); }
+.review-section { margin-block: 24px; }
+.review-list { list-style: none; padding: 0; margin-block: 16px; }
+.review-list li { display: grid; gap: 4px; padding-block: 12px; border-bottom: var(--hairline); overflow-wrap: anywhere; }
+.review-list .detail-meta { margin-top: 0; }
+.review-request { font-weight: 600; color: var(--color-error); }
 .detail-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .detail-project { max-width: 260px; }
 .detail-project .field-error { margin-top: 4px; }

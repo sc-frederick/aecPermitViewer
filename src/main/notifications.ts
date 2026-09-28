@@ -1,9 +1,10 @@
-import { actionLabel, statusAction } from "../shared/action.js";
+import { actionLabel, permitAction } from "../shared/action.js";
+import { describeReview, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
 import { isFailure, outcomeText } from "../shared/outcomes.js";
 import type { PermitRow, RunOutcome } from "../shared/permit.js";
 import type { KeyProblem } from "./check-queue.js";
 
-export type CheckEventKind = "first-status" | "status-changed" | "check-failed" | "key-needed";
+export type CheckEventKind = "first-status" | "status-changed" | "review-action" | "check-failed" | "key-needed";
 
 export interface CheckEvent {
   kind: CheckEventKind;
@@ -24,21 +25,33 @@ export function keyNotice(problem: KeyProblem): CheckEvent {
 
 /** The quoted wording, followed by "Action: AEC" (or "AEC?" when marked to be safe) when the new status waits on the applicant. */
 function statusBody(quoted: string, after: PermitRow): string {
-  const classified = statusAction(after.jurisdictionId, after.lastStatus);
+  const classified = permitAction(after);
+
+  if (classified?.basis === "review") return `${quoted} · ${classified.reviews.map(describeReview).join("; ")} · Action: AEC`;
 
   return classified?.action === "applicant" ? `${quoted} · Action: ${actionLabel(classified)}` : quoted;
 }
 
 /**
  * Decides whether a finished check is worth telling the user about. Portal wording is quoted exactly;
- * only the app's own facts (changed text, failed attempt) trigger, and a status that waits on the
- * applicant says so after the quote. Unchanged statuses and repeat failures stay quiet so scheduled
- * checks do not nag.
+ * newly observed review requests notify even when the record's wording has not changed. A new discipline or
+ * correction date counts as a new request. Repeated requests and repeat failures stay quiet.
  */
 export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome: RunOutcome): CheckEvent | null {
   const number = after.permitNumber;
 
   if (outcome === "success" && after.lastStatus !== null) {
+    const previousRequests = new Set(outstandingReviews(before.reviews ?? []).map(reviewRequestKey));
+    const newRequests = outstandingReviews(after.reviews ?? []).filter((entry) => !previousRequests.has(reviewRequestKey(entry)));
+
+    if (newRequests.length > 0) {
+      const status = before.lastStatus && before.lastStatus !== after.lastStatus
+        ? `“${before.lastStatus}” → “${after.lastStatus}”` : `“${after.lastStatus}”`;
+
+      return { kind: "review-action", permitId: after.id, title: number,
+        body: `${status} · ${newRequests.map(describeReview).join("; ")} · Action: AEC` };
+    }
+
     if (before.lastStatus === null) {
       return { kind: "first-status", permitId: after.id, title: number, body: statusBody(`“${after.lastStatus}”`, after) };
     }

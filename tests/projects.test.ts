@@ -4,7 +4,7 @@ import { projectNumberSchema, type PermitRow } from "../src/shared/permit.js";
 
 function permit(id: string, projectNumber: string | null): PermitRow {
   return {
-    id, jurisdictionId: "hillsborough-county-building", permitNumber: id, projectNumber, monitoringEnabled: true,
+    id, jurisdictionId: "hillsborough-county-building", permitNumber: id, projectNumber, reviews: null, monitoringEnabled: true,
     lastStatus: null, lastObservedAt: null, lastRecordUrl: null, latestAttemptAt: null, latestOutcome: null,
     nextDueAt: null, checking: false,
   };

@@ -1,5 +1,6 @@
 import { app, Menu, nativeImage, Notification, Tray, type NativeImage } from "electron";
 import path from "node:path";
+import { DesktopNotificationFailed, type DesktopDelivery } from "./notification-delivery.js";
 
 // Squirrel.Windows registers shortcuts under com.squirrel.<maker name>.<executable name>.
 // Windows only delivers toast notifications for an app whose ID matches its Start menu shortcut.
@@ -83,20 +84,44 @@ export class Background {
     ]));
   }
 
-  notify(input: { title: string; body: string; permitId?: string }): void {
-    if (process.platform !== "win32" || !Notification.isSupported()) return;
-    const notification = new Notification({ title: input.title, body: input.body, icon: this.image("icon") });
-    // Holding a reference keeps the click handler alive until Windows dismisses the toast.
-    this.live.add(notification);
-    const release = () => this.live.delete(notification);
-    notification.on("click", () => {
-      release();
+  /** Resolve only when Electron reports display or failure, so callers can keep an undelivered notice visible in-app. */
+  notify(input: { title: string; body: string; permitId?: string }): Promise<DesktopDelivery> {
+    return new Promise((resolve) => {
+      const fail = (code: DesktopNotificationFailed["code"]) => resolve({ _tag: "failed", error: new DesktopNotificationFailed(code) });
+      let cleanup = () => {};
 
-      if (input.permitId) this.hooks.openPermit(input.permitId); else this.hooks.showWindow();
+      try {
+        if (process.platform !== "win32" || !Notification.isSupported()) {
+          fail("unsupported");
+
+          return;
+        }
+
+        const notification = new Notification({ title: input.title, body: input.body, icon: this.image("icon") });
+        // Keep timed-out banners alive too: they can still be clicked in Windows Notification Center.
+        this.live.add(notification);
+        const release = () => this.live.delete(notification);
+        const timeout = setTimeout(() => { release(); fail("not_shown"); }, 10_000);
+        cleanup = () => { clearTimeout(timeout); release(); };
+
+        timeout.unref();
+        notification.on("show", () => { clearTimeout(timeout); resolve({ _tag: "shown" }); });
+        notification.on("failed", () => { clearTimeout(timeout); release(); fail("failed"); });
+        notification.on("click", () => {
+          release();
+
+          if (input.permitId) this.hooks.openPermit(input.permitId); else this.hooks.showWindow();
+        });
+        notification.on("close", (details) => {
+          if (details.reason !== "timedOut") release();
+        });
+        setTimeout(release, 30 * 60_000).unref();
+        notification.show();
+      } catch {
+        cleanup();
+        fail("failed");
+      }
     });
-    notification.on("close", release);
-    setTimeout(release, 30 * 60_000).unref();
-    notification.show();
   }
 
   destroy(): void {

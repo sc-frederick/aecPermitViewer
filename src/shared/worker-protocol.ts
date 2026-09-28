@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reviewsSchema } from "./reviews.js";
 import { runOutcomeSchema } from "./permit.js";
 import type { JurisdictionId } from "./jurisdictions.js";
 
@@ -52,6 +53,7 @@ export const workerToMainSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("verified"), runId: z.string(), displayedNumber: z.string(), statusLabel: z.string(), statusValue: z.string(),
     observedAt: z.string(), recordUrl: z.string(), browserVersion: z.string(),
+    reviews: reviewsSchema.default(null),
   }),
   z.object({ kind: z.literal("failed"), runId: z.string(), outcome: workerFailureSchema }),
   // The number of page actions the worker has taken so far in this run.

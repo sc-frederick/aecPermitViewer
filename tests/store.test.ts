@@ -42,7 +42,7 @@ const RUN = { appVersion: "test", playwrightVersion: "test", requestedModel: "te
 /** A verified Hillsborough record; each test states the time it observed. */
 function verifiedRecord(observedAt: string) {
   return {
-    verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:", statusValue: "In Process", observedAt,
+    verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:", statusValue: "In Process", reviews: null, observedAt,
     recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL",
   };
 }
@@ -378,6 +378,31 @@ describe("project numbers", () => {
 });
 
 describe("migration backups", () => {
+  it("backs up version 3 and adds review history without changing old verified observations", () => {
+    const store = newStore();
+    const directory = newestDirectory();
+    const filePath = path.join(directory, "data.sqlite");
+    const permitId = addPermit(store, "HC-BLD-26-0087599");
+    const runId = store.startRun({ permitId, ...RUN });
+    const observation = verifiedRecord("2026-09-24T12:00:00.000Z");
+    store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 0,
+      actualModel: null, browserVersion: "test", observation });
+    store.close();
+    withDatabase((db) => {
+      db.exec("ALTER TABLE status_observations DROP COLUMN reviews");
+      db.exec("PRAGMA user_version = 3");
+    });
+    const migrated = new PermitStore(filePath);
+
+    try {
+      expect(migrated.getPermit(permitId)).toMatchObject({ lastStatus: "In Process", reviews: null, lastObservedAt: observation.observedAt });
+      expect(migrated.history(permitId).observations).toEqual([expect.objectContaining(observation)]);
+      expect(readdirSync(directory).filter((name) => /^data\.sqlite\.before-v4-\d+\.bak$/.test(name))).toHaveLength(1);
+    } finally {
+      migrated.close();
+    }
+  });
+
   it("includes a commit left in the WAL by a writer that exited without closing", () => {
     const store = newStore();
     const directory = newestDirectory();

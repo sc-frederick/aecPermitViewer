@@ -11,7 +11,7 @@ const RUN_ID = "run-1";
 
 const PERMIT: PermitRow = {
   id: "00000000-0000-4000-8000-000000000001", jurisdictionId: HILLSBOROUGH_ID, permitNumber: "HC-BLD-26-0087599",
-  projectNumber: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null, lastRecordUrl: null,
+  projectNumber: null, reviews: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null, lastRecordUrl: null,
   latestAttemptAt: null, latestOutcome: null, nextDueAt: null, checking: true,
 };
 
@@ -93,9 +93,20 @@ function scripted(script: WorkerScript): (environment: NodeJS.ProcessEnv) => Wor
 }
 
 const verified: WorkerToMain = { kind: "verified", runId: RUN_ID, displayedNumber: PERMIT.permitNumber, statusLabel: "Record Status:",
-  statusValue: "In Process", observedAt: "2026-09-28T12:00:00.000Z", recordUrl: RECORD_URL, browserVersion: "140.0" };
+  statusValue: "In Process", reviews: null, observedAt: "2026-09-28T12:00:00.000Z", recordUrl: RECORD_URL, browserVersion: "140.0" };
 
 describe("running a check", () => {
+  it("carries per-review evidence through main's verification", async () => {
+    const reviews = [{ process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" }];
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit({ ...verified, reviews });
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "success", observation: { statusValue: "In Process", reviews } });
+    await active.closed;
+  });
+
   it("saves a verified record as a success with its observation, then removes the run's cache", async () => {
     const { active, reports, cachePath } = check(scripted((message, worker) => {
       if (message.kind === "start") worker.emit(verified);

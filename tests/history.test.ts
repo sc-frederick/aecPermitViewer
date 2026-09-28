@@ -8,7 +8,7 @@ function run(id: string, startedAt: string, outcome: RunOutcome | null): CheckRu
 
 function observed(runId: string, observedAt: string, statusValue: string): ObservationRow {
   return { id: `o-${runId}`, runId, permitId: "p", verifiedPermitNumber: "X", statusLabel: "Status",
-    statusValue, observedAt, recordUrl: "https://example.test" };
+    statusValue, reviews: null, observedAt, recordUrl: "https://example.test" };
 }
 
 const dayOf = (value: string) => value.slice(0, 10);

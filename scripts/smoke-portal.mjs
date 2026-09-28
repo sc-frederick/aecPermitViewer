@@ -70,7 +70,8 @@ port.postMessage = (message) => {
     clearTimeout(deadline);
 
     const parsed = parseDisplayedStatus({ jurisdictionId, requestedNumber: permitNumber, displayedNumber: message.displayedNumber,
-      statusLabel: message.statusLabel, statusValue: message.statusValue, recordUrl: message.recordUrl, observedAt: message.observedAt });
+      statusLabel: message.statusLabel, statusValue: message.statusValue, reviews: message.reviews,
+      recordUrl: message.recordUrl, observedAt: message.observedAt });
 
     if (parsed._tag !== "ok") {
       process.stderr.write(`Verification failed: ${parsed.outcome} (displayed ${JSON.stringify(message.displayedNumber)}).\n`);
@@ -81,6 +82,7 @@ port.postMessage = (message) => {
 
     process.stdout.write(JSON.stringify({ permitNumber: message.displayedNumber,
       statusLabel: message.statusLabel, statusValue: message.statusValue,
+      reviews: parsed.value.reviews,
       observedAt: message.observedAt, recordUrl: message.recordUrl,
       browserVersion: message.browserVersion }) + "\n");
   } else if (message.kind === "failed") {

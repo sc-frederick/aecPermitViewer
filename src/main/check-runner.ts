@@ -207,6 +207,7 @@ export function runCheck(input: {
             displayedNumber: message.displayedNumber,
             statusLabel: message.statusLabel,
             statusValue: message.statusValue,
+            reviews: message.reviews,
             observedAt: message.observedAt,
             recordUrl: message.recordUrl,
           });

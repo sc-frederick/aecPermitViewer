@@ -1,4 +1,6 @@
 import type { JurisdictionId } from "./jurisdictions.js";
+import type { PermitRow } from "./permit.js";
+import { describeReview, outstandingReviews, type ReviewEntry } from "./reviews.js";
 
 /** Who a verified status waits on: the applicant (AEC), the issuing authority (the AHJ), or no one. */
 export const ACTION_ON = ["applicant", "authority", "none"] as const;
@@ -106,10 +108,10 @@ export function wordingKey(status: string): string {
 }
 
 /** Who a status waits on, and how the wording led there. */
-export interface StatusAction {
+export type StatusAction = {
   action: ActionOn;
   basis: ActionBasis;
-}
+} | { action: "applicant"; basis: "review"; reviews: ReviewEntry[] };
 
 const GROUPS: ReadonlyArray<readonly [keyof StatusWording, StatusAction]> = [
   ["applicant", { action: "applicant", basis: "listed" }],
@@ -136,13 +138,23 @@ export function statusAction(jurisdictionId: JurisdictionId, status: string | nu
   return wording.get(wordingKey(status)) ?? UNLISTED;
 }
 
+/** Current review requests take precedence over the record status, which can lag even on issued revision records. */
+export function permitAction(permit: Pick<PermitRow, "jurisdictionId" | "lastStatus" | "reviews">): StatusAction | null {
+  const reviews = outstandingReviews(permit.reviews ?? []);
+
+  return reviews.length > 0 ? { action: "applicant", basis: "review", reviews } : statusAction(permit.jurisdictionId, permit.lastStatus);
+}
+
 /** The badge text: "AEC?" marks a cautious or unlisted AEC so it reads apart from an explicit request. */
 export function actionLabel(classified: StatusAction): string {
-  return classified.action === "applicant" && classified.basis !== "listed" ? `${actionText.applicant}?` : actionText[classified.action];
+  return classified.action === "applicant" && (classified.basis === "cautious" || classified.basis === "unlisted")
+    ? `${actionText.applicant}?` : actionText[classified.action];
 }
 
 /** Why a badge reads as it does, for its tooltip; null when the label says enough. */
 export function actionReason(classified: StatusAction): string | null {
+  if (classified.basis === "review") return classified.reviews.map(describeReview).join("; ");
+
   if (classified.basis === "unlisted") return "This wording isn't on the jurisdiction's list, so it's marked AEC to be safe.";
 
   if (classified.basis === "cautious") return "Marked AEC to be safe: the record stopped short or the wording is unclear.";
