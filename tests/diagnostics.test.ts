@@ -19,15 +19,15 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-/** The error a real store raises when the same permit is added twice. */
+/** The driver error a real store keeps as the cause when the same permit is added twice. */
 function duplicatePermitError(): Error {
   const store = new PermitStore(path.join(temporaryDirectory(), "data.sqlite"));
 
   try {
     store.addPermit("HC-BLD-26-0087599");
-    store.addPermit("HC-BLD-26-0087599");
-  } catch (cause) {
-    if (cause instanceof Error) return cause;
+    const again = store.addPermit("HC-BLD-26-0087599");
+
+    if (again._tag === "err" && again.error.cause instanceof Error) return again.error.cause;
   } finally {
     store.close();
   }
