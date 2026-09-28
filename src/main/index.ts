@@ -677,6 +677,8 @@ async function startApp(): Promise<void> {
       return { ok: false, error: "A check is still running. Try again." };
     }
 
+    // An update download writes inside the data folder, so it has to stop and let go of its files first.
+    await updates.cancel();
     store.close();
 
     try { setOpenAtLogin(false); } catch { /* local data deletion continues */ }
@@ -716,7 +718,8 @@ app.on("before-quit", (event) => {
   }
 
   event.preventDefault();
-  void stopChecks().then((stopped) => {
+  // A stopped update download removes its partial file instead of leaving it for the next run.
+  void Promise.all([stopChecks(), updates.cancel()]).then(([stopped]) => {
     if (stopped) store.close();
     quitAllowed = true;
     app.quit();
