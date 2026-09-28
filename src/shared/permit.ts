@@ -80,6 +80,11 @@ export interface AppPreferences {
 export type { PreferenceKey } from "./bridge.js";
 
 export interface AppSnapshot {
+  /**
+   * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
+   * any lower one that arrives later.
+   */
+  revision: number;
   permits: PermitRow[];
   preferences: AppPreferences;
   keyState: KeyState;

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { KeyStore } from "./key-store.js";
 import { DiagnosticLog } from "./diagnostics.js";
+import { serialBroadcast } from "./serial-broadcast.js";
 import { startUtilityWorker } from "./utility-worker.js";
 import { keyProblem } from "../shared/key-format.js";
 import { PermitStore } from "./store.js";
@@ -81,7 +82,8 @@ let keyNoticeShown = false;
 /** Failures the user only sees as a generic message are recorded here, without their messages or any user data. */
 let diagnostics: DiagnosticLog;
 
-let broadcastPending: Promise<void> | null = null;
+/** The revision of the last snapshot read. See {@link AppSnapshot.revision}. */
+let snapshotRevision = 0;
 
 /** Resolves true once the bundled browser matches its manifest. No check launches it before then. */
 let browserVerified: Promise<boolean> = Promise.resolve(true);
@@ -187,10 +189,18 @@ function effectiveKeyState(stored: StoredKeyState): KeyState {
   return stored === "configured" && checks.keyPaused ? "rejected" : stored;
 }
 
+/**
+ * Reads the whole app state. The key state is the only asynchronous part, so it is read first; everything else, and the
+ * revision, is read after it in one turn. A snapshot with a higher revision therefore never holds older permits or settings.
+ */
 async function snapshot(): Promise<AppSnapshot> {
+  const stored = await storedKeyState("snapshot:key-state");
+  snapshotRevision += 1;
+
   return {
+    revision: snapshotRevision,
     permits: store.listPermits(checks.checkingIds()),
-    keyState: effectiveKeyState(await storedKeyState("snapshot:key-state")),
+    keyState: effectiveKeyState(stored),
     appVersion: app.getVersion(),
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
@@ -207,17 +217,10 @@ async function snapshot(): Promise<AppSnapshot> {
 
 /**
  * Sends the current state to the window and tray. Calls made in the same turn (for example, every
- * permit queued by one scheduled run) share a single snapshot taken just after that turn.
+ * permit queued by one scheduled run) share a single snapshot taken just after that turn. Snapshots
+ * go out one at a time, so an older one can never be sent after a newer one.
  */
-function broadcast(): Promise<void> {
-  broadcastPending ??= new Promise<void>((resolve) => setImmediate(resolve)).then(() => {
-    broadcastPending = null;
-
-    return sendSnapshot();
-  });
-
-  return broadcastPending;
-}
+const broadcast = serialBroadcast(sendSnapshot);
 
 async function sendSnapshot(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
