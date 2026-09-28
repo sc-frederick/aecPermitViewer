@@ -672,14 +672,18 @@ async function startApp(): Promise<void> {
   handle("permit:check-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.check() };
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:check-update", null, cause);
+
       return { ok: false, error: "Couldn't check for updates." };
     }
   });
   handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.download() };
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:download-update", null, cause);
+
       return { ok: false, error: "Download failed. Nothing was changed." };
     }
   });
@@ -688,7 +692,9 @@ async function startApp(): Promise<void> {
 
     try {
       installer = await updates.installerForApprovedHandoff();
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:install-update:verify", null, cause);
+
       return { ok: false, error: "The update failed verification. Check again." };
     }
 
@@ -709,8 +715,9 @@ async function startApp(): Promise<void> {
       app.quit();
 
       return { ok: true, value: null };
-    } catch {
+    } catch (cause) {
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
+      diagnostics.record("permit:install-update:start", null, cause);
       resumeAfterFailedShutdown();
 
       return { ok: false, error: "The installer couldn't start. Restart the app and try again." };
@@ -733,8 +740,9 @@ async function startApp(): Promise<void> {
 
     try {
       await rm(dataRoot(), { recursive: true, force: true });
-    } catch {
+    } catch (cause) {
       diagnostics.restart();
+      diagnostics.record("permit:delete-local-data", null, cause);
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
       resumeAfterFailedShutdown();
 
