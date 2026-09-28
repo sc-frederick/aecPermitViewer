@@ -28,7 +28,7 @@ const bridge: PermitBridge = {
   copyShareCode: () => ipcRenderer.invoke("permit:share-copy"),
   follow: (code) => ipcRenderer.invoke("permit:follow", code),
   stopFollowing: () => ipcRenderer.invoke("permit:follow-stop"),
-  refreshShared: () => ipcRenderer.invoke("permit:follow-refresh"),
+  syncShared: () => ipcRenderer.invoke("permit:share-sync"),
   onSnapshot: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on("permit:snapshot-changed", listener);

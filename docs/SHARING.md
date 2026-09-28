@@ -4,8 +4,8 @@ One person sets up and checks the permits. Others follow that list read-only fro
 
 ## How it works
 
-- **Share:** Settings → Shared list → **Share this list** shows a code (`PMS1-…`, 69 characters). The app sends an encrypted copy of its list after changes, at most once a minute. The copy holds each permit, its latest status and review evidence, and one history entry per day for the last 120 days. History entries carry only that day's outstanding review requests, which is all the history view shows.
-- **Follow:** paste the code under **Follow a shared list**. The window then shows the shared list in place of the follower's own, and the follower's own permits are neither shown nor checked. Check now, adding, removing, project numbers, and schedule toggles are hidden, and main refuses them too. The follower asks for a newer copy every 5 minutes, or on **Refresh now**. When a newer copy shows a permit the publisher has checked since the last one, the follower gets the same notice the publisher's app would give (status change, new review request, first failure). The follower keeps the last copy, so it opens without a network connection. Record links go through the same portal allowlist as the follower's own.
+- **Share:** Settings → Shared list → **Share this list** shows a code (`PMS1-…`, 69 characters). The app sends an encrypted copy right away, then again whenever the list has changed and its checks have finished: it waits until no checks are queued or running and the list has been still for 2 minutes. A scheduled round of checks therefore goes out as one copy, about three a day with the default times. Edits outside a round, such as removing a permit, go out 2 minutes later. **Sync now** in the header sends the list immediately. The copy holds each permit, its latest status and review evidence, and one history entry per day for the last 120 days. History entries carry only that day's outstanding review requests, which is all the history view shows.
+- **Follow:** paste the code under **Follow a shared list**. The window then shows the shared list in place of the follower's own, and the follower's own permits are neither shown nor checked. Check now, adding, removing, project numbers, and schedule toggles are hidden, and main refuses them too. The follower asks for a newer copy when it starts, and then 90 minutes after each of the owner's check times, which the shared copy includes, so it looks when the owner's round should be done. A round of 60 Accela permits takes at least 30 minutes, because checks on one portal are 30 seconds apart. A round that runs longer shows up at the next check time. If the owner has no schedule, the follower asks every 3 hours. After a failed fetch it tries again in 15 minutes. **Sync now** in the header fetches immediately. Check times are compared in local time, so the owner and followers are assumed to share a time zone. When a newer copy shows a permit the publisher has checked since the last one, the follower gets the same notice the publisher's app would give (status change, new review request, first failure). The follower keeps the last copy, so it opens without a network connection. Record links go through the same portal allowlist as the follower's own.
 - **Stop sharing** deletes the stored copy, so the code stops working. Followers keep the last copy they received and see "The shared list was removed." **Delete all data** also deletes the stored copy.
 - An app can share or follow, not both.
 
@@ -41,7 +41,7 @@ Anyone who has the code can read the list until sharing stops. Treat it like a l
 ## Limits
 
 - 1.5 MB of ciphertext per list (Durable Object rows hold 2 MB); the app reports "The list is too large to share." past it.
-- One publication per list every 10 seconds (the Worker answers 429 with `Retry-After`). The app itself waits at least a minute.
+- One publication per list every 10 seconds (the Worker answers 429 with `Retry-After`, and Sync now says to try again shortly). The app itself sends only after a round of checks, on request, or 2 minutes after an edit.
 - There is no per-IP rate limit. Anyone can create lists by making up write keys, bounded by the size limit and the 180-day expiry. If that becomes a problem, add a Workers rate-limiting binding in front of `PUT`.
 
 ## Protocol
@@ -58,7 +58,7 @@ Anyone who has the code can read the list until sharing stops. Treat it like a l
 
 ## Deploying and developing
 
-Deploy with `npx wrangler deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
+The Worker was first deployed on September 28, 2026, and it runs on the free plan. The Worker imports `zod/mini` (`import * as z`), not `zod`, which keeps the bundle at about 27 KB instead of about 280 KB. Deploy with `npx wrangler deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
 
 To run it locally:
 

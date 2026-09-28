@@ -55,7 +55,7 @@ The private key's offline backup lives outside the repository with the maintaine
 
 ## Shared-list service
 
-Shared lists use the `permitmon-sync` Worker (`infra/sync-server`) with a SQLite-backed Durable Object class in the same Cloudflare account. Release builds get `SHARE_SERVICE_URL=https://permitmon-sync.sc-frederick.workers.dev` from `windows.yml`. Deploy the Worker before the first release that includes sharing, and whenever `infra/sync-server` or `src/shared/share-protocol.ts` changes: `npx wrangler deploy` from `infra/sync-server`, after `npm ci --allow-git=all`. It has no secrets. Changing the share-code format or the room derivation strands existing codes, so give a new format a new `PMS` prefix and keep the old one working. See [shared lists](SHARING.md).
+Shared lists use the `permitmon-sync` Worker (`infra/sync-server`) with a SQLite-backed Durable Object class in the same Cloudflare account. Release builds get `SHARE_SERVICE_URL=https://permitmon-sync.sc-frederick.workers.dev` from `windows.yml`. The Worker is deployed (first on 2026-09-28). Deploy it again whenever `infra/sync-server` or `src/shared/share-protocol.ts` changes: `npx wrangler deploy` from `infra/sync-server`, after `npm ci --allow-git=all`. It has no secrets. Changing the share-code format or the room derivation strands existing codes, so give a new format a new `PMS` prefix and keep the old one working. See [shared lists](SHARING.md).
 
 ## Signed build inputs (not wired into CI)
 

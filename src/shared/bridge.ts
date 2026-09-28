@@ -87,8 +87,8 @@ export interface PermitBridge {
   follow(code: string): Promise<BridgeResult<null>>;
   /** Goes back to this app's own list. */
   stopFollowing(): Promise<BridgeResult<null>>;
-  /** Asks the service for a newer followed list now. */
-  refreshShared(): Promise<BridgeResult<null>>;
+  /** Sends the shared list now, or asks for a newer followed list now. */
+  syncShared(): Promise<BridgeResult<null>>;
   onSnapshot(callback: (snapshot: AppSnapshot) => void): () => void;
   onLocalError(callback: (message: string) => void): () => void;
   /** A notification or tray action asked to show one permit's details. */

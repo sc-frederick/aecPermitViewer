@@ -403,6 +403,7 @@ function scheduleChanged(): void {
 function createSharing(): Sharing {
   return new Sharing(store, shareService, {
     changed: () => { void broadcast(); },
+    checking: () => checks.checkingIds().size > 0,
     listUpdated: (before, after) => {
       // The first list after following is just what there is; only later lists bring news.
       if (!before) return;
@@ -835,7 +836,7 @@ async function startApp(): Promise<void> {
 
     return result;
   });
-  handle("permit:follow-refresh", NO_INPUT, "Invalid request.", () => sharing.refresh());
+  handle("permit:share-sync", NO_INPUT, "Invalid request.", () => sharing.sync());
 
   // Handlers are registered before the page loads so its first snapshot request never races them.
   await mainWindow.loadFile(path.join(__dirname, "index.html"));

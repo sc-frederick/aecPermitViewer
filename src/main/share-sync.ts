@@ -1,24 +1,37 @@
-// Keeps a shared list current on both ends: the publisher sends its list after changes, at most once a minute, and a
-// follower fetches it every few minutes. Neither ever throws into the app; problems become a short message for Settings.
+// Keeps a shared list current on both ends without syncing more than the list changes. The publisher sends its list
+// once its checks have finished and the list has changed, so a scheduled run of checks goes out as one publication. A
+// follower asks for a newer copy a while after each of the publisher's check times, when that run should be done. Both
+// sides also sync on request. Neither ever throws into the app; problems become a short message for Settings.
 import { z } from "zod";
+import { nextSlotAfter, type CheckTimes } from "../shared/schedule.js";
 import { parseSharedList, type SharedList } from "./share-list.js";
 import { ListTooLarge, openList, sealList, type ShareService } from "./share-service.js";
 
-/** A publication waits this long after a change, so a burst of changes goes out together. */
-const PUBLISH_SETTLE_MS = 3_000;
-
-/** The shortest gap between publications. */
-export const PUBLISH_INTERVAL_MS = 60_000;
+/** How long the list has to sit unchanged, with no checks queued or running, before it is sent. */
+export const PUBLISH_SETTLE_MS = 2 * 60_000;
 
 /** How soon a failed publication or fetch is tried again. */
-export const RETRY_MS = 5 * 60_000;
+export const RETRY_MS = 15 * 60_000;
 
-/** How often a follower asks for a newer list. */
-export const FOLLOW_INTERVAL_MS = 5 * 60_000;
+/** How long after each of the publisher's check times a follower asks for a newer copy; long enough for most runs. */
+export const FOLLOW_DELAY_MS = 90 * 60_000;
+
+/** How often a follower asks when the publisher has no check schedule. */
+export const UNSCHEDULED_FOLLOW_MS = 3 * 3_600_000;
 
 type Report = (operation: string, cause: unknown) => void;
 
-/** Sends one app's list whenever it has changed since the last publication. */
+/** When a follower next asks for a newer copy: FOLLOW_DELAY_MS after the publisher's next check time. */
+export function nextFetchAt(schedule: CheckTimes | null, now: Date): Date {
+  if (!schedule) return new Date(now.getTime() + UNSCHEDULED_FOLLOW_MS);
+
+  return new Date(nextSlotAfter(new Date(now.getTime() - FOLLOW_DELAY_MS), schedule).getTime() + FOLLOW_DELAY_MS);
+}
+
+/** What a sync someone asked for came to: null when it went through, or why it didn't. */
+export type SyncProblem = string | null;
+
+/** Sends one app's list when it has changed and its checks have finished. */
 export class SharePublisher {
   /** When the service last accepted the list from this app run. */
   publishedAt: string | null = null;
@@ -28,11 +41,11 @@ export class SharePublisher {
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private lastJson: string | null = null;
-  private lastAttemptAt = 0;
   private stopped = false;
 
   /**
-   * @param buildList - The list to publish, as JSON; called at most once per publication.
+   * @param buildList - The list to publish, as JSON; called once per attempt.
+   * @param checking - Whether checks are queued or running; a publication waits for them to finish.
    * @param changed - `publishedAt` or `problem` changed.
    */
   constructor(
@@ -40,13 +53,25 @@ export class SharePublisher {
     private readonly writeKey: string,
     private readonly contentKey: Uint8Array,
     private readonly buildList: () => string,
+    private readonly checking: () => boolean,
     private readonly changed: () => void,
     private readonly report: Report,
   ) {}
 
-  /** Something in the list may have changed: publish soon, once the interval since the last attempt has passed. */
+  /** Something in the list may have changed: send it once it has settled and no checks are left. */
   notify(): void {
-    this.schedule(Math.max(PUBLISH_SETTLE_MS, this.lastAttemptAt + PUBLISH_INTERVAL_MS - Date.now()));
+    this.schedule(PUBLISH_SETTLE_MS);
+  }
+
+  /** Sends the list now, even when it hasn't changed, and says why that failed, if it did. */
+  async syncNow(): Promise<SyncProblem> {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    await this.running;
+    const attempt = this.publish(true);
+    this.running = attempt.then(() => undefined).finally(() => { this.running = null; });
+
+    return attempt;
   }
 
   /** Stops publishing. A publication under way finishes, but its result is ignored. */
@@ -62,7 +87,15 @@ export class SharePublisher {
     if (this.stopped || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.running = this.publish().finally(() => { this.running = null; });
+
+      // Mid-run, the list changes with every check; waiting sends the whole run at once.
+      if (this.checking()) {
+        this.schedule(PUBLISH_SETTLE_MS);
+
+        return;
+      }
+
+      this.running = this.publish(false).then(() => undefined).finally(() => { this.running = null; });
     }, delay);
     this.timer.unref();
   }
@@ -74,8 +107,8 @@ export class SharePublisher {
     this.changed();
   }
 
-  private async publish(): Promise<void> {
-    this.lastAttemptAt = Date.now();
+  /** Sends the list if it changed since the last publication, or regardless when `force` is set. */
+  private async publish(force: boolean): Promise<SyncProblem> {
     let json: string;
 
     try {
@@ -85,30 +118,34 @@ export class SharePublisher {
       this.setState(this.publishedAt, "Couldn't read the list to share. Retrying.");
       this.schedule(RETRY_MS);
 
-      return;
+      return this.problem;
     }
 
-    if (json === this.lastJson) return;
+    if (json === this.lastJson && !force) return null;
 
     try {
       const reply = await this.service.publish(this.writeKey, sealList(json, this.contentKey));
 
-      if (this.stopped) return;
+      if (this.stopped) return null;
 
       if (reply._tag === "retry") {
         this.schedule(reply.afterSeconds * 1000);
 
-        return;
+        return `The list was just sent. Try again in ${reply.afterSeconds} seconds.`;
       }
 
       this.lastJson = json;
       this.setState(reply.publishedAt, null);
+
+      return null;
     } catch (cause) {
-      if (this.stopped) return;
+      if (this.stopped) return null;
       this.report("share:publish", cause);
       this.setState(this.publishedAt, cause instanceof ListTooLarge
         ? "The list is too large to share." : "Couldn't reach the sharing service. Retrying.");
       this.schedule(RETRY_MS);
+
+      return this.problem;
     }
   }
 }
@@ -202,26 +239,47 @@ export class ShareFollower {
     }
   }
 
-  /** Fetches now, then every FOLLOW_INTERVAL_MS. */
+  /** Fetches now, then after each of the publisher's check times (see nextFetchAt). */
   start(): void {
     void this.refresh();
-    this.timer = setInterval(() => { void this.refresh(); }, FOLLOW_INTERVAL_MS);
-    this.timer.unref();
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
 
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     await this.running;
   }
 
-  /** Asks for a newer list. A call while a fetch is under way shares it. Never rejects. */
-  refresh(): Promise<void> {
-    this.running ??= this.fetch().finally(() => { this.running = null; });
+  /**
+   * Asks for a newer list now, and plans the next automatic fetch from the list it has afterward. A call while a fetch
+   * is under way shares it. Resolves with why it didn't bring a list, if it didn't. Never rejects.
+   */
+  refresh(): Promise<SyncProblem> {
+    this.running ??= this.fetch().finally(() => {
+      this.running = null;
+      this.planNext();
+    });
 
-    return this.running;
+    return this.running.then(() => this.problem);
+  }
+
+  private planNext(): void {
+    if (this.stopped) return;
+
+    if (this.timer) clearTimeout(this.timer);
+    const now = new Date();
+
+    // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
+    const next = this.problem === FOLLOW_PROBLEMS.unreachable
+      ? new Date(now.getTime() + RETRY_MS) : nextFetchAt(this.list?.schedule ?? null, now);
+
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.refresh();
+    }, next.getTime() - now.getTime());
+    this.timer.unref();
   }
 
   private async fetch(): Promise<void> {

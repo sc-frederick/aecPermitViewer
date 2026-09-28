@@ -8,10 +8,11 @@ import { route } from "../infra/sync-server/src/router.js";
 import { describeSharedUpdate } from "../src/main/notifications.js";
 import { buildSharedList, parseSharedList, SHARED_HISTORY_DAYS, type SharedList } from "../src/main/share-list.js";
 import { openList, parseServiceUrl, sealList, ShareService } from "../src/main/share-service.js";
-import { PUBLISH_INTERVAL_MS } from "../src/main/share-sync.js";
+import { FOLLOW_DELAY_MS, nextFetchAt, PUBLISH_SETTLE_MS, UNSCHEDULED_FOLLOW_MS } from "../src/main/share-sync.js";
 import { Sharing, type SharingHost } from "../src/main/sharing.js";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID, type PermitHistory, type PermitRow } from "../src/shared/permit.js";
+import { normalizeCheckTimes } from "../src/shared/schedule.js";
 import { MemoryRooms } from "./fixtures/memory-rooms.js";
 import { defined } from "./support/defined.js";
 
@@ -63,11 +64,17 @@ async function serve(rooms: MemoryRooms): Promise<Server> {
 
 class RecordingHost implements SharingHost {
   changes = 0;
+  /** Whether the host reports checks queued or running. */
+  busy = false;
   readonly updates: Array<{ before: SharedList | null; after: SharedList }> = [];
   readonly reports: string[] = [];
 
   changed(): void {
     this.changes += 1;
+  }
+
+  checking(): boolean {
+    return this.busy;
   }
 
   listUpdated(before: SharedList | null, after: SharedList): void {
@@ -132,20 +139,38 @@ describe("shared list format", () => {
   }
 
   it("round-trips permits without their live check state, keeping one day's entry for each recent day", () => {
-    const list = parseSharedList(buildSharedList([permit], () => history(200)));
+    const list = parseSharedList(buildSharedList([permit], () => history(200), ["08:30", "16:30"]));
     const shared = defined(list.permits[0], "the shared permit");
 
     expect(shared).toEqual({ ...permit, checking: false, nextDueAt: null });
+    expect(list.schedule).toEqual(normalizeCheckTimes(["08:30", "16:30"]));
     expect(list.histories.get(permit.id)?.runs).toHaveLength(SHARED_HISTORY_DAYS);
     expect(list.histories.get(permit.id)?.observations).toHaveLength(SHARED_HISTORY_DAYS);
   });
 
   it("leaves out permits under jurisdictions this version doesn't know, and rejects other formats", () => {
-    const json = buildSharedList([permit, { ...permit, id: "future", jurisdictionId: HILLSBOROUGH_ID }], () => history(1))
+    const json = buildSharedList([permit, { ...permit, id: "future", jurisdictionId: HILLSBOROUGH_ID }], () => history(1), null)
       .replace('"id":"future","jurisdictionId":"hillsborough-county-building"', '"id":"future","jurisdictionId":"some-new-county"');
 
     expect(parseSharedList(json).permits.map((entry) => entry.id)).toEqual([permit.id]);
     expect(() => parseSharedList(json.replace('"format":1', '"format":2'))).toThrow();
+  });
+});
+
+describe("follower timing", () => {
+  const schedule = defined(normalizeCheckTimes(["08:30", "16:30"]), "check times");
+
+  it("asks FOLLOW_DELAY_MS after each of the publisher's check times, rolling to tomorrow", () => {
+    expect(FOLLOW_DELAY_MS).toBe(90 * 60_000);
+    expect(nextFetchAt(schedule, new Date(2026, 8, 28, 9, 0))).toEqual(new Date(2026, 8, 28, 10, 0));
+    expect(nextFetchAt(schedule, new Date(2026, 8, 28, 10, 30))).toEqual(new Date(2026, 8, 28, 18, 0));
+    expect(nextFetchAt(schedule, new Date(2026, 8, 28, 19, 0))).toEqual(new Date(2026, 8, 29, 10, 0));
+  });
+
+  it("asks every few hours when the publisher has no schedule", () => {
+    const now = new Date(2026, 8, 28, 9, 0);
+
+    expect(nextFetchAt(null, now)).toEqual(new Date(now.getTime() + UNSCHEDULED_FOLLOW_MS));
   });
 });
 
@@ -208,13 +233,25 @@ describe("sharing between two apps", () => {
     expect(await follower.startSharing()).toEqual({ ok: false, error: "Stop following the shared list first." });
     expect(await publisher.follow(code)).toEqual({ ok: false, error: "Stop sharing your list first." });
 
-    // A new status on the publisher's side reaches the follower as the notice the publisher got.
+    // Mid-run, the list waits for the checks to finish, then goes out as one publication.
     observe(own, permitId, "Issued");
+    publisherHost.busy = true;
     publisher.listChanged();
-    rooms.now += PUBLISH_INTERVAL_MS;
-    await vi.advanceTimersByTimeAsync(PUBLISH_INTERVAL_MS);
-    await published(publisher, first);
-    await follower.refresh();
+    rooms.now += PUBLISH_SETTLE_MS * 3;
+    await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS * 3);
+    expect(publisher.state()).toMatchObject({ publishedAt: first });
+    publisherHost.busy = false;
+    await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS);
+    const second = await published(publisher, first);
+
+    // Sync now sends at once, even unchanged, and passes on the service's request to wait.
+    rooms.now += 10_000;
+    expect(await publisher.sync()).toEqual({ ok: true, value: null });
+    expect(publisher.state()).not.toMatchObject({ publishedAt: second });
+    expect(await publisher.sync()).toEqual({ ok: false, error: "The list was just sent. Try again in 10 seconds." });
+
+    // The follower's sync brings the new status, with the notice the publisher got.
+    expect(await follower.sync()).toEqual({ ok: true, value: null });
     const update = defined(followerHost.updates.at(-1), "an update");
     expect(describeSharedUpdate(defined(update.before, "the earlier list").permits, update.after.permits))
       .toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
@@ -228,7 +265,7 @@ describe("sharing between two apps", () => {
     // Stopping deletes the shared copy, and the follower hears it's gone.
     expect(await publisher.stopSharing()).toEqual({ ok: true, value: null });
     expect(publisher.state()).toEqual({ mode: "off", available: true });
-    await follower.refresh();
+    expect(await follower.sync()).toEqual({ ok: false, error: "The shared list was removed. Ask for a new code." });
     expect(follower.state()).toMatchObject({ mode: "following", problem: "The shared list was removed. Ask for a new code." });
     expect(follower.permits()).toHaveLength(1);
 

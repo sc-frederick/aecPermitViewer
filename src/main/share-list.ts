@@ -5,6 +5,7 @@ import { dailyHistory } from "../shared/history.js";
 import { getJurisdiction } from "../shared/jurisdictions.js";
 import { runOutcomeSchema, type CheckRunRow, type ObservationRow, type PermitHistory, type PermitRow } from "../shared/permit.js";
 import { outstandingReviews, reviewsSchema } from "../shared/reviews.js";
+import { normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
 /** Days of history shared per permit: one entry per day, as the details sheet shows it. */
 export const SHARED_HISTORY_DAYS = 120;
@@ -54,6 +55,8 @@ const sharedPermitSchema = z.object({
 
 const sharedListSchema = z.object({
   format: z.literal(1),
+  /** The publisher's daily check times ("HH:MM"), or null when it only checks on request. */
+  schedule: z.array(text(5)).max(24).nullable(),
   permits: z.array(z.object({
     permit: sharedPermitSchema,
     history: z.object({
@@ -65,6 +68,8 @@ const sharedListSchema = z.object({
 
 /** A shared list as a follower uses it: permits in the publisher's order, and each permit's history by id. */
 export interface SharedList {
+  /** The publisher's daily check times, which followers fetch after; null when it has none or they don't parse. */
+  readonly schedule: CheckTimes | null;
   readonly permits: readonly PermitRow[];
   readonly histories: ReadonlyMap<string, PermitHistory>;
 }
@@ -86,12 +91,15 @@ function recentHistory(history: PermitHistory, days: number): PermitHistory {
 }
 
 /**
- * The list to publish, as JSON. Live check state isn't shared: a follower can't cancel a check, and a publisher that
- * quits mid-check would leave it showing as running.
+ * The list to publish, as JSON, with the publisher's check times (null when it only checks on request). Live check
+ * state isn't shared: a follower can't cancel a check, and a publisher that quits mid-check would leave it showing as
+ * running.
  */
-export function buildSharedList(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory): string {
+export function buildSharedList(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory,
+  schedule: readonly string[] | null): string {
   return JSON.stringify({
     format: 1,
+    schedule: schedule ? [...schedule] : null,
     permits: permits.map((permit) => ({
       permit: {
         id: permit.id, jurisdictionId: permit.jurisdictionId, permitNumber: permit.permitNumber, projectNumber: permit.projectNumber,
@@ -123,5 +131,5 @@ export function parseSharedList(json: string): SharedList {
     return [{ ...permit, jurisdictionId: jurisdiction.id, nextDueAt: null, checking: false }];
   });
 
-  return { permits, histories };
+  return { schedule: list.schedule ? normalizeCheckTimes(list.schedule) : null, permits, histories };
 }

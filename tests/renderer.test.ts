@@ -156,7 +156,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
     const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
       "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
       "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData", "startSharing", "stopSharing", "copyShareCode",
-      "follow", "stopFollowing", "refreshShared"];
+      "follow", "stopFollowing", "syncShared"];
 
     Object.assign(window, {
       testBridge: control,
@@ -523,6 +523,7 @@ describe("shared lists", () => {
       share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: "2026-09-24T12:05:00.000Z", problem: null } }));
 
     expect(await page.locator("#next-check").textContent()).toMatch(/^Shared list · updated Sep 24,/);
+    expect(await page.locator("#share-sync").isVisible()).toBe(true);
     expect(await page.locator("#key-banner").isVisible()).toBe(false);
     expect(await page.locator("#add-button").isVisible()).toBe(false);
     expect(await page.locator("#permit-number").isVisible()).toBe(false);
@@ -550,6 +551,7 @@ describe("shared lists", () => {
     // Leaving follow mode brings the controls back.
     await push(snapshot([permit(1)]));
     expect(await page.locator("#share-off").isVisible()).toBe(true);
+    expect(await page.locator("#share-sync").isVisible()).toBe(false);
     await page.keyboard.press("Escape");
     expect(await page.locator("#add-button").isVisible()).toBe(true);
     expect(await page.locator('#permit-table button[data-action="check"]').first().isVisible()).toBe(true);
@@ -560,7 +562,12 @@ describe("shared lists", () => {
     await page.locator("#open-settings").click();
 
     expect(await page.locator("#share-code").inputValue()).toBe("PMS1-example");
-    expect(await page.locator("#share-status").textContent()).toBe("Anyone with this code can view this list. Sending…");
+    expect(await page.locator("#share-status").textContent()).toBe("Anyone with this code can view this list. It's sent after each round of checks.");
+    await page.keyboard.press("Escape");
+    expect(await page.locator("#share-sync").isVisible()).toBe(true);
+    await page.locator("#share-sync").click();
+    expect(await page.locator("#notice-text").textContent()).toBe("Shared list sent.");
+    await page.locator("#open-settings").click();
     expect(await page.locator("#share-off").isVisible()).toBe(false);
 
     await push(snapshot([permit(1)], { share: { mode: "off", available: false } }));

@@ -652,6 +652,9 @@ function renderShare(share: ShareState): void {
   element("share-off").hidden = share.mode !== "off" || !share.available;
   element("share-on").hidden = share.mode !== "sharing";
   element("follow-on").hidden = share.mode !== "following";
+  const sync = element("share-sync", HTMLButtonElement);
+  sync.hidden = share.mode === "off";
+  sync.title = share.mode === "sharing" ? "Send the shared list now" : "Get the newest copy of the shared list now";
 
   switch (share.mode) {
     case "off":
@@ -663,13 +666,17 @@ function renderShare(share: ShareState): void {
 
       if (code.value !== share.code) code.value = share.code;
       status.textContent = share.problem
-        ?? (share.publishedAt ? `Anyone with this code can view this list. Sent ${stamp(share.publishedAt)}.` : "Anyone with this code can view this list. Sending…");
+        ?? (share.publishedAt
+          ? `Anyone with this code can view this list. It's sent after each round of checks; last sent ${stamp(share.publishedAt)}.`
+          : "Anyone with this code can view this list. It's sent after each round of checks.");
       break;
     }
 
     case "following":
       status.textContent = share.problem
-        ?? (share.publishedAt ? `Viewing a shared list, sent ${stamp(share.publishedAt)}. It updates every few minutes.` : "Viewing a shared list.");
+        ?? (share.publishedAt
+          ? `Viewing a shared list, sent ${stamp(share.publishedAt)}. A newer copy is fetched after each of the owner's check times.`
+          : "Viewing a shared list.");
       break;
   }
 }
@@ -1582,10 +1589,13 @@ element("follow-form", HTMLFormElement).addEventListener("submit", async (event)
   notice("Following the shared list.", "info");
 });
 
-element("follow-refresh", HTMLButtonElement).addEventListener("click", async () => {
-  const result = await busy(element("follow-refresh", HTMLButtonElement), () => api.refreshShared());
+const shareSync = element("share-sync", HTMLButtonElement);
 
-  if (!result.ok) notice(result.error);
+shareSync.addEventListener("click", async () => {
+  const sharing = currentSnapshot?.share.mode === "sharing";
+  const result = await busy(shareSync, () => api.syncShared());
+
+  if (result.ok) notice(sharing ? "Shared list sent." : "Shared list is up to date.", "info"); else notice(result.error);
 });
 
 element("follow-stop", HTMLButtonElement).addEventListener("click", async () => {

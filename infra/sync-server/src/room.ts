@@ -1,6 +1,7 @@
 // One shared list: the latest encrypted copy its publisher sent, with a revision number that grows by one per
 // publication. The room never sees the list's contents or any key; it stores and returns opaque bytes.
-import { z } from "zod";
+// zod/mini keeps the Worker bundle small; the full zod build is most of an otherwise ~10 KB Worker.
+import * as z from "zod/mini";
 
 /** A value SQLite storage accepts or returns: BLOBs come back as ArrayBuffer. */
 export type SqlValue = string | number | null | ArrayBuffer;
@@ -35,13 +36,12 @@ export type ReadResult =
   | { readonly _tag: "unchanged"; readonly revision: number }
   | { readonly _tag: "found"; readonly revision: number; readonly publishedAt: string; readonly body: ArrayBuffer };
 
-const storedListSchema = z.object({
-  revision: z.number().int().positive(),
+const storedRevisionSchema = z.object({
+  revision: z.number().check(z.int(), z.positive()),
   published_at: z.string(),
-  body: z.instanceof(ArrayBuffer),
 });
 
-const storedRevisionSchema = storedListSchema.pick({ revision: true, published_at: true });
+const storedListSchema = z.extend(storedRevisionSchema, { body: z.instanceof(ArrayBuffer) });
 
 const tableCountSchema = z.object({ tables: z.number() });
 

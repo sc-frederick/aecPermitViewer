@@ -6,6 +6,7 @@ import { buildSharedList, type SharedList } from "./share-list.js";
 import type { ShareService } from "./share-service.js";
 import { cachedListSchema, probeShare, ShareFollower, SharePublisher, type CachedList } from "./share-sync.js";
 import type { PermitStore } from "./store.js";
+import { formatCheckTime } from "../shared/schedule.js";
 
 /** Settings rows. The keys sit beside the permit data they protect, which the same database already holds in the clear. */
 const SETTINGS = {
@@ -19,6 +20,8 @@ const SETTINGS = {
 export interface SharingHost {
   /** Something the window shows about sharing, or the followed list itself, changed. */
   changed(): void;
+  /** Whether this app's checks are queued or running; a shared list is sent once they finish. */
+  checking(): boolean;
   /** A newer followed list replaced `before`. */
   listUpdated(before: SharedList | null, after: SharedList): void;
   report(operation: string, cause: unknown): void;
@@ -128,7 +131,9 @@ export class Sharing {
     const contentKey = new Uint8Array(randomBytes(CONTENT_KEY_BYTES));
     this.store.setText(SETTINGS.writeKey, writeKey);
     this.store.setText(SETTINGS.contentKey, toBase64Url(contentKey));
-    await this.startPublishing(this.service, writeKey, contentKey);
+    const publisher = await this.startPublishing(this.service, writeKey, contentKey);
+    // The first copy goes out at once, so the code works as soon as it's shown. A failure shows in Settings.
+    await publisher?.syncNow();
     this.host.changed();
 
     return ok;
@@ -204,10 +209,11 @@ export class Sharing {
     return ok;
   }
 
-  async refresh(): Promise<BridgeResult<null>> {
-    await this.follower?.refresh();
+  /** Sends the shared list now, or fetches the followed one now. */
+  async sync(): Promise<BridgeResult<null>> {
+    const failed = this.publishing ? await this.publishing.publisher.syncNow() : this.follower ? await this.follower.refresh() : null;
 
-    return ok;
+    return failed ? problem(failed) : ok;
   }
 
   /** Deletes the shared copy as part of deleting local data. Failures are reported and otherwise ignored. */
@@ -219,18 +225,22 @@ export class Sharing {
     await this.service.remove(publishing.writeKey).catch((cause: unknown) => this.host.report("share:remove", cause));
   }
 
-  private async startPublishing(service: ShareService, writeKey: string, contentKey: Uint8Array | null): Promise<void> {
+  /** Starts the publisher for saved keys, or returns null when they don't make a share code. */
+  private async startPublishing(service: ShareService, writeKey: string, contentKey: Uint8Array | null): Promise<SharePublisher | null> {
     const readToken = await readTokenFor(writeKey);
     const code = readToken && contentKey ? formatShareCode(readToken, contentKey) : null;
 
-    if (!code || !contentKey) return;
+    if (!code || !contentKey) return null;
 
     const publisher = new SharePublisher(service, writeKey, contentKey,
-      () => buildSharedList(this.store.listPermits(), (id) => this.store.history(id)),
-      () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
+      () => buildSharedList(this.store.listPermits(), (id) => this.store.history(id),
+        this.store.getMonitoring() === "scheduled" ? this.store.getCheckTimes().map(formatCheckTime) : null),
+      () => this.host.checking(), () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
 
     this.publishing = { writeKey, code, publisher };
     publisher.notify();
+
+    return publisher;
   }
 
   private startFollowing(service: ShareService, code: ShareCode, cached: CachedList | null): void {
