@@ -41,7 +41,7 @@ const TYLER_FIELDS = {
 } as const satisfies Record<string, DetailFields>;
 
 /** The kind of Tyler record an address shows, from its "#/permit/<id>" or "#/plan/<id>" route; null for anything else. */
-export function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
+function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
   const hash = new URL(url).hash;
 
   if (/^#\/permit\/[^/]+$/i.test(hash)) return "permit";
@@ -70,7 +70,7 @@ function detailFields(profile: AutomatedJurisdictionProfile, url: string): Detai
  * The trimmed text of the one visible element matching `selector`, read in a single browser round trip. Null when
  * nothing matches, more than one element does, or the match isn't visible (no size, or hidden by style).
  */
-export async function visibleText(page: Page, selector: string): Promise<string | null> {
+async function visibleText(page: Page, selector: string): Promise<string | null> {
   const texts = await page.locator(selector).evaluateAll((nodes) => nodes.map((node) => {
     if (!(node instanceof HTMLElement)) return null;
     const box = node.getBoundingClientRect();
@@ -82,7 +82,7 @@ export async function visibleText(page: Page, selector: string): Promise<string 
 }
 
 /** St. Petersburg's record link, rebuilt from the application number because Click2Gov's own address is a form post. */
-export function stPeteRecordUrl(number: string): string | null {
+function stPeteRecordUrl(number: string): string | null {
   const parts = parseApplicationNumber(number);
 
   if (!parts) return null;
