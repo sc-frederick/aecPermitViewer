@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
@@ -111,10 +111,16 @@ export class PermitStore {
 
     if (existsSync(filePath)) {
       const prior = new DatabaseSync(filePath, { readOnly: true });
-      const version = userVersion(prior);
-      prior.close();
 
-      if (version < 3) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+      try {
+        const version = userVersion(prior);
+
+        // VACUUM INTO writes one standalone file through SQLite, so commits still sitting in the WAL after an abrupt
+        // exit are included. Copying the main file alone would leave them out.
+        if (version < 3) prior.prepare("VACUUM INTO ?").run(`${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+      } finally {
+        prior.close();
+      }
     }
 
     this.db = new DatabaseSync(filePath);
