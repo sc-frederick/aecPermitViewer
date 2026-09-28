@@ -154,6 +154,7 @@
         <div class="pref-list">
           <label class="checkbox"><input class="checkbox-input" type="checkbox" data-pref="runInBackground"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Keep running in the tray when closed</strong></span></label>
           <label class="checkbox"><input class="checkbox-input" type="checkbox" data-pref="openAtLogin"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Start at Windows sign-in</strong></span></label>
+          <label class="checkbox"><input class="checkbox-input" type="checkbox" data-pref="desktopShortcut"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Shortcut on the desktop</strong></span></label>
           <label class="checkbox"><input class="checkbox-input" type="checkbox" data-pref="notifyStatusChanges"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Notify when a status changes</strong></span></label>
           <label class="checkbox"><input class="checkbox-input" type="checkbox" data-pref="notifyFailures"><span class="checkbox-box" aria-hidden="true"></span><span class="checkbox-text"><strong>Notify when a check fails</strong></span></label>
         </div>
@@ -209,7 +210,7 @@
       <h2 id="confirm-title" class="confirm-title"></h2>
       <p id="confirm-body"></p>
       <div class="confirm-actions">
-        <button class="btn btn-secondary" value="cancel" type="submit" autofocus>Cancel</button>
+        <button id="confirm-cancel" class="btn btn-secondary" value="cancel" type="submit" autofocus>Cancel</button>
         <button id="confirm-accept" class="btn btn-primary" value="accept" type="submit"></button>
       </div>
     </form>

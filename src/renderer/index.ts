@@ -161,11 +161,12 @@ function notice(message: string, kind: "info" | "error" = "error"): void {
 
 let settleConfirm: ((accepted: boolean) => void) | null = null;
 
-function confirmAction(title: string, body: string, accept: string): Promise<boolean> {
+function confirmAction(title: string, body: string, accept: string, cancel = "Cancel"): Promise<boolean> {
   const dialog = element("confirm-dialog", HTMLDialogElement);
   element("confirm-title").textContent = title;
   element("confirm-body").textContent = body;
   element("confirm-accept", HTMLButtonElement).textContent = accept;
+  element("confirm-cancel", HTMLButtonElement).textContent = cancel;
   settleConfirm?.(false);
   dialog.showModal();
 
@@ -539,7 +540,7 @@ function renderPreferences(preferences: AppPreferences): void {
 
     if (key === "runInBackground") input.disabled = !preferences.backgroundAvailable;
 
-    if (key === "openAtLogin") input.disabled = !preferences.openAtLoginAvailable;
+    if (key === "openAtLogin" || key === "desktopShortcut") input.disabled = !preferences.installedApp;
   }
 
   const hint = (pref: string, available: boolean, text: string) => {
@@ -549,7 +550,8 @@ function renderPreferences(preferences: AppPreferences): void {
   };
 
   hint("runInBackground", preferences.backgroundAvailable, "Available on Windows.");
-  hint("openAtLogin", preferences.openAtLoginAvailable, "Available in the installed app.");
+  hint("openAtLogin", preferences.installedApp, "Available in the installed app.");
+  hint("desktopShortcut", preferences.installedApp, "Available in the installed app.");
 }
 
 function renderCheckTimeRows(times: readonly string[]): void {
@@ -681,6 +683,17 @@ function renderShare(share: ShareState): void {
   }
 }
 
+let desktopShortcutAsked = false;
+
+/** The installer can't ask, so the first launch after installing does. Either answer is saved as the setting. */
+async function askDesktopShortcut(): Promise<void> {
+  desktopShortcutAsked = true;
+  const wanted = await confirmAction("Add a desktop shortcut?", "Permit Monitor is in the Start menu. You can change this later in Settings.", "Add shortcut", "Not now");
+  const result = await api.setPreference("desktopShortcut", wanted);
+
+  if (!result.ok) notice(result.error);
+}
+
 function render(snapshot: AppSnapshot): void {
   currentSnapshot = snapshot;
   const following = snapshot.share.mode === "following";
@@ -688,6 +701,8 @@ function render(snapshot: AppSnapshot): void {
   renderShare(snapshot.share);
   renderKey(snapshot.keyState);
   renderPreferences(snapshot.preferences);
+
+  if (snapshot.preferences.offerDesktopShortcut && !desktopShortcutAsked) void askDesktopShortcut();
   element("monitoring-mode", HTMLSelectElement).value = snapshot.monitoring;
   renderSchedule(snapshot);
   element("next-check").textContent = nextCheckSummary(snapshot);

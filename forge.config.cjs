@@ -21,6 +21,8 @@ const squirrelConfig = {
   authors: "Permit Monitor",
   setupExe: "PermitMonitorSetup.exe",
   setupIcon: path.resolve(__dirname, "assets/icon.ico"),
+  // Squirrel has no installer pages; this plays while it installs, in place of its default animation.
+  loadingGif: path.resolve(__dirname, "assets/install-splash.gif"),
 };
 
 if (windowsSign) squirrelConfig.windowsSign = windowsSign;
@@ -76,6 +78,8 @@ module.exports = {
     extraResource: [
       path.resolve(__dirname, "vendor/playwright-browsers"),
       path.resolve(__dirname, "dist/authenticode.ps1"),
+      // Copied over Squirrel's app.ico on install and update, so Installed apps shows this app's icon.
+      path.resolve(__dirname, "assets/icon.ico"),
     ],
     win32metadata: {
       CompanyName: "Permit Monitor",
