@@ -100,7 +100,7 @@ async function observeEpermitSearch(page: Page, profile: EpermitProfile, request
     return exact.length > 1
       ? { phase: "results", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers, candidates: [] }
       : { phase: "search", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers, candidates: [{
-        id: "open_exact_result", description: `Open the result whose permit number exactly matches ${requested}.` }] };
+        id: "open_exact_result", established: true, description: `Open the result whose permit number exactly matches ${requested}.` }] };
   }
 
   const permit = page.locator(PERMIT_FIELD);
@@ -113,10 +113,10 @@ async function observeEpermitSearch(page: Page, profile: EpermitProfile, request
   const candidates: Candidate[] = [];
 
   if (!entered) {
-    candidates.push({ id: "fill_record_number",
+    candidates.push({ id: "fill_record_number", established: true,
       description: "Fill Application/Permit # and Sequence # with the number and sequence from the exact permit number." });
   } else if (!(await noResultsShown(page)) && await searchButton(page).count() === 1 && await searchButton(page).isEnabled()) {
-    candidates.push({ id: "search_record_number", description: `Submit the ${profile.label} ePermit search for the exact permit and sequence number.` });
+    candidates.push({ id: "search_record_number", established: true, description: `Submit the ${profile.label} ePermit search for the exact permit and sequence number.` });
   }
 
   return { phase: "search", inputValue, formLabels: ["Application/Permit #", "Sequence #"],

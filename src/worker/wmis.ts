@@ -127,7 +127,7 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
       return { phase: "detail", inputValue, formLabels: [], visibleControls, resultNumbers, candidates: [] };
     }
 
-    const candidates: Candidate[] = exact.length === 1 ? [{ id: "open_exact_result",
+    const candidates: Candidate[] = exact.length === 1 ? [{ id: "open_exact_result", established: true,
       description: `Open the record page for the result row whose number exactly matches ${requested}.` }] : [];
 
     return { phase: exact.length > 1 ? "results" : "search", inputValue, formLabels: [], visibleControls, resultNumbers, candidates };
@@ -144,11 +144,11 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
   const candidates: Candidate[] = [];
 
   if (!entered) {
-    candidates.push({ id: "fill_record_number", description: profile.module === "ERP"
+    candidates.push({ id: "fill_record_number", established: true, description: profile.module === "ERP"
       ? `Enter the exact ${wanted?.kind === "application" ? "application ID" : "permit number and revision"} and add it to the ERP search list.`
       : `Fill the ${labels[profile.module]} search fields with the exact ${noun} number.` });
   } else if (!(await page.getByText(NO_RECORDS, { exact: true }).isVisible().catch(() => false))) {
-    candidates.push({ id: "search_record_number", description: `Submit the SWFWMD ${noun} search for the exact number.` });
+    candidates.push({ id: "search_record_number", established: true, description: `Submit the SWFWMD ${noun} search for the exact number.` });
   }
 
   return { phase: "search", inputValue, formLabels: [labels[profile.module]], visibleControls: [`${labels[profile.module]} search`], resultNumbers: [], candidates };

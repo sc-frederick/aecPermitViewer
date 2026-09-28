@@ -44,7 +44,7 @@ describe("verified portal observation", () => {
   });
 
   it("keeps county government distinct from municipalities", () => {
-    expect(resolveJurisdiction("Hillsborough County government · Building")).toBe("hillsborough-county-building");
+    expect(resolveJurisdiction("Hillsborough County")).toBe("hillsborough-county-building");
     expect(resolveJurisdiction("Tampa, Florida")).toBeNull();
     expect(resolveJurisdiction("Temple Terrace")).toBeNull();
   });

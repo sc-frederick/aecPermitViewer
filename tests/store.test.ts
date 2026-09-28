@@ -20,6 +20,17 @@ function newStore(): PermitStore {
   return new PermitStore(path.join(directory, "data.sqlite"));
 }
 
+/** Run metadata every started check records; its values don't matter to these tests. */
+const RUN = { appVersion: "test", playwrightVersion: "test", requestedModel: "test-model", promptVersion: "test-prompt" } as const;
+
+/** A verified Hillsborough record; each test states the time it observed. */
+function verifiedRecord(observedAt: string) {
+  return {
+    verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:", statusValue: "In Process", observedAt,
+    recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL",
+  };
+}
+
 /** Runs raw SQL on the newest store's file over a second connection, for states the store's API never writes. */
 function withDatabase<T>(work: (db: DatabaseSync) => T): T {
   const db = new DatabaseSync(path.join(directories[directories.length - 1]!, "data.sqlite"));
@@ -37,18 +48,14 @@ describe("observation history", () => {
 
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      const successId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      const successId = store.startRun({ permitId, ...RUN });
       const observedAt = "2026-09-24T12:00:00.000Z";
       store.finishRun({
         runId: successId, permitId, outcome: "success", actionCount: 2, requestCount: 2,
         actualModel: "jev-1.13.0", browserVersion: "test",
-        observation: {
-          verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-          statusValue: "In Process", observedAt,
-          recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL",
-        },
+        observation: verifiedRecord(observedAt),
       });
-      const failureId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      const failureId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId: failureId, permitId, outcome: "blocked", actionCount: 0,
         requestCount: 0, actualModel: null, browserVersion: null });
       const permit = store.getPermit(permitId);
@@ -69,12 +76,10 @@ describe("observation history", () => {
       const permitId = store.addPermit("HC-BLD-26-0087599");
 
       for (const observedAt of ["2026-09-24T12:00:00.000Z", "2026-09-25T12:00:00.000Z"]) {
-        const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+        const runId = store.startRun({ permitId, ...RUN });
         store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
           actualModel: "jev-1.13.0", browserVersion: "test",
-          observation: { verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-            statusValue: "In Process", observedAt,
-            recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL" },
+          observation: verifiedRecord(observedAt),
         });
       }
 
@@ -91,12 +96,10 @@ describe("permit removal", () => {
 
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
         actualModel: "jev-1.13.0", browserVersion: "test",
-        observation: { verifiedPermitNumber: "HC-BLD-26-0087599", statusLabel: "Record Status:",
-          statusValue: "In Process", observedAt: "2026-09-24T12:00:00.000Z",
-          recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL" },
+        observation: verifiedRecord("2026-09-24T12:00:00.000Z"),
       });
       const observationId = store.history(permitId).observations[0]!.id;
       expect(store.removePermit(permitId)).toBe(true);
@@ -120,12 +123,13 @@ describe("jurisdiction persistence", () => {
       expect(profile).toBeDefined();
       const permitId = store.addPermit("TEST-123", profile!.id);
       expect(store.getPermit(permitId)?.jurisdictionId).toBe(profile!.id);
-      const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
       withDatabase((db) => {
-        expect(db.prepare("SELECT adapter_version AS version FROM check_runs WHERE id = ?").get(runId))
-          .toEqual({ version: profile!.adapterVersion });
+        expect(db.prepare(`SELECT adapter_version AS version, requested_model AS model, prompt_version AS prompt
+          FROM check_runs WHERE id = ?`).get(runId))
+          .toEqual({ version: profile!.adapterVersion, model: RUN.requestedModel, prompt: RUN.promptVersion });
         expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
           .toEqual({ count: JURISDICTIONS.length });
       });
@@ -195,7 +199,7 @@ describe("scheduled checks", () => {
 
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+      const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null });
       const due = new Date(store.getPermit(permitId)!.nextDueAt!);
       expect([[8, 30], [12, 30], [16, 30]]).toContainEqual([due.getHours(), due.getMinutes()]);
@@ -206,6 +210,24 @@ describe("scheduled checks", () => {
         .run(new Date(2026, 8, 25, 10, 0).toISOString(), permitId));
       store.alignSchedule(now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 24, 12, 30).toISOString());
+    } finally {
+      store.close();
+    }
+  });
+
+  it("defers a cancelled check to the given slot without pulling a later due time back", () => {
+    const store = newStore();
+
+    try {
+      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const slot = new Date(2026, 8, 24, 12, 30);
+      store.deferDue(permitId, slot);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(slot.toISOString());
+      expect(store.duePermitIds(new Date(2026, 8, 24, 12, 0).toISOString())).not.toContain(permitId);
+
+      store.deferDue(permitId, new Date(2026, 8, 24, 8, 30));
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(slot.toISOString());
+      expect(store.history(permitId)).toEqual({ runs: [], observations: [] });
     } finally {
       store.close();
     }
@@ -318,7 +340,7 @@ describe("lookups", () => {
       const first = store.addPermit("HC-BLD-26-0087599");
       const second = store.addPermit("HC-BLD-26-0087600");
       store.setProjectNumber(second, "28069");
-      const runId = store.startRun({ permitId: second, appVersion: "test", playwrightVersion: "test" });
+      const runId = store.startRun({ permitId: second, ...RUN });
       store.finishRun({ runId, permitId: second, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
 
@@ -338,7 +360,7 @@ describe("lookups", () => {
       expect(store.latestBrowserVersion()).toBeNull();
 
       for (const browserVersion of ["139.0", "140.0", null]) {
-        const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test" });
+        const runId = store.startRun({ permitId, ...RUN });
         store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion });
       }
 
@@ -347,7 +369,8 @@ describe("lookups", () => {
       const plan = withDatabase((db) => db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
         WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all());
 
-      expect(plan.map((step) => step.detail).join(" ")).toContain("idx_runs_started");
+      // The snapshot asks for this on every update, so it reads runs in order instead of sorting all of them.
+      expect(plan.map((step) => step.detail).join(" ")).not.toContain("TEMP B-TREE");
     } finally {
       store.close();
     }

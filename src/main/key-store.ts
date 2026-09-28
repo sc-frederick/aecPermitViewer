@@ -1,5 +1,5 @@
 import { app, safeStorage } from "electron";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -23,27 +23,24 @@ export class KeyStore {
     delete process.env.TYPESAFE_API_KEY;
   }
 
+  /** Whether a key is saved and usable here, without reading or decrypting it. */
   async state(): Promise<"configured" | "missing" | "unavailable"> {
     if (this.devKey) return "configured";
 
-    if (process.platform !== "win32" || !(await safeStorage.isAsyncEncryptionAvailable())) return "unavailable";
+    if (!(await this.encryptionAvailable())) return "unavailable";
 
     try {
-      await readFile(this.secretPath);
+      await access(this.secretPath);
 
       return "configured";
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return "missing";
-
-      return "unavailable";
+    } catch (cause) {
+      return cause instanceof Error && "code" in cause && cause.code === "ENOENT" ? "missing" : "unavailable";
     }
   }
 
   /** Encrypts the key for this Windows user. The plaintext is never returned or persisted. */
   async save(key: string): Promise<void> {
-    if (process.platform !== "win32" || !(await safeStorage.isAsyncEncryptionAvailable())) {
-      throw new Error("unavailable");
-    }
+    if (!(await this.encryptionAvailable())) throw new Error("unavailable");
 
     await this.writeEncrypted(await safeStorage.encryptStringAsync(key));
   }
@@ -52,16 +49,30 @@ export class KeyStore {
     await rm(this.secretPath, { force: true });
   }
 
+  /**
+   * The key, or null when none is saved or this computer can't store one. The file is read and decrypted once; a
+   * saved key that can't be read or decrypted rejects, so it isn't mistaken for a missing one.
+   */
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
 
-    if (await this.state() !== "configured") return null;
-    const encrypted = await readFile(this.secretPath);
+    if (!(await this.encryptionAvailable())) return null;
+
+    const encrypted = await readFile(this.secretPath).catch((cause) => {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return null;
+      throw cause;
+    });
+
+    if (!encrypted) return null;
     const decrypted = await safeStorage.decryptStringAsync(encrypted);
 
     if (decrypted.shouldReEncrypt) await this.writeEncrypted(await safeStorage.encryptStringAsync(decrypted.result));
 
     return decrypted.result;
+  }
+
+  private async encryptionAvailable(): Promise<boolean> {
+    return process.platform === "win32" && await safeStorage.isAsyncEncryptionAvailable();
   }
 
   private async writeEncrypted(encrypted: Buffer): Promise<void> {

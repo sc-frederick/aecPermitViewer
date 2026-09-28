@@ -1,6 +1,9 @@
-import { generateKeyPairSync, sign } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { verifyReleaseEnvelope } from "../src/main/updater.js";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { saveDownload, verifyReleaseEnvelope } from "../src/main/updater.js";
 
 describe("signed update metadata", () => {
   const keys = generateKeyPairSync("ed25519");
@@ -37,5 +40,78 @@ describe("signed update metadata", () => {
     expect(() => verifyReleaseEnvelope(JSON.stringify(valid), publicKey, "Permit Monitor LLC")).toThrow();
     expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "Other Publisher")).toThrow();
     expect(() => verifyReleaseEnvelope(envelope({ ...payload, url: "http://updates.example.test/app.exe" }), publicKey, "Permit Monitor LLC")).toThrow();
+  });
+});
+
+describe("installer download", () => {
+  const directories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  function target(): string {
+    const directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-update-"));
+    directories.push(directory);
+
+    return path.join(directory, "setup.partial.exe");
+  }
+
+  /** A download that sends `chunks`, then ends or fails; `cancelled` records whether the app released it. */
+  function stream(chunks: readonly string[], ending: "end" | "fail") {
+    const state = { cancelled: false };
+    const queue = [...chunks];
+
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = queue.shift();
+
+        if (next !== undefined) controller.enqueue(new TextEncoder().encode(next));
+        else if (ending === "end") controller.close();
+        else controller.error(new Error("connection reset"));
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+
+    return { body, state };
+  }
+
+  it("saves a complete download and returns its hash", async () => {
+    const file = target();
+    const { body } = stream(["Permit", "Monitor"], "end");
+    const hash = await saveDownload(body, file, 13, () => undefined);
+    expect(hash).toBe(createHash("sha256").update("PermitMonitor").digest("hex"));
+    expect(readFileSync(file, "utf8")).toBe("PermitMonitor");
+  });
+
+  it("removes the partial file when the connection fails partway", async () => {
+    const file = target();
+    const { body } = stream(["Permit"], "fail");
+    await expect(saveDownload(body, file, 13, () => undefined)).rejects.toThrow();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("stops reading and removes the file when more bytes arrive than the manifest promised", async () => {
+    const file = target();
+    const { body, state } = stream(["Permit", "Monitor", "Extra"], "end");
+    await expect(saveDownload(body, file, 8, () => undefined)).rejects.toThrow("Update size exceeded");
+    expect(state.cancelled).toBe(true);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("rejects a download that ends early", async () => {
+    const file = target();
+    const { body } = stream(["Permit"], "end");
+    await expect(saveDownload(body, file, 13, () => undefined)).rejects.toThrow("Update ended early");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("releases the connection when the file can't be written", async () => {
+    const { body, state } = stream(["Permit"], "end");
+    const blocked = path.join(target(), "missing-folder", "setup.partial.exe");
+    await expect(saveDownload(body, blocked, 6, () => undefined)).rejects.toThrow();
+    expect(state.cancelled).toBe(true);
   });
 });

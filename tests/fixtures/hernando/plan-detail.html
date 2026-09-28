@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- Recorded from Hernando County Civic Access in the bundled headless Chromium on 2026-09-28: the rendered
+     record header and fields through Status, with scripts and comments removed. -->
+<html><head><meta charset="utf-8"><title>Hernando County</title>
+<style>.ng-hide { display: none !important; }</style></head>
+<body><div id="main">
+<div class="col-md-6 col-sm-6">
+        <h3 class="form-group" id="focusText"><span>Plan Number:</span>
+<span ng-bind-html="vm.model.PlanNumber" class="ng-binding">DEVP-000011-2026</span>
+</h3>
+    </div>
+    <div class="pull-right">
+        <div class="d-inline-block">
+            <div class="navigationLabel navigationNext" style="cursor: pointer;">
+                <div parent-model="vm.model" hide-button-when-disabled="true" tab-index="1" class="ng-isolate-scope">
+</div>
+                <div tab-index="1" invoice-ids="vm.model.UnpaidInvoiceIds" class="ng-isolate-scope">
+    <button id="AddToCart" ng-if="vm.isTylerPaymentsUsed" ng-class="useTelerikClass ? 'k-button k-btn-primary' : 'btn btn-primary css-btn-primary'" tabindex="1" aria-label="Add to Cart" ng-click="vm.addToTylerCart()" ng-hide="!vm.isLoggedIn" ng-disabled="!vm.hasInvoiceIds() || isInCart" class="ng-binding ng-scope ng-hide btn btn-primary css-btn-primary" aria-hidden="true" disabled="disabled" style="">
+        Add to Cart
+    </button>
+    <modal-popup confirm-box="true" show-condition="false" data-backdrop="static" data-keyboard="false" header-text="Add cart result" body-text="" ok-label="Go To Cart" cancel-label="Continue" cancel="vm.continue()" ok="vm.gotoTylerCart()" class="ng-isolate-scope">
+    </modal-popup>
+</div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row" ng-hide="!vm.model" aria-hidden="false" style="">
+    <div class="col-md-12 col-sm-12">
+        <div class="alert alert-danger ng-hide" role="alert" ng-show="vm.model.IsLoggedIn &amp;&amp; vm.model.HasAuthorizedContact &amp;&amp; ((vm.eReviewPortalAvailable &amp;&amp; vm.model.EReviewEnable &amp;&amp; !vm.model.IsEReviewCaseType &amp;&amp; !vm.isIEVersion()) || vm.model.HoldExist)" aria-hidden="true">
+            <ul>
+                <li ng-show="vm.model.EReviewEnable &amp;&amp; !vm.isIEVersion() &amp;&amp; vm.eReviewPortalAvailable &amp;&amp; !vm.model.IsEReviewCaseType" tabindex="1" aria-label="Internet Explorer 11 is required to use the eReviews portal." aria-hidden="true" class="ng-hide">
+                    <span id="span-AlertMessage-RequireIE" name="span-AlertMessage">Internet Explorer 11 is required to use the eReviews portal.</span>
+                </li>
+                <li ng-show="vm.model.HasAuthorizedContact &amp;&amp; vm.model.HoldExist" tabindex="1" aria-label="A hold currently exists on this plan." aria-hidden="true" class="ng-hide">
+                    <span id="span-AlertMessage-HoldExist" name="span-AlertMessage">A hold currently exists on this plan.</span>
+                </li>
+                <li ng-show="!vm.model.HasAuthorizedContact" tabindex="1" aria-label="Plan cannot be printed at this time. You do not have access to it." aria-hidden="false">
+                    <span id="span-AlertMessage-NoAccess" name="span-AlertMessage">Plan cannot be printed at this time. You do not have access to it.</span>
+                </li>
+                <li ng-show="!vm.model.Approved" tabindex="1" aria-label="Plan cannot be printed at this time. Plan has not been approved." aria-hidden="false">
+                    <span id="span-AlertMessage-NotApproved" name="span-AlertMessage">Plan cannot be printed at this time. Plan has not been approved.</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+<div class="css-anchor-group"><a class="css-anchor-first" href="" ng-click="vm.goToElement('label-PlanDetail-Type')" tabindex="1">Plan Details</a>
+<a class="css-anchor" href="" ng-click="vm.goToElement('button-TabButton-Summary')" tabindex="1">Tab Elements</a>
+<a class="css-anchor-main-menu css-anchor" href="" ng-click="vm.goToElement('default-main-menu-item')" tabindex="1">Main Menu</a>
+<a class="css-anchor-menu-toggle css-anchor" href="" ng-click="vm.goToElement('menu-toggle')" tabindex="1">Main Menu</a>
+</div>
+<div id="main-content" class="panel panel-primary css-panel css-panel-primary" tabindex="-1">
+    <div class="panel-body css-panel-body">
+        <div style="text-align: right" ng-init="selectedTab = 'open'">
+            <a class="fas fa-angle-down ng-hide" id="OpenDetailPanel" role="button" tabindex="1" aria-label="Toggle to Show Categories for this case" ng-show="vm.isCollapsed" ng-click="vm.collapsePanel()" data-toggle="collapse" href=".multi-collapse" aria-hidden="true"></a>
+            <a class="fas fa-angle-up" id="CloseDetailPanel" role="button" tabindex="1" aria-label="Toggle to Hide Categories for this case" ng-show="!vm.isCollapsed" ng-click="vm.collapsePanel()" data-toggle="collapse" href=".multi-collapse" aria-hidden="false"></a>
+        </div>
+        <div ng-show="vm.model" role="list" aria-hidden="false" class="" style="">
+            <div class="row form-horizontal">
+                <div class="col-lg-4 col-md-6 col-sm-6 col-xs-12 no-padding"><div class="form-group" id="label-PlanDetail-Type" name="label-PlanDetail" role="listitem" tabindex="1"><h4 class="col-lg-6 col-md-6 col-sm-6 col-xs-12 control-label">Type:</h4>
+<p class="col-lg-6 col-md-6 col-sm-6 col-xs-12 form-control-static ng-binding" ng-bind-html="vm.model.PlanType"> Development Permit</p>
+</div></div>
+                <div class="col-lg-4 col-md-6 col-sm-6 col-xs-12 no-padding"><div class="form-group" id="label-PlanDetail-Status" name="label-PlanDetail" role="listitem" tabindex="1"><h4 class="col-lg-6 col-md-6 col-sm-6 col-xs-12 control-label">Status:</h4>
+<p class="col-lg-6 col-md-6 col-sm-6 col-xs-12 form-control-static ng-binding" ng-bind-html="vm.model.PlanStatus">Deficient</p>
+</div></div>
+</div></body></html>

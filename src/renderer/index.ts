@@ -4,9 +4,9 @@ import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
 import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
 import { dailyHistory } from "../shared/history.js";
-import { groupByProject, recentProjects, type ProjectGroup } from "../shared/projects.js";
+import { groupByProject, PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN, projectKey, recentProjects, type ProjectGroup } from "../shared/projects.js";
 import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
-import { actionOn, actionText, statusAction, type StatusAction } from "../shared/action.js";
+import { actionLabel, actionReason, statusAction, type StatusAction } from "../shared/action.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -27,8 +27,8 @@ let historyGeneration = 0;
 /** The check state the displayed history reflects, so snapshots about other permits don't refetch it. */
 let historyShown: string | null = null;
 
-/** What the permit table was last built from; an unchanged table is left alone. */
-let tableSource = "";
+/** The check state a history request is under way for, so snapshots that arrive meanwhile don't request it again. */
+let historyLoading: string | null = null;
 
 let noticeTimer: number | null = null;
 
@@ -201,25 +201,28 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   return wrap;
 }
 
-/** Who the verified status waits on, as a small badge; an unclassified status shows a dash. */
+/** Who the verified status waits on, as a small badge; an unclassified status shows a dash. AEC? marks a guess. */
 function actionBadge(classified: StatusAction | null): HTMLElement {
   if (!classified) return make("span", "muted", "—");
   const badge = make("span", "action");
   badge.dataset.actionOn = classified.action;
+  const reason = actionReason(classified);
 
-  if (!classified.listed) badge.title = "This wording isn't on the jurisdiction's list, so it's marked AEC to be safe.";
+  if (classified.action === "applicant" && classified.basis !== "listed") badge.dataset.tentative = "";
+
+  if (reason) badge.title = reason;
 
   if (classified.action !== "none") badge.append(make("span", "dot"));
-  badge.append(make("span", "", actionText[classified.action]));
+  badge.append(make("span", "", actionLabel(classified)));
 
   return badge;
 }
 
-function actionButton(label: string, action: string, permit: PermitRow, className: string): HTMLButtonElement {
+function actionButton(label: string, action: string, permitId: string, className: string): HTMLButtonElement {
   const node = make("button", className, label);
   node.type = "button";
   node.dataset.action = action;
-  node.dataset.permitId = permit.id;
+  node.dataset.permitId = permitId;
 
   return node;
 }
@@ -256,71 +259,117 @@ function nextCheckSummary(snapshot: AppSnapshot): string {
   return next === "now" ? "Next check now" : `Next check ${next}`;
 }
 
-function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]): HTMLTableRowElement {
+/** One permit's row and the controls kept across updates, so a change elsewhere leaves focus where it was. */
+interface PermitRowView {
+  row: HTMLTableRowElement;
+  identity: HTMLTableCellElement;
+  open: HTMLButtonElement;
+  jurisdiction: HTMLSpanElement;
+  unscheduled: HTMLSpanElement;
+  status: HTMLTableCellElement;
+  action: HTMLTableCellElement;
+  observed: HTMLTableCellElement;
+  attempt: HTMLTableCellElement;
+  check: HTMLButtonElement;
+  record: HTMLButtonElement;
+  /** What the row was last drawn from; an unchanged permit is skipped. */
+  source: string;
+}
+
+const rowViews = new Map<string, PermitRowView>();
+
+/** One tbody per project group (or one for the ungrouped list), kept like the rows. */
+const groupBodies = new Map<string, HTMLTableSectionElement>();
+
+/** Replaces a cell's content only when what it shows has changed. */
+function setCell(cell: HTMLElement, source: string, build: () => Node[]): void {
+  if (cell.dataset.source === source) return;
+  cell.dataset.source = source;
+  cell.replaceChildren(...build());
+}
+
+function createRow(permit: PermitRow): PermitRowView {
   const row = make("tr");
 
   if (!firstRender && !knownPermitIds.has(permit.id)) row.className = "row-enter";
-
   const identity = make("td");
-  const open = actionButton(permit.permitNumber, "details", permit, "permit-link");
-  const jurisdiction = getJurisdiction(permit.jurisdictionId);
-  open.setAttribute("aria-label", [permit.permitNumber, jurisdiction?.label ?? permit.jurisdictionId,
-    permit.projectNumber ? `project ${permit.projectNumber}` : null, "details"].filter(Boolean).join(", "));
-  identity.append(open);
-  identity.append(make("span", "cell-sub", jurisdiction?.label ?? permit.jurisdictionId));
-
-  if (monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId)) {
-    const tag = make("span", "tag", "Not scheduled");
-    identity.append(tag);
-  }
-
+  const open = actionButton(permit.permitNumber, "details", permit.id, "permit-link");
+  const jurisdiction = make("span", "cell-sub");
+  const unscheduled = make("span", "tag", "Not scheduled");
+  identity.append(open, jurisdiction, unscheduled);
   const status = make("td");
-
-  if (permit.lastStatus) {
-    status.append(make("span", "status-value", permit.lastStatus));
-  } else {
-    status.append(make("span", "muted", "—"));
-  }
-
-  const action = statusAction(permit.jurisdictionId, permit.lastStatus);
-  const waiting = make("td");
-  waiting.append(actionBadge(action));
-
-  if (action) row.dataset.actionOn = action.action;
-  else if (permit.lastStatus) waiting.title = "Water management district statuses aren't classified yet.";
-
+  const action = make("td");
   const observed = make("td", "timestamp");
-  observed.append(timeNode(permit.lastObservedAt));
-
   const attempt = make("td");
-  attempt.append(outcomeCell(permit));
-
   const controls = make("td");
   const actions = make("div", "row-actions");
-  actions.append(permit.checking
-    ? actionButton("Cancel", "cancel", permit, "btn btn-secondary")
-    : actionButton("Check now", "check", permit, "btn btn-secondary"));
-  const record = actionButton("", "open", permit, "icon-button");
+  const check = actionButton("Check now", "check", permit.id, "btn btn-secondary");
+  const record = actionButton("", "open", permit.id, "icon-button");
   record.append(icon("external"));
-  record.disabled = !permit.lastRecordUrl;
-  record.setAttribute("aria-label", `Open record for ${permit.permitNumber}`);
   record.title = "Open record";
-  actions.append(record);
+  actions.append(check, record);
   controls.append(actions);
+  row.append(identity, status, action, observed, attempt, controls);
 
-  row.append(identity, status, waiting, observed, attempt, controls);
+  return { row, identity, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
+}
 
-  return row;
+/** Brings a row up to date, touching only the cells and controls whose content changed. */
+function updateRow(view: PermitRowView, permit: PermitRow, classified: StatusAction | null, monitoring: AppSnapshot["monitoring"]): void {
+  // The year matters because timestamps only show a year when it isn't the current one.
+  const year = new Date().getFullYear();
+  const source = JSON.stringify([permit, monitoring, year]);
+
+  if (view.source === source) return;
+  view.source = source;
+  const label = getJurisdiction(permit.jurisdictionId)?.label ?? permit.jurisdictionId;
+  view.open.textContent = permit.permitNumber;
+  view.open.setAttribute("aria-label", [permit.permitNumber, label,
+    permit.projectNumber ? `project ${permit.projectNumber}` : null, "details"].filter(Boolean).join(", "));
+  view.jurisdiction.textContent = label;
+  view.unscheduled.hidden = !(monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId));
+
+  setCell(view.status, JSON.stringify([permit.lastStatus]), () =>
+    [permit.lastStatus ? make("span", "status-value", permit.lastStatus) : make("span", "muted", "—")]);
+
+  setCell(view.action, JSON.stringify([classified]), () => [actionBadge(classified)]);
+
+  if (classified) view.row.dataset.actionOn = classified.action;
+  else delete view.row.dataset.actionOn;
+  view.action.title = !classified && permit.lastStatus ? "Water management district statuses aren't classified yet." : "";
+
+  setCell(view.observed, JSON.stringify([permit.lastObservedAt, year]), () => [timeNode(permit.lastObservedAt)]);
+  setCell(view.attempt, JSON.stringify([permit.checking, permit.latestOutcome, permit.latestAttemptAt, permit.jurisdictionId, year]),
+    () => [outcomeCell(permit)]);
+
+  const control = permit.checking ? "cancel" : "check";
+
+  if (view.check.dataset.action !== control) {
+    view.check.dataset.action = control;
+    view.check.textContent = permit.checking ? "Cancel" : "Check now";
+  }
+
+  view.record.disabled = !permit.lastRecordUrl;
+  view.record.setAttribute("aria-label", `Open record for ${permit.permitNumber}`);
 }
 
 const permitCount = (count: number) => `${count} ${count === 1 ? "permit" : "permits"}`;
 
-/** One tbody per project, headed by the project number, so the groups read as sections of one table. */
-function renderGroup(group: ProjectGroup | null, permits: PermitRow[], monitoring: AppSnapshot["monitoring"]): HTMLTableSectionElement {
-  const body = make("tbody", "permit-group");
+/** Keeps a project group's heading row first in its tbody, or removes it from the plain list. */
+function syncGroupHead(body: HTMLTableSectionElement, group: ProjectGroup | null, count: number): void {
+  const existing = body.rows[0]?.classList.contains("group-row") ? body.rows[0] : null;
 
-  if (group) {
-    const head = make("tr", "group-row");
+  if (!group) {
+    existing?.remove();
+
+    return;
+  }
+
+  const head = existing ?? make("tr", "group-row");
+  const source = JSON.stringify([group.projectNumber, count]);
+
+  if (head.dataset.source !== source) {
+    head.dataset.source = source;
     const cell = make("th");
     cell.scope = "rowgroup";
     cell.colSpan = 6;
@@ -332,23 +381,78 @@ function renderGroup(group: ProjectGroup | null, permits: PermitRow[], monitorin
       wrap.append(make("span", "group-label", "No project"));
     }
 
-    wrap.append(make("span", "group-count", permitCount(permits.length)));
+    wrap.append(make("span", "group-count", permitCount(count)));
     cell.append(wrap);
-    head.append(cell);
-    body.append(head);
+    head.replaceChildren(cell);
   }
 
-  body.append(...permits.map((permit) => renderPermit(permit, monitoring)));
-
-  return body;
+  if (!existing) body.prepend(head);
 }
 
-function matchesFilter(permit: PermitRow): boolean {
-  if (filter === "applicant") return actionOn(permit.jurisdictionId, permit.lastStatus) === "applicant";
+/**
+ * Brings the table to `visible` without rebuilding it: rows are kept by permit id and moved only when the order or
+ * grouping changes, so a focused link or button in an unchanged row keeps its focus.
+ */
+function renderTable(visible: readonly PermitRow[], classified: ReadonlyMap<string, StatusAction | null>, monitoring: AppSnapshot["monitoring"]): void {
+  const table = element("permit-table", HTMLTableElement);
+  const shown = new Set(visible.map((permit) => permit.id));
 
-  if (filter === "failed") return !permit.checking && outcomeKind(permit.latestOutcome) === "failed";
+  // Rows leave first, so they never sit between rows that stay and force those to move.
+  for (const [id, view] of rowViews) {
+    if (!shown.has(id)) {
+      view.row.remove();
+      rowViews.delete(id);
+    }
+  }
 
-  if (filter === "unverified") return !permit.lastStatus;
+  // Group only once a project number is in use; until then the table stays one plain list.
+  const groups: Array<{ key: string; group: ProjectGroup | null; permits: readonly PermitRow[] }> = visible.some((permit) => permit.projectNumber)
+    ? groupByProject(visible).map((group) => ({ key: group.projectNumber ? `project:${projectKey(group.projectNumber)}` : "unassigned", group, permits: group.permits }))
+    : visible.length > 0 ? [{ key: "list", group: null, permits: visible }] : [];
+
+  const keys = new Set(groups.map((entry) => entry.key));
+
+  for (const [key, body] of groupBodies) {
+    if (!keys.has(key)) {
+      body.remove();
+      groupBodies.delete(key);
+    }
+  }
+
+  let previous: Element | null = table.tHead;
+
+  for (const entry of groups) {
+    const body = groupBodies.get(entry.key) ?? make("tbody", "permit-group");
+    groupBodies.set(entry.key, body);
+
+    if (previous?.nextElementSibling !== body) table.insertBefore(body, previous?.nextElementSibling ?? null);
+    previous = body;
+    syncGroupHead(body, entry.group, entry.permits.length);
+    let cursor = entry.group ? body.rows[0]?.nextElementSibling ?? null : body.firstElementChild;
+
+    for (const permit of entry.permits) {
+      let view = rowViews.get(permit.id);
+
+      if (!view) {
+        view = createRow(permit);
+        rowViews.set(permit.id, view);
+      }
+
+      updateRow(view, permit, classified.get(permit.id) ?? null, monitoring);
+
+      if (view.row === cursor) cursor = cursor.nextElementSibling;
+      else body.insertBefore(view.row, cursor);
+    }
+  }
+}
+
+/** AEC action includes the cautious AEC? badges, so nothing marked to be safe drops out of it. */
+function matchesFilter(permit: PermitRow, which: Filter, classified: StatusAction | null): boolean {
+  if (which === "applicant") return classified?.action === "applicant";
+
+  if (which === "failed") return !permit.checking && outcomeKind(permit.latestOutcome) === "failed";
+
+  if (which === "unverified") return !permit.lastStatus;
 
   return true;
 }
@@ -391,24 +495,21 @@ function renderPreferences(preferences: AppPreferences): void {
   hint("openAtLogin", preferences.openAtLoginAvailable, "Available in the installed app.");
 }
 
-const timeLabelFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-
 function renderCheckTimeRows(times: readonly string[]): void {
   const rows = times.map((value, index) => {
-    const row = document.createElement("li");
-    const input = document.createElement("input");
+    const row = make("li");
+    const input = make("input");
     input.type = "time";
     input.required = true;
     input.value = value;
     input.setAttribute("aria-label", `Check time ${index + 1}`);
-    const remove = document.createElement("button");
+    const remove = make("button", "icon-button");
     remove.type = "button";
-    remove.className = "icon-button";
     remove.dataset.removeTime = String(index);
     remove.disabled = times.length === 1;
     const time = parseCheckTime(value);
-    remove.setAttribute("aria-label", time ? `Remove ${timeLabelFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
-    remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>';
+    remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
+    remove.append(icon("close"));
     row.append(input, remove);
 
     return row;
@@ -457,9 +558,11 @@ function render(snapshot: AppSnapshot): void {
   element("version").textContent = `Version ${snapshot.appVersion}`;
 
   const total = snapshot.permits.length;
-  const failed = snapshot.permits.filter((permit) => !permit.checking && outcomeKind(permit.latestOutcome) === "failed").length;
-  const unverified = snapshot.permits.filter((permit) => !permit.lastStatus).length;
-  const applicant = snapshot.permits.filter((permit) => actionOn(permit.jurisdictionId, permit.lastStatus) === "applicant").length;
+  // Each permit is classified once per render, for its badge, the AEC count, and the filter.
+  const classified = new Map(snapshot.permits.map((permit) => [permit.id, statusAction(permit.jurisdictionId, permit.lastStatus)]));
+  const failed = snapshot.permits.filter((permit) => matchesFilter(permit, "failed", null)).length;
+  const unverified = snapshot.permits.filter((permit) => matchesFilter(permit, "unverified", null)).length;
+  const applicant = snapshot.permits.filter((permit) => matchesFilter(permit, "applicant", classified.get(permit.id) ?? null)).length;
   const counts: Record<Filter, number> = { all: total, applicant, failed, unverified };
 
   for (const option of element("permit-filter", HTMLSelectElement).options) {
@@ -468,30 +571,14 @@ function render(snapshot: AppSnapshot): void {
     option.textContent = count > 0 ? `${option.dataset.label} (${count})` : option.dataset.label ?? "";
   }
 
-  const visible = snapshot.permits.filter(matchesFilter);
-  const table = element("permit-table", HTMLTableElement);
-  // The year is part of it because timestamps only show a year when it isn't the current one.
-  const source = JSON.stringify([snapshot.monitoring, new Date().getFullYear(), visible]);
+  const visible = snapshot.permits.filter((permit) => matchesFilter(permit, filter, classified.get(permit.id) ?? null));
+  renderTable(visible, classified, snapshot.monitoring);
 
-  if (source !== tableSource) {
-    tableSource = source;
-
-    // Snapshot the live collection first; removing while iterating it would skip bodies.
-    for (const body of Array.from(table.tBodies)) body.remove();
-
-    // Group only once a project number is in use; until then the table stays one plain list.
-    if (visible.some((permit) => permit.projectNumber)) {
-      table.append(...groupByProject(visible).map((group) => renderGroup(group, group.permits, snapshot.monitoring)));
-    } else if (visible.length > 0) {
-      table.append(renderGroup(null, visible, snapshot.monitoring));
-    }
-  }
-
-  table.hidden = visible.length === 0;
-  element("empty-state").hidden = visible.length > 0;
-  element("empty-state").textContent = total === 0 ? "No permits yet."
-    : filter === "applicant" ? "Nothing is waiting on AEC."
-      : filter === "failed" ? "No failed checks." : "Every permit has a status.";
+  element("permit-table", HTMLTableElement).hidden = visible.length === 0;
+  const empty = element("empty-state");
+  empty.hidden = visible.length > 0;
+  // A filter that matches nothing says only that; it never reads as an all-clear.
+  empty.textContent = total === 0 ? "No permits yet." : "No matches.";
 
   for (const permit of snapshot.permits) knownPermitIds.add(permit.id);
   firstRender = false;
@@ -545,12 +632,11 @@ function renderDetailsSummary(permit: PermitRow): void {
 function renderJurisdictionOptions(): void {
   const select = element("jurisdiction", HTMLSelectElement);
   select.replaceChildren(...JURISDICTION_GROUPS.map((group) => {
-    const optgroup = document.createElement("optgroup");
+    const optgroup = make("optgroup");
     optgroup.label = group.label;
     optgroup.append(...JURISDICTIONS.filter(group.includes).map((profile) => {
-      const option = document.createElement("option");
+      const option = make("option", "", profile.label);
       option.value = profile.id;
-      option.textContent = profile.label;
 
       return option;
     }));
@@ -606,13 +692,25 @@ function historyKey(permit: PermitRow): string {
   return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
 }
 
-async function loadHistory(permitId: string): Promise<void> {
-  const generation = ++historyGeneration;
-  const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
-  const key = permit ? historyKey(permit) : null;
-  const result = await api.history(permitId);
+/**
+ * Fetches and shows a permit's history unless a request for the same check state is already under way. A newer
+ * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped.
+ */
+async function loadHistory(permit: PermitRow): Promise<void> {
+  const key = historyKey(permit);
 
-  if (generation !== historyGeneration || detailsPermitId !== permitId) return;
+  if (key === historyLoading) return;
+  const generation = ++historyGeneration;
+  historyLoading = key;
+  let result: Awaited<ReturnType<PermitBridge["history"]>>;
+
+  try {
+    result = await api.history(permit.id);
+  } finally {
+    if (generation === historyGeneration) historyLoading = null;
+  }
+
+  if (generation !== historyGeneration || detailsPermitId !== permit.id) return;
 
   if (result.ok) {
     renderHistory(result.value);
@@ -631,12 +729,16 @@ function openDetails(permitId: string): void {
 
   if (switching) setInlineError("details-project", "details-project-error", null);
   renderDetailsSummary(permit);
-  element("history-list", HTMLOListElement).replaceChildren();
-  historyShown = null;
   const sheet = element("details-sheet", HTMLDialogElement);
 
   if (!sheet.open) sheet.showModal();
-  void loadHistory(permitId);
+
+  // Reopening the permit already shown keeps its history, or the request already on its way.
+  if (switching || historyKey(permit) !== historyShown) {
+    element("history-list", HTMLOListElement).replaceChildren();
+    historyShown = null;
+    void loadHistory(permit);
+  }
 }
 
 async function runPermitAction(action: string, permitId: string): Promise<void> {
@@ -666,15 +768,6 @@ let manualPermitId: string | null = null;
 
 const manualDialog = element("manual-dialog", HTMLDialogElement);
 
-function setManualError(message: string | null): void {
-  const error = element("manual-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-  const input = element("manual-status", HTMLInputElement);
-
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 async function startManualCheck(permit: PermitRow): Promise<void> {
   const result = await api.openPortal(permit.id);
 
@@ -692,7 +785,7 @@ async function startManualCheck(permit: PermitRow): Promise<void> {
   status.value = permit.lastStatus ?? "";
   element("manual-link", HTMLInputElement).value = permit.lastRecordUrl && permit.lastRecordUrl !== profile?.startUrl
     ? permit.lastRecordUrl : "";
-  setManualError(null);
+  setInlineError("manual-status", "manual-error", null);
 
   if (!manualDialog.open) manualDialog.showModal();
   status.focus();
@@ -705,7 +798,7 @@ function closeManual(): void {
   if (manualDialog.open) manualDialog.close();
 }
 
-element("manual-status", HTMLInputElement).addEventListener("input", () => setManualError(null));
+element("manual-status", HTMLInputElement).addEventListener("input", () => setInlineError("manual-status", "manual-error", null));
 
 element("manual-cancel", HTMLButtonElement).addEventListener("click", closeManual);
 
@@ -715,7 +808,7 @@ element("manual-reopen", HTMLButtonElement).addEventListener("click", async () =
   if (!manualPermitId) return;
   const result = await api.openPortal(manualPermitId);
 
-  if (!result.ok) setManualError(result.error);
+  if (!result.ok) setInlineError("manual-status", "manual-error", result.error);
 });
 
 element("manual-form", HTMLFormElement).addEventListener("submit", async (event) => {
@@ -726,7 +819,7 @@ element("manual-form", HTMLFormElement).addEventListener("submit", async (event)
   const status = element("manual-status", HTMLInputElement).value.trim();
 
   if (!status) {
-    setManualError("Enter the status shown on the portal.");
+    setInlineError("manual-status", "manual-error", "Enter the status shown on the portal.");
     element("manual-status", HTMLInputElement).focus();
 
     return;
@@ -736,7 +829,7 @@ element("manual-form", HTMLFormElement).addEventListener("submit", async (event)
   const result = await busy(element("manual-save", HTMLButtonElement), () => api.recordManualStatus({ permitId, status, recordUrl }));
 
   if (!result.ok) {
-    setManualError(result.error);
+    setInlineError("manual-status", "manual-error", result.error);
 
     return;
   }
@@ -754,14 +847,10 @@ function setInlineError(inputId: string, errorId: string, message: string | null
   if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
 }
 
-const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._/-]*$/;
-
 function projectProblem(value: string): string | null {
-  if (!value) return null;
+  if (value.length > PROJECT_NUMBER_MAX) return `Use ${PROJECT_NUMBER_MAX} characters or fewer.`;
 
-  if (value.length > 40) return "Use 40 characters or fewer.";
-
-  return PROJECT_PATTERN.test(value) ? null : "Use letters, numbers, spaces, and - . _ / only.";
+  return PROJECT_NUMBER_PATTERN.test(value) ? null : "Use letters, numbers, spaces, and - . _ / only.";
 }
 
 // Project number: asked once after a permit is added, editable later from its details.
@@ -860,17 +949,8 @@ element("project-form", HTMLFormElement).addEventListener("submit", async (event
   finishProject(value);
 });
 
-function setFieldError(message: string | null): void {
-  const input = element("permit-number", HTMLInputElement);
-  const error = element("permit-number-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 // Add form
-element("permit-number", HTMLInputElement).addEventListener("input", () => setFieldError(null));
+element("permit-number", HTMLInputElement).addEventListener("input", () => setInlineError("permit-number", "permit-number-error", null));
 
 element("add-form", HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -878,14 +958,14 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
   const number = input.value.trim();
 
   if (!number) {
-    setFieldError("Enter a permit number.");
+    setInlineError("permit-number", "permit-number-error", "Enter a permit number.");
     input.focus();
 
     return;
   }
 
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(number) || number.length < 3) {
-    setFieldError("Use letters, numbers, hyphens, and dots only.");
+    setInlineError("permit-number", "permit-number-error", "Use letters, numbers, hyphens, and dots only.");
     input.focus();
 
     return;
@@ -895,14 +975,14 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
   const result = await busy(element("add-button", HTMLButtonElement), () => api.addAndCheck({ jurisdiction, permitNumber: number }));
 
   if (!result.ok) {
-    setFieldError(result.error);
+    setInlineError("permit-number", "permit-number-error", result.error);
     input.focus();
 
     return;
   }
 
   input.value = "";
-  setFieldError(null);
+  setInlineError("permit-number", "permit-number-error", null);
 
   if (filter !== "all") setFilter("all");
   render(await api.snapshot());
@@ -914,15 +994,6 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
 });
 
 // Key
-function setKeyError(message: string | null): void {
-  const error = element("key-error");
-  error.hidden = !message;
-  error.textContent = message ?? "";
-  const input = element("key-input", HTMLInputElement);
-
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-}
-
 function openKeySettings(): void {
   const sheet = element("settings-sheet", HTMLDialogElement);
 
@@ -932,7 +1003,7 @@ function openKeySettings(): void {
 
 element("banner-add-key", HTMLButtonElement).addEventListener("click", openKeySettings);
 
-element("key-input", HTMLInputElement).addEventListener("input", () => setKeyError(null));
+element("key-input", HTMLInputElement).addEventListener("input", () => setInlineError("key-input", "key-error", null));
 
 element("key-form", HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -940,7 +1011,7 @@ element("key-form", HTMLFormElement).addEventListener("submit", async (event) =>
   const problem = keyProblem(input.value.trim());
 
   if (problem) {
-    setKeyError(problem);
+    setInlineError("key-input", "key-error", problem);
     input.focus();
 
     return;
@@ -952,15 +1023,15 @@ element("key-form", HTMLFormElement).addEventListener("submit", async (event) =>
   const result = await busy(element("key-save", HTMLButtonElement), () => api.saveKey(key));
 
   if (!result.ok) {
-    setKeyError(result.error);
+    setInlineError("key-input", "key-error", result.error);
     input.focus();
 
     return;
   }
 
-  setKeyError(null);
+  setInlineError("key-input", "key-error", null);
+  // Main sends the updated snapshot before it answers, so the banner is already current.
   notice("Key saved.", "info");
-  render(await api.snapshot());
 });
 
 renderJurisdictionOptions();
@@ -978,7 +1049,6 @@ element("key-remove", HTMLButtonElement).addEventListener("click", async () => {
   }
 
   notice("Key removed.", "info");
-  render(await api.snapshot());
 });
 
 // Schedule
@@ -1067,7 +1137,12 @@ const detailsSheet = element("details-sheet", HTMLDialogElement);
 function closeSheet(dialog: HTMLDialogElement): void {
   if (dialog.open) dialog.close();
 
-  if (dialog === detailsSheet) { detailsPermitId = null; historyGeneration += 1; historyShown = null; }
+  if (dialog === detailsSheet) {
+    detailsPermitId = null;
+    historyGeneration += 1;
+    historyShown = null;
+    historyLoading = null;
+  }
 }
 
 const detailsCheck = element("details-check", HTMLButtonElement);
@@ -1240,7 +1315,7 @@ api.onSnapshot((snapshot) => {
   render(snapshot);
   const permit = detailsPermitId ? snapshot.permits.find((entry) => entry.id === detailsPermitId) : undefined;
 
-  if (permit && historyKey(permit) !== historyShown) void loadHistory(permit.id);
+  if (permit && historyKey(permit) !== historyShown) void loadHistory(permit);
 });
 
 api.onLocalError((message) => notice(message));

@@ -1,19 +1,32 @@
-import { actionOn, actionText } from "../shared/action.js";
+import { actionLabel, statusAction } from "../shared/action.js";
 import { isFailure, outcomeText } from "../shared/outcomes.js";
 import type { PermitRow, RunOutcome } from "../shared/permit.js";
+import type { KeyProblem } from "./check-queue.js";
 
 export type CheckEventKind = "first-status" | "status-changed" | "check-failed" | "key-needed";
 
 export interface CheckEvent {
   kind: CheckEventKind;
-  permitId: string;
+  /** The permit the notice is about; null for app-wide notices. */
+  permitId: string | null;
   title: string;
   body: string;
 }
 
-/** The quoted wording, followed by "Action: AEC" when the new status waits on the applicant. */
+/** The notice shown when checks can't run for want of a usable key. */
+export function keyNotice(problem: KeyProblem): CheckEvent {
+  switch (problem) {
+    case "missing": return { kind: "key-needed", permitId: null, title: "TypeSafe key needed", body: "Add it in Settings to run checks." };
+    case "unreadable": return { kind: "key-needed", permitId: null, title: "TypeSafe key unreadable", body: "Save it again in Settings." };
+    case "rejected": return { kind: "key-needed", permitId: null, title: "TypeSafe key rejected", body: "Replace it in Settings. Scheduled checks are paused." };
+  }
+}
+
+/** The quoted wording, followed by "Action: AEC" (or "AEC?" when marked to be safe) when the new status waits on the applicant. */
 function statusBody(quoted: string, after: PermitRow): string {
-  return actionOn(after.jurisdictionId, after.lastStatus) === "applicant" ? `${quoted} · Action: ${actionText.applicant}` : quoted;
+  const classified = statusAction(after.jurisdictionId, after.lastStatus);
+
+  return classified?.action === "applicant" ? `${quoted} · Action: ${actionLabel(classified)}` : quoted;
 }
 
 /**
@@ -42,9 +55,7 @@ export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome:
 
   if (!isFailure(outcome) || isFailure(before.latestOutcome)) return null;
 
-  if (outcome === "authentication_error") {
-    return { kind: "key-needed", permitId: after.id, title: "TypeSafe key needed", body: "Add it in Settings." };
-  }
+  if (outcome === "authentication_error") return keyNotice("rejected");
 
   return { kind: "check-failed", permitId: after.id, title: number, body: outcomeText[outcome] };
 }
