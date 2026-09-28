@@ -54,6 +54,11 @@ describe("who a status waits on", () => {
     expect(statusAction("palm-bay-building", "Permit Ready")).toEqual({ action: "applicant", basis: "unlisted" });
   });
 
+  it("counts Baker County's ACTIVE as AEC's to be safe, since it hides lapsed permits", () => {
+    expect(statusAction("baker-county-building", "active")).toEqual({ action: "applicant", basis: "cautious" });
+    expect(statusAction("baker-county-building", "COMPLT")).toEqual({ action: "none", basis: "listed" });
+  });
+
   it("leaves missing statuses and water management districts unclassified", () => {
     expect(statusAction("hillsborough-county-building", null)).toBeNull();
     expect(statusAction("sjrwmd", "Pending · Pending RAI Response")).toBeNull();

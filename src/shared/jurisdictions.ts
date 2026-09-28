@@ -183,7 +183,7 @@ export const JURISDICTIONS = [
     coverageNote: "Northwest Florida Water Management District ERP, water use, and well construction records in its ePermit search, which updates nightly. Enter the full number, such as IND-113-18663-5 or 2E-131-6688-3.",
     adapterVersion: "epermit-1",
   },
-  // Neither portal allows an anonymous automated lookup, so these are checked by hand: the app opens
+  // None of these portals allows an anonymous automated lookup, so they are checked by hand: the app opens
   // the official search and records the status the user reads there.
   {
     id: "orange-county-building",
@@ -205,6 +205,20 @@ export const JURISDICTIONS = [
     tenant: "",
     module: "Building",
     coverageNote: "Checked by hand. The city's iMS search requires a login, so Check now opens it and you enter the status you see.",
+    adapterVersion: "manual-1",
+  },
+  // The Permit Search is public, but Cloudflare turns away headless browsers. The qr value is the MD5 of the
+  // search page's name, corePermitByNumber, so the link stays put.
+  {
+    id: "baker-county-building",
+    label: "Baker County",
+    authorityType: "county-government",
+    portalFamily: "manual",
+    startUrl: "https://permits.bakercountyfl.org/permits?qr=13fafd9557bd7244d7fecbf073119784&t=0",
+    tenant: "",
+    module: "Building",
+    numberExample: "202600500",
+    coverageNote: "Checked by hand. The county's Permit Search is public but blocks automated browsers, so Check now opens it and you enter the status you see. Paste the full number, such as 202600500. The City of Macclenny issues its own permits.",
     adapterVersion: "manual-1",
   },
 ] as const;
