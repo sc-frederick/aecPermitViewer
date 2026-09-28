@@ -21,11 +21,17 @@ The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by th
 - `/` and `/PermitMonitorSetup.exe` redirect to the current installer. This is the link to send to new users.
 - `/release-manifest.json` is the signed manifest the app checks.
 - `/PermitMonitorSetup-X.Y.Z.exe` are the versioned installers. Old ones stay so cached manifests keep working.
-- `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size, and it never overwrites the installer the live manifest points to.
+- `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size and hash.
 
-Deploy Worker changes with `npx wrangler deploy` from `infra/update-server`.
+Both publication paths follow the same rules (`infra/update-server/src/release-policy.ts`):
 
-Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint instead of through the Worker.
+- A versioned installer is written once. Its SHA-256 is recorded as object metadata. Republishing identical bytes is skipped; different bytes under the same version are refused, so a rebuilt release needs a new version. Installers uploaded before hashes were recorded are hashed on a CI rerun and matched by size in the Worker.
+- The manifest only moves to a newer version. Re-sending the identical manifest is a no-op. A different manifest for the published version is refused. CI leaves a newer published manifest in place with a warning; the manual script stops before uploading.
+- If the published manifest can't be parsed, both paths stop and leave it for a person to replace.
+
+Deploy Worker changes with `npx wrangler deploy` from `infra/update-server`. The Worker is TypeScript and bundles `zod` from the repository's `node_modules`, so run `npm ci --allow-git=all` first. `npm test` covers it with an in-memory bucket.
+
+Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint with `scripts/publish-feed.mjs` instead of through the Worker. Release jobs share one concurrency group, so only one publishes at a time. GitHub cancels an older release job that is still waiting when a newer tag queues; rerun it after the newer one finishes.
 
 CI inputs:
 
