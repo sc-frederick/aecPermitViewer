@@ -20,8 +20,8 @@ jobs:
       UPDATE_FEED_URL: https://permitmon-updates.sc-frederick.workers.dev/release-manifest.json
       UPDATE_PUBLIC_KEY_SPKI_BASE64: MCowBQYDK2VwAyEApu+hz0nmtlIiFeBQQz4vtoqthXAi13VyC1EoXN7rtbc=
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.21.0
           cache: npm
@@ -43,7 +43,7 @@ jobs:
         run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
       # The installer is ~800 MB and artifact storage is billed. Keep it only for tag releases (the release job
       # downloads it) and manual runs. Setup.exe embeds the full .nupkg, so upload the installer alone.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
           name: windows-installer
@@ -54,7 +54,8 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: package
-    runs-on: ubuntu-latest
+    # Pinned so ubuntu-latest's move to 26.04 doesn't change the release image unannounced.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
@@ -62,11 +63,11 @@ jobs:
       UPDATE_SERVER_URL: https://permitmon-updates.sc-frederick.workers.dev
       UPDATE_PUBLIC_KEY_SPKI_BASE64: MCowBQYDK2VwAyEApu+hz0nmtlIiFeBQQz4vtoqthXAi13VyC1EoXN7rtbc=
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.21.0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: windows-installer
           path: out/make/squirrel.windows/x64
