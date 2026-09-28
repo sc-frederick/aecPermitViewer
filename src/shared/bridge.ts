@@ -7,6 +7,22 @@ export type PreferenceKey = typeof PREFERENCE_KEYS[number];
 
 export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/**
+ * What key storage knows about the saved TypeSafe key without asking the service:
+ * - `configured`: a key is saved, and the last attempt to read it (if any) succeeded.
+ * - `missing`: no key is saved.
+ * - `unavailable`: this computer can't store a key.
+ * - `unreadable`: a key is saved, but the last attempt to read or decrypt it failed.
+ */
+export type StoredKeyState = "configured" | "missing" | "unavailable" | "unreadable";
+
+/**
+ * Whether checks can run for want of a key, as the window shows it. Adds `rejected` to the stored states: the service
+ * turned the saved key down, so scheduled checks are paused until a key is saved. Every state but `configured` pauses
+ * scheduled checks.
+ */
+export type KeyState = StoredKeyState | "rejected";
+
 export type UpdateCheck =
   | { state: "unavailable" }
   | { state: "current" }

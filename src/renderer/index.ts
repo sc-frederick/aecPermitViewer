@@ -1,4 +1,4 @@
-import { PREFERENCE_KEYS, type PermitBridge } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type KeyState, type PermitBridge } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
@@ -247,6 +247,9 @@ function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
 
 function nextCheckSummary(snapshot: AppSnapshot): string {
   if (snapshot.monitoring !== "scheduled") return "";
+
+  // Without a working key no scheduled check will start, so no time is promised; the key banner says why.
+  if (snapshot.keyState !== "configured") return "Scheduled checks paused";
   const now = new Date();
   const schedule = checkTimes(snapshot);
 
@@ -457,20 +460,45 @@ function matchesFilter(permit: PermitRow, which: Filter, classified: StatusActio
   return true;
 }
 
-function renderKey(state: AppSnapshot["keyState"]): void {
-  element("key-banner").hidden = state === "configured";
-  element("key-banner-title").textContent = state === "missing"
-    ? "Add your TypeSafe key to run checks." : "Key storage isn't available on this computer.";
-  element("banner-add-key", HTMLButtonElement).hidden = state === "unavailable";
-  const unavailable = element("settings-key-state");
-  unavailable.hidden = state !== "unavailable";
-  unavailable.textContent = "Key storage isn't available on this computer.";
+/** What the window says about a key state that holds checks back. */
+interface KeyStateCopy {
+  banner: string;
+  /** The banner button's label, which opens the key settings; null when saving a key can't help. */
+  action: string | null;
+  /** The note above the key field in Settings, if any. */
+  settings: string | null;
+}
+
+function keyStateCopy(state: Exclude<KeyState, "configured">): KeyStateCopy {
+  switch (state) {
+    case "missing": return { banner: "Add your TypeSafe key to run checks.", action: "Add key", settings: null };
+    case "unavailable": return { banner: "Key storage isn't available on this computer.", action: null, settings: "Key storage isn't available on this computer." };
+    case "unreadable": return { banner: "Your saved TypeSafe key can't be read. Checks are paused.", action: "Save key again",
+      settings: "The saved key can't be read. Paste it again to keep checking." };
+    case "rejected": return { banner: "TypeSafe turned down your key. Scheduled checks are paused.", action: "Replace key",
+      settings: "TypeSafe turned down the saved key. Paste a working key to resume scheduled checks." };
+  }
+}
+
+/** The key banner stays up for as long as checks are held back for want of a key, whatever the notification settings. */
+function renderKey(state: KeyState): void {
+  const copy = state === "configured" ? null : keyStateCopy(state);
+  element("key-banner").hidden = copy === null;
+  element("key-banner-title").textContent = copy?.banner ?? "";
+  const action = element("banner-add-key", HTMLButtonElement);
+  action.hidden = !copy?.action;
+  action.textContent = copy?.action ?? "";
+  const note = element("settings-key-state");
+  note.hidden = !copy?.settings;
+  note.textContent = copy?.settings ?? "";
   element("key-form", HTMLFormElement).hidden = state === "unavailable";
+  // A saved key that doesn't work is still saved: it can be replaced or removed.
+  const saved = state === "configured" || state === "unreadable" || state === "rejected";
   element("key-input", HTMLInputElement).placeholder = state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
   const save = element("key-save", HTMLButtonElement);
-  save.textContent = state === "configured" ? "Replace" : "Save";
+  save.textContent = saved ? "Replace" : "Save";
   save.className = `btn btn-sm ${state === "configured" ? "btn-secondary" : "btn-primary"}`;
-  element("key-remove", HTMLButtonElement).hidden = state !== "configured";
+  element("key-remove", HTMLButtonElement).hidden = !saved;
 }
 
 function renderPreferences(preferences: AppPreferences): void {
