@@ -1,4 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -24,13 +25,25 @@ if (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME !== `v${version}`
   throw new Error(`Release tag ${process.env.GITHUB_REF_NAME} does not match package version ${version}.`);
 }
 
-const installer = await readFile(setupPath);
+// The installer is several hundred megabytes, so it is hashed as it streams rather than read into memory at once.
+const { size } = await stat(setupPath);
+
+const hash = createHash("sha256");
+
+let hashedBytes = 0;
+
+for await (const chunk of createReadStream(setupPath)) {
+  hash.update(chunk);
+  hashedBytes += chunk.byteLength;
+}
+
+if (hashedBytes !== size) throw new Error("The installer changed while its manifest was being signed.");
 
 const payload = {
   version,
   url: installerUrl,
-  sha256: createHash("sha256").update(installer).digest("hex"),
-  size: (await stat(setupPath)).size,
+  sha256: hash.digest("hex"),
+  size,
   publisher,
 };
 
