@@ -67,7 +67,6 @@ function snapshot(permits: PermitRow[]): AppSnapshot {
     permits,
     keyState: "configured",
     appVersion: "0.0.0",
-    browserVersion: "test",
     monitoring: "manual",
     checkTimes: ["08:30"],
     preferences: {

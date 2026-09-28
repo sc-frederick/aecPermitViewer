@@ -83,7 +83,6 @@ export interface AppSnapshot {
   preferences: AppPreferences;
   keyState: "configured" | "missing" | "unavailable";
   appVersion: string;
-  browserVersion: string;
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */
   checkTimes: string[];

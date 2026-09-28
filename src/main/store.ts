@@ -29,8 +29,6 @@ const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
 
-const browserVersionSchema = z.object({ version: z.string() });
-
 const storedPermitSchema = z.object({
   id: z.string(),
   jurisdiction_id: z.string(),
@@ -203,7 +201,8 @@ export class PermitStore {
     if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
 
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
-    // Lets the latest browser version be read without scanning every run. Older app versions ignore it.
+    // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
+    // kept rather than dropped by a migration of its own. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
   }
 
@@ -469,13 +468,6 @@ export class PermitStore {
   setFlag(key: string, value: boolean): void {
     this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
       .run(key, value ? "1" : "0");
-  }
-
-  latestBrowserVersion(): string | null {
-    const row = this.row(browserVersionSchema, `SELECT browser_version AS version FROM check_runs
-      WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`);
-
-    return row?.version ?? null;
   }
 
   duePermitIds(now: string): string[] {

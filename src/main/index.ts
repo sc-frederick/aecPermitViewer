@@ -164,13 +164,10 @@ function dataRoot(): string {
 }
 
 async function snapshot(): Promise<AppSnapshot> {
-  const browserVersion = store.latestBrowserVersion();
-
   return {
     permits: store.listPermits(checks.checkingIds()),
     keyState: await keys.state().catch(() => "unavailable"),
     appVersion: app.getVersion(),
-    browserVersion: `Playwright ${PLAYWRIGHT_VERSION} · ${browserVersion ? `Chromium ${browserVersion}` : "bundled Chromium"}`,
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
