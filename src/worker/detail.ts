@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { expectedStatusLabel, parseApplicationNumber } from "../shared/permit.js";
+import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl } from "../shared/permit.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
 
@@ -137,6 +137,24 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
 
   await ready.waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+}
+
+/**
+ * Waits for the page a run just opened, its start page or a saved record link, to be ready to observe. A record page
+ * waits for its number and status (see `waitForDetail`), and a Tyler search page for its keyword field. A record page
+ * has no search controls, so it never waits on them. Other families' start pages are the worker's to wait on.
+ */
+export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
+  const url = page.url();
+
+  // The worker's own order: an address the portal uses for its search is a search page even if it could show a record.
+  if (parsePortalUrl(url, "search", profile.id)) {
+    if (profile.portalFamily === "tyler-civic-access") await waitForTylerSearch(page);
+
+    return;
+  }
+
+  if (parsePortalUrl(url, "detail", profile.id)) await waitForDetail(page, profile);
 }
 
 /** Waits for Tyler's visible result count or no-results message after a search. */
