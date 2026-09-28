@@ -7,13 +7,26 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
+import { defined } from "./support/defined.js";
 
-/** What the test drives in the page: snapshots from "main", and the history requests the renderer made. */
+/** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
   historyCalls: string[];
+  /** Each schedule the renderer asked main to save, in order. */
+  checkTimeCalls: string[][];
+  /** Reasons of promise rejections nothing in the page handled. */
+  unhandled: string[];
   push(next: AppSnapshot): void;
+  /** Answers the renderer's first direct snapshot request, when the page was opened with it held. */
+  answerSnapshot(): void;
   /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string): void;
+  /** Answers the index-th history request with a failure main reported. */
+  failHistory(index: number, error: string): void;
+  /** Rejects the index-th history request, as a broken IPC channel would. */
+  rejectHistory(index: number): void;
+  /** Makes every later call of the named bridge method answer with a failure carrying `error`. */
+  fail(method: string, error: string): void;
 }
 
 declare global {
@@ -62,33 +75,62 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
   };
 }
 
-function snapshot(permits: PermitRow[]): AppSnapshot {
+let revision = 0;
+
+/** A snapshot as main would send it next: each one takes a higher revision than the one before. */
+function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "revision" | "permits">> = {}): AppSnapshot {
+  revision += 1;
+
   return {
+    revision,
     permits,
     keyState: "configured",
     appVersion: "0.0.0",
-    browserVersion: "test",
     monitoring: "manual",
     checkTimes: ["08:30"],
     preferences: {
       notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
       backgroundAvailable: false, openAtLoginAvailable: false,
     },
+    ...overrides,
   };
 }
 
-/** Opens the renderer with `initial` as main's first snapshot. The bridge records history requests and holds them open. */
-async function open(initial: AppSnapshot): Promise<void> {
+/**
+ * Opens the renderer with `initial` as main's reply to its first snapshot request. The bridge records history requests
+ * and holds them open. With `holdFirstSnapshot`, that first reply also waits until the test answers it.
+ */
+async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<void> {
   await page?.close();
   page = await browser.newPage();
-  await page.addInitScript((first) => {
+  await page.addInitScript(({ first, hold }) => {
     const listeners: Array<(value: AppSnapshot) => void> = [];
-    const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void }> = [];
-    const ok = async () => ({ ok: true, value: null });
+
+    const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void; reject: (cause: Error) => void }> = [];
+
+    const failures = new Map<string, string>();
+
+    const answer = (method: string) => async (): Promise<BridgeResult<null>> => {
+      const error = failures.get(method);
+
+      return error === undefined ? { ok: true, value: null } : { ok: false, error };
+    };
+
+    let answerFirst: () => void = () => undefined;
+
+    const firstReply = new Promise<AppSnapshot>((resolve) => { answerFirst = () => resolve(first); });
+
+    if (!hold) answerFirst();
 
     const control: TestBridge = {
       historyCalls: [],
+      checkTimeCalls: [],
+      unhandled: [],
       push: (next) => { for (const listener of listeners) listener(next); },
+      answerSnapshot: () => answerFirst(),
+      failHistory: (index, error) => { pending[index]?.resolve({ ok: false, error }); },
+      rejectHistory: (index) => { pending[index]?.reject(new Error("IPC channel closed")); },
+      fail: (method, error) => { failures.set(method, error); },
       answerHistory: (index: number, status: string) => {
         const request = pending[index];
 
@@ -100,14 +142,26 @@ async function open(initial: AppSnapshot): Promise<void> {
       },
     };
 
+    window.addEventListener("unhandledrejection", (event) => { control.unhandled.push(String(event.reason)); });
+
+    const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
+      "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
+      "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData"];
+
     Object.assign(window, {
       testBridge: control,
       permitMonitor: {
-        snapshot: async () => first,
+        ...Object.fromEntries(methods.map((method) => [method, answer(method)])),
+        snapshot: () => firstReply,
         history: (permitId: string) => {
           control.historyCalls.push(permitId);
 
-          return new Promise((resolve) => pending.push({ permitId, resolve }));
+          return new Promise((resolve, reject) => pending.push({ permitId, resolve, reject }));
+        },
+        setCheckTimes: async (times: string[]) => {
+          control.checkTimeCalls.push(times);
+
+          return answer("setCheckTimes")();
         },
         onSnapshot: (callback: (value: AppSnapshot) => void) => {
           listeners.push(callback);
@@ -117,15 +171,12 @@ async function open(initial: AppSnapshot): Promise<void> {
         onLocalError: () => () => undefined,
         onOpenDetails: () => () => undefined,
         onAppEvent: () => () => undefined,
-        addAndCheck: ok, checkNow: ok, cancel: ok, openPortal: ok, recordManualStatus: ok, saveKey: ok, removeKey: ok,
-        openRecord: ok, openObservationRecord: ok, removePermit: ok, setMonitoring: ok, setCheckTimes: ok,
-        setPermitMonitoring: ok, setProjectNumber: ok, setPreference: ok, checkForUpdate: ok, downloadUpdate: ok,
-        installUpdate: ok, deleteLocalData: ok,
       },
     });
-  }, initial);
+  }, { first: initial, hold: holdFirstSnapshot });
   await page.goto(pathToFileURL(path.join(directory, "index.html")).href);
-  await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
+
+  if (!holdFirstSnapshot) await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
 }
 
 async function push(next: AppSnapshot): Promise<void> {
@@ -136,6 +187,21 @@ async function historyCalls(): Promise<string[]> {
   return page.evaluate(() => window.testBridge.historyCalls);
 }
 
+async function checkTimeCalls(): Promise<string[][]> {
+  return page.evaluate(() => window.testBridge.checkTimeCalls);
+}
+
+/** Whether the notice is showing and a click at its center would land on it, so no dialog covers it. */
+async function noticeOnTop(): Promise<boolean> {
+  return page.locator("#notice").evaluate((node) => {
+    if (!(node instanceof HTMLElement) || node.hidden) return false;
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+
+    return hit !== null && node.contains(hit);
+  });
+}
+
 const fifty = Array.from({ length: 50 }, (_, index) => permit(index + 1));
 
 beforeEach(async () => {
@@ -144,7 +210,9 @@ beforeEach(async () => {
 
 describe("permit table updates", () => {
   it("keeps focus and unchanged rows when another permit's check starts", async () => {
-    const focused = page.locator(`button[data-action="check"][data-permit-id="${fifty[9]!.id}"]`);
+    const tenth = defined(fifty[9], "a tenth permit");
+    const twentieth = defined(fifty[19], "a twentieth permit");
+    const focused = page.locator(`button[data-action="check"][data-permit-id="${tenth.id}"]`);
     await focused.focus();
     await page.evaluate(() => {
       window.keptRows = new Set(document.querySelectorAll("#permit-table tbody tr"));
@@ -155,7 +223,7 @@ describe("permit table updates", () => {
     expect(await focused.evaluate((node) => node === document.activeElement)).toBe(true);
     expect(await page.evaluate(() => [...document.querySelectorAll("#permit-table tbody tr")]
       .every((row) => window.keptRows.has(row)))).toBe(true);
-    await expect.poll(() => page.locator(`button[data-permit-id="${fifty[19]!.id}"][data-action="cancel"]`).count()).toBe(1);
+    await expect.poll(() => page.locator(`button[data-permit-id="${twentieth.id}"][data-action="cancel"]`).count()).toBe(1);
   });
 
   it("groups by project and moves rows between groups as numbers change", async () => {
@@ -170,6 +238,76 @@ describe("permit table updates", () => {
     await push(snapshot(fifty));
     expect(await page.locator("#permit-table tr.group-row").count()).toBe(0);
     expect(await page.locator("#permit-table tbody").count()).toBe(1);
+  });
+
+  it("treats a permit that leaves the list and returns as new", async () => {
+    const returning = permit(1);
+    await push(snapshot(fifty.slice(1)));
+    await push(snapshot(fifty));
+
+    expect(await page.locator(`#permit-table tr:has(button[data-permit-id="${returning.id}"])`).getAttribute("class")).toBe("row-enter");
+  });
+});
+
+describe("check time editing", () => {
+  const schedule = { ...snapshot(fifty), monitoring: "scheduled" as const, checkTimes: ["08:30", "12:30", "16:30"] };
+
+  const times = () => page.locator("#check-time-list input").evaluateAll((nodes) =>
+    nodes.map((node) => node instanceof HTMLInputElement ? node.value : null));
+
+  beforeEach(async () => {
+    await open(schedule);
+    await page.locator("#open-settings").click();
+  });
+
+  it("saves the schedule without the removed time", async () => {
+    await page.locator("#check-time-list button[data-remove-time]").nth(1).click();
+
+    await expect.poll(checkTimeCalls).toEqual([["08:30", "16:30"]]);
+  });
+
+  it("removes the clicked row and holds the save until a cleared row is filled in", async () => {
+    const inputs = page.locator("#check-time-list input");
+    await inputs.nth(0).fill("");
+    await page.locator("#check-time-list button[data-remove-time]").nth(1).click();
+
+    expect(await times()).toEqual(["", "16:30"]);
+    expect(await inputs.nth(0).getAttribute("aria-invalid")).toBe("true");
+    expect(await page.locator("#check-time-error").isVisible()).toBe(true);
+    expect(await checkTimeCalls()).toEqual([]);
+
+    await inputs.nth(0).fill("09:00");
+    await expect.poll(checkTimeCalls).toEqual([["09:00", "16:30"]]);
+  });
+});
+
+describe("notices over dialogs", () => {
+  it("shows a failed check from the details sheet in front of the sheet", async () => {
+    await page.evaluate(() => window.testBridge.fail("checkNow", "The portal didn't answer."));
+    await page.locator(`button[data-action="details"][data-permit-id="${permit(1).id}"]`).click();
+    await page.locator("#details-check").click();
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("The portal didn't answer.");
+    await expect.poll(noticeOnTop).toBe(true);
+  });
+
+  it("shows a failed delete from Settings in front of Settings", async () => {
+    await page.evaluate(() => window.testBridge.fail("deleteLocalData", "Data couldn't be deleted."));
+    await page.locator("#open-settings").click();
+    await page.locator("#delete-local-data").click();
+    await page.locator("#confirm-accept").click();
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("Data couldn't be deleted.");
+    await expect.poll(noticeOnTop).toBe(true);
+  });
+
+  it("moves a showing notice in front of a sheet opened after it", async () => {
+    await page.evaluate(() => window.testBridge.fail("checkNow", "The portal didn't answer."));
+    await page.locator(`button[data-action="check"][data-permit-id="${permit(1).id}"]`).click();
+    await expect.poll(noticeOnTop).toBe(true);
+
+    await page.locator("#open-settings").click();
+    await expect.poll(noticeOnTop).toBe(true);
   });
 });
 
@@ -194,20 +332,119 @@ describe("AEC filter", () => {
 
 describe("details history", () => {
   it("requests history once while snapshots about other permits arrive, then again when this permit changes", async () => {
-    await page.locator(`button[data-action="details"][data-permit-id="${fifty[0]!.id}"]`).click();
-    expect(await historyCalls()).toEqual([fifty[0]!.id]);
+    const first = defined(fifty[0], "a first permit");
+    await page.locator(`button[data-action="details"][data-permit-id="${first.id}"]`).click();
+    expect(await historyCalls()).toEqual([first.id]);
 
     await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
     await push(snapshot(fifty.map((entry, index) => index === 6 ? { ...entry, checking: true } : entry)));
-    expect(await historyCalls()).toEqual([fifty[0]!.id]);
+    expect(await historyCalls()).toEqual([first.id]);
 
     await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
-    expect(await historyCalls()).toEqual([fifty[0]!.id, fifty[0]!.id]);
+    expect(await historyCalls()).toEqual([first.id, first.id]);
 
     // The older answer arrives last and is dropped; the newer one is shown.
     await page.evaluate(() => window.testBridge.answerHistory(1, "Newer"));
     await page.evaluate(() => window.testBridge.answerHistory(0, "Older"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newer");
     expect(await page.locator("#history-list").innerText()).not.toContain("Older");
+  });
+
+  it("shows a failed read apart from an empty history, and retries it", async () => {
+    const shown = permit(1);
+    await page.locator(`button[data-action="details"][data-permit-id="${shown.id}"]`).click();
+    await page.evaluate(() => window.testBridge.rejectHistory(0));
+
+    const retry = page.locator("#history-list button[data-history-retry]");
+    await retry.waitFor();
+    expect(await page.locator("#history-list").innerText()).not.toContain("No checks yet");
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
+
+    // Snapshots about other permits leave the failure alone rather than asking again.
+    await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
+    expect(await historyCalls()).toEqual([shown.id]);
+
+    await retry.click();
+    expect(await historyCalls()).toEqual([shown.id, shown.id]);
+    await page.evaluate(() => window.testBridge.answerHistory(1, "Issued"));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Issued");
+
+    await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
+    await page.evaluate(() => window.testBridge.failHistory(2, "Permit not found."));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Permit not found.");
+    expect(await retry.count()).toBe(1);
+  });
+});
+
+describe("update controls", () => {
+  it("keeps Check for updates unavailable while a download is running", async () => {
+    await page.evaluate(() => {
+      Object.assign(window.permitMonitor, {
+        checkForUpdate: async () => ({ ok: true, value: { state: "available", version: "1.1.0", size: 5_000_000 } }),
+        downloadUpdate: () => new Promise((resolve) => {
+          document.addEventListener("test-download-finished", () => resolve({ ok: true, value: "1.1.0" }), { once: true });
+        }),
+      });
+    });
+    await page.locator("#open-settings").click();
+    await page.locator("#check-update").click();
+    await page.locator("#download-update").click();
+    expect(await page.locator("#check-update").isDisabled()).toBe(true);
+
+    await page.evaluate(() => document.dispatchEvent(new Event("test-download-finished")));
+    await expect.poll(() => page.locator("#update-status").innerText()).toBe("Version 1.1.0 is ready to install.");
+    expect(await page.locator("#check-update").isDisabled()).toBe(false);
+  });
+});
+
+describe("snapshot order", () => {
+  it("keeps a newer pushed snapshot when an older direct reply arrives after it", async () => {
+    const older = snapshot([permit(1, { lastStatus: "Older" })]);
+    await open(older, true);
+    const status = page.locator("#permit-table tbody tr td:nth-child(2)");
+
+    await push(snapshot([permit(1, { lastStatus: "Newer" })]));
+    await expect.poll(() => status.innerText()).toContain("Newer");
+
+    await page.evaluate(() => window.testBridge.answerSnapshot());
+    // Give the late reply its chance to render before checking that it didn't.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(await status.innerText()).toContain("Newer");
+
+    await push(older);
+    expect(await status.innerText()).toContain("Newer");
+  });
+});
+
+describe("key banner", () => {
+  it("stays up after the key is turned down, even with failure notices off, and leads to Settings", async () => {
+    await open(snapshot([permit(1)], { monitoring: "scheduled", keyState: "rejected",
+      preferences: { notifyStatusChanges: true, notifyFailures: false, runInBackground: false,
+        openAtLogin: false, backgroundAvailable: false, openAtLoginAvailable: false } }));
+
+    const banner = page.locator("#key-banner");
+    expect(await banner.isVisible()).toBe(true);
+    expect(await page.locator("#key-banner-title").innerText()).toBe("TypeSafe turned down your key. Scheduled checks are paused.");
+    expect(await page.locator("#next-check").textContent()).toBe("Scheduled checks paused");
+
+    await page.locator("#banner-add-key").click();
+    expect(await page.locator("#settings-sheet").isVisible()).toBe(true);
+    expect(await page.locator("#key-input").evaluate((node) => node === document.activeElement)).toBe(true);
+    expect(await page.locator("#settings-key-state").innerText()).toContain("Paste a working key");
+    expect(await page.locator("#key-remove").isVisible()).toBe(true);
+
+    // Saving a key that works brings a snapshot without the pause.
+    await push(snapshot([permit(1)], { monitoring: "scheduled" }));
+    expect(await banner.isVisible()).toBe(false);
+    expect(await page.locator("#settings-key-state").isVisible()).toBe(false);
+    expect(await page.locator("#next-check").textContent()).not.toBe("Scheduled checks paused");
+  });
+
+  it("asks for the key again when the saved one can't be read", async () => {
+    await open(snapshot([permit(1)], { keyState: "unreadable" }));
+
+    expect(await page.locator("#key-banner").isVisible()).toBe(true);
+    expect(await page.locator("#key-banner-title").innerText()).toBe("Your saved TypeSafe key can't be read. Checks are paused.");
+    expect(await page.locator("#banner-add-key").textContent()).toBe("Save key again");
   });
 });

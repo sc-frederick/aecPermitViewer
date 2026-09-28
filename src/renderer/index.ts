@@ -1,4 +1,4 @@
-import { PREFERENCE_KEYS, type PermitBridge } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type PermitBridge } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
@@ -30,11 +30,15 @@ let historyShown: string | null = null;
 /** The check state a history request is under way for, so snapshots that arrive meanwhile don't request it again. */
 let historyLoading: string | null = null;
 
+/** The check state whose history read failed, so snapshots about other permits leave the failure and its retry shown. */
+let historyFailed: string | null = null;
+
 let noticeTimer: number | null = null;
 
 let filter: Filter = "all";
 
-const knownPermitIds = new Set<string>();
+/** The permits in the last snapshot, so a row for any other permit is marked as new. */
+let knownPermitIds: ReadonlySet<string> = new Set();
 
 let firstRender = true;
 
@@ -130,7 +134,20 @@ function icon(name: string, className = "icon"): SVGSVGElement {
   return svg;
 }
 
+/**
+ * Keeps the notice inside the dialog in front, if one is open. A modal dialog paints over the rest of the page and
+ * makes it inert, so a notice left outside could be neither seen nor announced. The small dialogs only ever open over
+ * a sheet, never under one, so an open one is the one in front.
+ */
+function placeNotice(): void {
+  const node = element("notice", HTMLDivElement);
+  const host = document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
+
+  if (node.parentElement !== host) host.append(node);
+}
+
 function notice(message: string, kind: "info" | "error" = "error"): void {
+  placeNotice();
   const node = element("notice", HTMLDivElement);
   element("notice-text").textContent = message;
   node.dataset.kind = kind;
@@ -247,6 +264,9 @@ function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
 
 function nextCheckSummary(snapshot: AppSnapshot): string {
   if (snapshot.monitoring !== "scheduled") return "";
+
+  // Without a working key no scheduled check will start, so no time is promised; the key banner says why.
+  if (snapshot.keyState !== "configured") return "Scheduled checks paused";
   const now = new Date();
   const schedule = checkTimes(snapshot);
 
@@ -262,7 +282,6 @@ function nextCheckSummary(snapshot: AppSnapshot): string {
 /** One permit's row and the controls kept across updates, so a change elsewhere leaves focus where it was. */
 interface PermitRowView {
   row: HTMLTableRowElement;
-  identity: HTMLTableCellElement;
   open: HTMLButtonElement;
   jurisdiction: HTMLSpanElement;
   unscheduled: HTMLSpanElement;
@@ -311,7 +330,7 @@ function createRow(permit: PermitRow): PermitRowView {
   controls.append(actions);
   row.append(identity, status, action, observed, attempt, controls);
 
-  return { row, identity, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
+  return { row, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
 }
 
 /** Brings a row up to date, touching only the cells and controls whose content changed. */
@@ -457,20 +476,45 @@ function matchesFilter(permit: PermitRow, which: Filter, classified: StatusActio
   return true;
 }
 
-function renderKey(state: AppSnapshot["keyState"]): void {
-  element("key-banner").hidden = state === "configured";
-  element("key-banner-title").textContent = state === "missing"
-    ? "Add your TypeSafe key to run checks." : "Key storage isn't available on this computer.";
-  element("banner-add-key", HTMLButtonElement).hidden = state === "unavailable";
-  const unavailable = element("settings-key-state");
-  unavailable.hidden = state !== "unavailable";
-  unavailable.textContent = "Key storage isn't available on this computer.";
+/** What the window says about a key state that holds checks back. */
+interface KeyStateCopy {
+  banner: string;
+  /** The banner button's label, which opens the key settings; null when saving a key can't help. */
+  action: string | null;
+  /** The note above the key field in Settings, if any. */
+  settings: string | null;
+}
+
+function keyStateCopy(state: Exclude<KeyState, "configured">): KeyStateCopy {
+  switch (state) {
+    case "missing": return { banner: "Add your TypeSafe key to run checks.", action: "Add key", settings: null };
+    case "unavailable": return { banner: "Key storage isn't available on this computer.", action: null, settings: "Key storage isn't available on this computer." };
+    case "unreadable": return { banner: "Your saved TypeSafe key can't be read. Checks are paused.", action: "Save key again",
+      settings: "The saved key can't be read. Paste it again to keep checking." };
+    case "rejected": return { banner: "TypeSafe turned down your key. Scheduled checks are paused.", action: "Replace key",
+      settings: "TypeSafe turned down the saved key. Paste a working key to resume scheduled checks." };
+  }
+}
+
+/** The key banner stays up for as long as checks are held back for want of a key, whatever the notification settings. */
+function renderKey(state: KeyState): void {
+  const copy = state === "configured" ? null : keyStateCopy(state);
+  element("key-banner").hidden = copy === null;
+  element("key-banner-title").textContent = copy?.banner ?? "";
+  const action = element("banner-add-key", HTMLButtonElement);
+  action.hidden = !copy?.action;
+  action.textContent = copy?.action ?? "";
+  const note = element("settings-key-state");
+  note.hidden = !copy?.settings;
+  note.textContent = copy?.settings ?? "";
   element("key-form", HTMLFormElement).hidden = state === "unavailable";
+  // A saved key that doesn't work is still saved: it can be replaced or removed.
+  const saved = state === "configured" || state === "unreadable" || state === "rejected";
   element("key-input", HTMLInputElement).placeholder = state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
   const save = element("key-save", HTMLButtonElement);
-  save.textContent = state === "configured" ? "Replace" : "Save";
+  save.textContent = saved ? "Replace" : "Save";
   save.className = `btn btn-sm ${state === "configured" ? "btn-secondary" : "btn-primary"}`;
-  element("key-remove", HTMLButtonElement).hidden = state !== "configured";
+  element("key-remove", HTMLButtonElement).hidden = !saved;
 }
 
 function renderPreferences(preferences: AppPreferences): void {
@@ -496,17 +540,16 @@ function renderPreferences(preferences: AppPreferences): void {
 }
 
 function renderCheckTimeRows(times: readonly string[]): void {
-  const rows = times.map((value, index) => {
+  const rows = times.map((value) => {
     const row = make("li");
     const input = make("input");
     input.type = "time";
     input.required = true;
     input.value = value;
-    input.setAttribute("aria-label", `Check time ${index + 1}`);
+    input.setAttribute("aria-describedby", "check-time-error");
     const remove = make("button", "icon-button");
     remove.type = "button";
-    remove.dataset.removeTime = String(index);
-    remove.disabled = times.length === 1;
+    remove.dataset.removeTime = "";
     const time = parseCheckTime(value);
     remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
     remove.append(icon("close"));
@@ -516,11 +559,42 @@ function renderCheckTimeRows(times: readonly string[]): void {
   });
 
   element("check-time-list", HTMLUListElement).replaceChildren(...rows);
-  element("add-check-time", HTMLButtonElement).disabled = times.length >= MAX_CHECK_TIMES;
+  syncCheckTimeRows();
+  markIncompleteCheckTime(null);
 }
 
+/** Numbers the rows, keeps the last one from being removed, and allows adding up to the limit. */
+function syncCheckTimeRows(): void {
+  const rows = [...element("check-time-list", HTMLUListElement).querySelectorAll("li")];
+
+  for (const [index, row] of rows.entries()) {
+    row.querySelector("input")?.setAttribute("aria-label", `Check time ${index + 1}`);
+    const remove = row.querySelector("button");
+
+    if (remove) remove.disabled = rows.length === 1;
+  }
+
+  element("add-check-time", HTMLButtonElement).disabled = rows.length >= MAX_CHECK_TIMES;
+}
+
+/** Flags `input` as the row that still needs a time, or clears the flag when given null. */
+function markIncompleteCheckTime(input: HTMLInputElement | null): void {
+  for (const row of element("check-time-list", HTMLUListElement).querySelectorAll("input")) {
+    if (row === input) row.setAttribute("aria-invalid", "true");
+    else row.removeAttribute("aria-invalid");
+  }
+
+  element("check-time-error").hidden = !input;
+}
+
+/** The schedule editor's rows as typed, one per row in order; a cleared or half-typed field reads as "". */
 function editedCheckTimes(): string[] {
-  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].flatMap((input) => (input.value ? [input.value] : []));
+  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].map((input) => input.value);
+}
+
+/** The first row without a full time. It has to be filled in or removed before the rows can be saved. */
+function incompleteCheckTime(): HTMLInputElement | null {
+  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].find((input) => !input.value) ?? null;
 }
 
 function renderSchedule(snapshot: AppSnapshot): void {
@@ -546,6 +620,17 @@ async function saveCheckTimes(times: string[]): Promise<void> {
 
     if (currentSnapshot) renderCheckTimeRows(checkTimes(currentSnapshot).map(formatCheckTime));
   }
+}
+
+/**
+ * Shows a snapshot from main unless one with a higher revision is already shown, since pushed snapshots and direct
+ * replies can arrive out of order. Returns whether it was shown.
+ */
+function applySnapshot(snapshot: AppSnapshot): boolean {
+  if (currentSnapshot && snapshot.revision <= currentSnapshot.revision) return false;
+  render(snapshot);
+
+  return true;
 }
 
 function render(snapshot: AppSnapshot): void {
@@ -580,7 +665,7 @@ function render(snapshot: AppSnapshot): void {
   // A filter that matches nothing says only that; it never reads as an all-clear.
   empty.textContent = total === 0 ? "No permits yet." : "No matches.";
 
-  for (const permit of snapshot.permits) knownPermitIds.add(permit.id);
+  knownPermitIds = new Set(snapshot.permits.map((permit) => permit.id));
   firstRender = false;
 
   if (detailsPermitId) {
@@ -616,7 +701,7 @@ function renderDetailsSummary(permit: PermitRow): void {
   const daily = element("details-daily", HTMLInputElement);
   daily.checked = permit.monitoringEnabled;
   // Scheduled checks can't read a hand-checked portal, so the option isn't offered.
-  daily.closest<HTMLElement>("label")!.hidden = manual;
+  element("details-daily-option").hidden = manual;
 
   const next = currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
     ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;
@@ -687,6 +772,18 @@ function renderHistory(history: PermitHistory): void {
   else list.replaceChildren(...items);
 }
 
+/** Says the history read failed, which an empty list would misreport as a permit never checked, and offers to ask again. */
+function renderHistoryFailure(message: string): void {
+  const item = make("li", "timeline-error");
+  const body = make("div");
+  const retry = make("button", "link-button", "Try again");
+  retry.type = "button";
+  retry.dataset.historyRetry = "";
+  body.append(make("strong", "", "History didn't load."), make("p", "", message), retry);
+  item.append(body);
+  element("history-list", HTMLOListElement).replaceChildren(item);
+}
+
 /** A permit's history only changes when its latest attempt or verified status does. */
 function historyKey(permit: PermitRow): string {
   return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
@@ -694,7 +791,8 @@ function historyKey(permit: PermitRow): string {
 
 /**
  * Fetches and shows a permit's history unless a request for the same check state is already under way. A newer
- * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped.
+ * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped. A failed read is
+ * shown in the history list with a retry, never as an empty history. Never rejects.
  */
 async function loadHistory(permit: PermitRow): Promise<void> {
   const key = historyKey(permit);
@@ -702,21 +800,24 @@ async function loadHistory(permit: PermitRow): Promise<void> {
   if (key === historyLoading) return;
   const generation = ++historyGeneration;
   historyLoading = key;
-  let result: Awaited<ReturnType<PermitBridge["history"]>>;
 
-  try {
-    result = await api.history(permit.id);
-  } finally {
-    if (generation === historyGeneration) historyLoading = null;
-  }
+  // A rejected call never got an answer from main. It is shown like a failure main reported, so it can be retried.
+  const result = await api.history(permit.id)
+    .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: "The app didn't answer." }));
 
-  if (generation !== historyGeneration || detailsPermitId !== permit.id) return;
+  if (generation !== historyGeneration) return;
+  historyLoading = null;
+
+  if (detailsPermitId !== permit.id) return;
 
   if (result.ok) {
     renderHistory(result.value);
     historyShown = key;
+    historyFailed = null;
   } else {
-    notice(result.error);
+    renderHistoryFailure(result.error);
+    historyShown = null;
+    historyFailed = key;
   }
 }
 
@@ -737,6 +838,7 @@ function openDetails(permitId: string): void {
   if (switching || historyKey(permit) !== historyShown) {
     element("history-list", HTMLOListElement).replaceChildren();
     historyShown = null;
+    historyFailed = null;
     void loadHistory(permit);
   }
 }
@@ -985,7 +1087,7 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
   setInlineError("permit-number", "permit-number-error", null);
 
   if (filter !== "all") setFilter("all");
-  render(await api.snapshot());
+  applySnapshot(await api.snapshot());
   const added = currentSnapshot?.permits.find((entry) => entry.id === result.value);
   const project = added ? await askProjectNumber(added) : null;
   notice(project ? `${number} added to project ${project}.` : `${number} added.`, "info");
@@ -1056,7 +1158,8 @@ const checkTimeList = element("check-time-list", HTMLUListElement);
 
 checkTimeList.addEventListener("change", () => {
   // A half-cleared field reads as empty; wait until every row holds a full time.
-  if ([...checkTimeList.querySelectorAll("input")].some((input) => !input.value)) return;
+  if (incompleteCheckTime()) return;
+  markIncompleteCheckTime(null);
   void saveCheckTimes(editedCheckTimes());
 });
 
@@ -1067,19 +1170,41 @@ checkTimeList.addEventListener("focusout", (event) => {
 });
 
 checkTimeList.addEventListener("click", (event) => {
-  const target = eventButton(event, "button[data-remove-time]");
+  const row = eventButton(event, "button[data-remove-time]")?.closest("li");
 
-  if (!target) return;
-  const times = editedCheckTimes();
-  times.splice(Number(target.dataset.removeTime), 1);
+  if (!row || checkTimeList.children.length === 1) return;
+  // The rows kept are found by leaving out the clicked row itself, so a cleared row can't shift which time goes.
+  const kept = [...checkTimeList.querySelectorAll("input")].filter((input) => !row.contains(input));
+  const incomplete = kept.find((input) => !input.value);
 
-  if (times.length === 0) return;
-  // Focus leaves the row being removed so the refreshed list can replace it.
+  // Focus moves before the row goes: removing the focused button would count as leaving the list, which puts the
+  // saved times back.
+  if (incomplete) {
+    // Nothing is saved until the cleared row holds a time. Focus stays in the list, which keeps the edit in place.
+    incomplete.focus();
+    row.remove();
+    syncCheckTimeRows();
+    markIncompleteCheckTime(incomplete);
+
+    return;
+  }
+
+  const times = kept.map((input) => input.value);
+  // Focus leaves the list so the refreshed list can replace it.
   element("add-check-time", HTMLButtonElement).focus();
   void saveCheckTimes(times);
 });
 
 element("add-check-time", HTMLButtonElement).addEventListener("click", () => {
+  const incomplete = incompleteCheckTime();
+
+  if (incomplete) {
+    markIncompleteCheckTime(incomplete);
+    incomplete.focus();
+
+    return;
+  }
+
   const times = editedCheckTimes();
   const taken = new Set(times);
   const last = parseCheckTime(times[times.length - 1] ?? "") ?? { hour: 8, minute: 0 };
@@ -1142,6 +1267,7 @@ function closeSheet(dialog: HTMLDialogElement): void {
     historyGeneration += 1;
     historyShown = null;
     historyLoading = null;
+    historyFailed = null;
   }
 }
 
@@ -1222,6 +1348,13 @@ element("details-remove", HTMLButtonElement).addEventListener("click", async () 
   notice(`${permit.permitNumber} removed.`, "info");
 });
 
+element("history-list", HTMLOListElement).addEventListener("click", (event) => {
+  const retry = eventButton(event, "button[data-history-retry]");
+  const permit = currentSnapshot?.permits.find((entry) => entry.id === detailsPermitId);
+
+  if (retry && permit) void busy(retry, () => loadHistory(permit));
+});
+
 element("history-list", HTMLOListElement).addEventListener("click", async (event) => {
   const target = eventButton(event, "button[data-observation-id]");
 
@@ -1238,6 +1371,9 @@ for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet"
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); closeSheet(dialog); });
   dialog.querySelector<HTMLButtonElement>("[data-close]")?.addEventListener("click", () => closeSheet(dialog));
 }
+
+// A notice already showing follows the dialog in front as dialogs open and close.
+for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("toggle", placeNotice);
 
 const confirmDialog = element("confirm-dialog", HTMLDialogElement);
 
@@ -1284,7 +1420,9 @@ checkUpdate.addEventListener("click", async () => {
 element("download-update", HTMLButtonElement).addEventListener("click", async () => {
   const control = element("download-update", HTMLButtonElement);
   element("update-status").textContent = "Downloading… This can take a few minutes.";
-  const result = await busy(control, () => api.downloadUpdate());
+  // A check during the download could replace the update being downloaded.
+  checkUpdate.disabled = true;
+  const result = await busy(control, () => api.downloadUpdate()).finally(() => { checkUpdate.disabled = false; });
 
   if (!result.ok) {
     element("update-status").textContent = result.error;
@@ -1312,10 +1450,10 @@ element("delete-local-data", HTMLButtonElement).addEventListener("click", async 
 });
 
 api.onSnapshot((snapshot) => {
-  render(snapshot);
+  if (!applySnapshot(snapshot)) return;
   const permit = detailsPermitId ? snapshot.permits.find((entry) => entry.id === detailsPermitId) : undefined;
 
-  if (permit && historyKey(permit) !== historyShown) void loadHistory(permit);
+  if (permit && historyKey(permit) !== historyShown && historyKey(permit) !== historyFailed) void loadHistory(permit);
 });
 
 api.onLocalError((message) => notice(message));
@@ -1326,7 +1464,7 @@ api.onOpenDetails((permitId) => {
   finishProject(null);
 
   if (currentSnapshot?.permits.some((permit) => permit.id === permitId)) openDetails(permitId);
-  else void api.snapshot().then((snapshot) => { render(snapshot); openDetails(permitId); });
+  else void api.snapshot().then((snapshot) => { applySnapshot(snapshot); openDetails(permitId); });
 });
 
 api.onAppEvent((event) => notice(`${event.title}: ${event.body}`, event.tone));
@@ -1345,4 +1483,4 @@ for (const input of document.querySelectorAll<HTMLInputElement>("input[data-pref
 // Keeps the "Next check" time current between snapshots.
 setInterval(() => { if (currentSnapshot) element("next-check").textContent = nextCheckSummary(currentSnapshot); }, 60_000);
 
-void api.snapshot().then(render);
+void api.snapshot().then(applySnapshot);

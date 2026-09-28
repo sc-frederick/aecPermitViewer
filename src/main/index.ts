@@ -5,6 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { KeyStore } from "./key-store.js";
+import { DiagnosticLog } from "./diagnostics.js";
+import { serialBroadcast } from "./serial-broadcast.js";
+import { startUtilityWorker } from "./utility-worker.js";
 import { keyProblem } from "../shared/key-format.js";
 import { PermitStore } from "./store.js";
 import { runCheck, type ActiveCheck } from "./check-runner.js";
@@ -19,7 +22,7 @@ import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
 import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot, type RunOutcome } from "../shared/permit.js";
 import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
-import { PREFERENCE_KEYS, type AppEvent, type BridgeResult } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type AppEvent, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
 import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
@@ -76,7 +79,11 @@ let background: Background | null = null;
 
 let keyNoticeShown = false;
 
-let broadcastPending: Promise<void> | null = null;
+/** Failures the user only sees as a generic message are recorded here, without their messages or any user data. */
+let diagnostics: DiagnosticLog;
+
+/** The revision of the last snapshot read. See {@link AppSnapshot.revision}. */
+let snapshotRevision = 0;
 
 /** Resolves true once the bundled browser matches its manifest. No check launches it before then. */
 let browserVerified: Promise<boolean> = Promise.resolve(true);
@@ -158,14 +165,43 @@ function dataRoot(): string {
   return path.join(local || app.getPath("userData"), "PermitMonitorData");
 }
 
+/** The saved key's state, treating a key-storage failure as storage being unavailable. */
+async function storedKeyState(operation: string): Promise<StoredKeyState> {
+  return keys.state().catch((cause: unknown) => {
+    diagnostics.record(operation, null, cause);
+
+    return "unavailable" as const;
+  });
+}
+
+/** Why a check someone asked for can't run with the saved key, or null when it can. */
+function keyStateProblem(state: StoredKeyState): string | null {
+  switch (state) {
+    case "configured": return null;
+    case "missing": return "Add your TypeSafe key in Settings first.";
+    case "unreadable": return "Your saved key can't be read. Save it again in Settings.";
+    case "unavailable": return "Key storage isn't available on this computer.";
+  }
+}
+
+/** Whether checks can run for want of a key: what storage knows, plus the queue's pause after the service turned the key down. */
+function effectiveKeyState(stored: StoredKeyState): KeyState {
+  return stored === "configured" && checks.keyPaused ? "rejected" : stored;
+}
+
+/**
+ * Reads the whole app state. The key state is the only asynchronous part, so it is read first; everything else, and the
+ * revision, is read after it in one turn. A snapshot with a higher revision therefore never holds older permits or settings.
+ */
 async function snapshot(): Promise<AppSnapshot> {
-  const browserVersion = store.latestBrowserVersion();
+  const stored = await storedKeyState("snapshot:key-state");
+  snapshotRevision += 1;
 
   return {
+    revision: snapshotRevision,
     permits: store.listPermits(checks.checkingIds()),
-    keyState: await keys.state().catch(() => "unavailable"),
+    keyState: effectiveKeyState(stored),
     appVersion: app.getVersion(),
-    browserVersion: `Playwright ${PLAYWRIGHT_VERSION} · ${browserVersion ? `Chromium ${browserVersion}` : "bundled Chromium"}`,
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
@@ -181,17 +217,10 @@ async function snapshot(): Promise<AppSnapshot> {
 
 /**
  * Sends the current state to the window and tray. Calls made in the same turn (for example, every
- * permit queued by one scheduled run) share a single snapshot taken just after that turn.
+ * permit queued by one scheduled run) share a single snapshot taken just after that turn. Snapshots
+ * go out one at a time, so an older one can never be sent after a newer one.
  */
-function broadcast(): Promise<void> {
-  broadcastPending ??= new Promise<void>((resolve) => setImmediate(resolve)).then(() => {
-    broadcastPending = null;
-
-    return sendSnapshot();
-  });
-
-  return broadcastPending;
-}
+const broadcast = serialBroadcast(sendSnapshot);
 
 async function sendSnapshot(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -206,8 +235,9 @@ async function sendSnapshot(): Promise<void> {
       checkTimes: describeCheckTimes(store.getCheckTimes()),
     });
     mainWindow.webContents.send("permit:snapshot-changed", current);
-  } catch {
+  } catch (cause) {
     // The next UI request will surface local storage errors through its reply.
+    diagnostics.record("snapshot:broadcast", null, cause);
   }
 }
 
@@ -219,7 +249,10 @@ function safeSender(event: Electron.IpcMainInvokeEvent): boolean {
 
 const NO_INPUT = z.undefined();
 
-/** Answers a window request once its input parses; otherwise answers with `invalid`. */
+/**
+ * Answers a window request once its input parses; otherwise answers with `invalid`. A failure the callback didn't
+ * answer itself gets a generic reply, and its classified cause is recorded under the channel's name.
+ */
 function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
   callback: (input: I) => Promise<BridgeResult<T>> | BridgeResult<T>): void {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -230,7 +263,9 @@ function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
 
     try {
       return await callback(parsed.data);
-    } catch {
+    } catch (cause) {
+      diagnostics.record(channel, null, cause);
+
       return { ok: false, error: "Something went wrong. Try again." };
     }
   });
@@ -251,8 +286,11 @@ function permitScope(permitId: string): string | null {
   return profile ? checkScope(profile) : null;
 }
 
-/** Runs one browser check and records its result. Resolves null when no run was recorded. */
-function startCheck(permitId: string, key: string): StartedCheck {
+/**
+ * Runs one browser check and records its result. Resolves null when no run was recorded, including when the queue no
+ * longer wants the check once the browser payload is verified.
+ */
+function startCheck(permitId: string, key: string, stillWanted: () => boolean): StartedCheck {
   let cancelled = false;
   let running: ActiveCheck | null = null;
 
@@ -261,6 +299,9 @@ function startCheck(permitId: string, key: string): StartedCheck {
 
     if (!permit || !(await browserVerified) || cancelled || shuttingDown) return null;
 
+    // Verification can take a while; scheduled work that stopped qualifying meanwhile doesn't start.
+    if (!stillWanted()) return null;
+
     const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: PLAYWRIGHT_VERSION,
       requestedModel: NAVIGATION_MODEL.model, promptVersion: NAVIGATION_MODEL.promptVersion });
 
@@ -268,10 +309,14 @@ function startCheck(permitId: string, key: string): StartedCheck {
       ? path.join(process.resourcesPath, "playwright-browsers")
       : path.join(app.getAppPath(), "vendor", "playwright-browsers");
 
+    const workerPath = path.join(__dirname, "worker.cjs");
+
     try {
       running = runCheck({ runId, permit, key, browserPath, cacheRoot: path.join(dataRoot(), "cache"),
-        workerPath: path.join(__dirname, "worker.cjs") });
-    } catch {
+        startWorker: (environment) => startUtilityWorker(workerPath, environment),
+        report: (operation, cause) => diagnostics.record(`check:${operation}`, runId, cause) });
+    } catch (cause) {
+      diagnostics.record("check:create-cache", runId, cause);
       finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
         requestCount: 0, actualModel: null, browserVersion: null });
 
@@ -382,6 +427,7 @@ async function startApp(): Promise<void> {
     return false;
   });
 
+  diagnostics = new DiagnosticLog(path.join(dataRoot(), "logs", "diagnostics.jsonl"));
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
   store.alignSchedule(new Date());
   checks = createQueue();
@@ -435,7 +481,11 @@ async function startApp(): Promise<void> {
   ipcMain.handle("permit:snapshot", async (event) => {
     if (!safeSender(event)) return null;
 
-    return snapshot();
+    // The window has no snapshot to show instead, so the request still fails; the cause is kept.
+    return snapshot().catch((cause: unknown) => {
+      diagnostics.record("permit:snapshot", null, cause);
+      throw cause;
+    });
   });
   handle("permit:add-and-check", addPermitSchema, "Enter a permit number.", (input) => {
     const jurisdictionId = resolveJurisdiction(input.jurisdiction);
@@ -448,18 +498,12 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    try {
-      const id = store.addPermit(input.permitNumber, jurisdictionId);
-      checks.enqueue(id, "manual");
+    const added = store.addPermit(input.permitNumber, jurisdictionId);
 
-      return { ok: true, value: id };
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "SQLITE_CONSTRAINT_UNIQUE") {
-        return { ok: false, error: "That permit is already in the list." };
-      }
+    if (added._tag === "err") return { ok: false, error: "That permit is already in the list." };
+    checks.enqueue(added.value, "manual");
 
-      throw error;
-    }
+    return { ok: true, value: added.value };
   });
   handle("permit:check", permitIdSchema, "Permit not found.", async (id) => {
     const permit = store.getPermit(id);
@@ -467,12 +511,11 @@ async function startApp(): Promise<void> {
     if (!permit) return { ok: false, error: "Permit not found." };
 
     if (isManualJurisdiction(permit.jurisdictionId)) return { ok: false, error: "This permit is checked by hand." };
-    const keyState = await keys.state().catch(() => "unavailable");
+    const problem = keyStateProblem(await storedKeyState("permit:check"));
 
-    if (keyState !== "configured") {
-      return { ok: false, error: keyState === "missing" ? "Add your TypeSafe key in Settings first." : "Key storage isn't available on this computer." };
-    }
+    if (problem) return { ok: false, error: problem };
 
+    // A rejected key may have been fixed on the service's side, so asking for a check still tries it.
     checks.enqueue(permit.id, "manual");
 
     return { ok: true, value: null };
@@ -523,10 +566,13 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    try {
-      await keys.save(key);
-    } catch {
-      return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
+    const saved = await keys.save(key);
+
+    if (saved._tag === "failed") {
+      if (saved.error._tag === "KeyStorageUnavailable") return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
+      diagnostics.record("permit:save-key", null, saved.error.cause);
+
+      return { ok: false, error: "The key couldn't be saved. Try again." };
     }
 
     keyNoticeShown = false;
@@ -626,14 +672,18 @@ async function startApp(): Promise<void> {
   handle("permit:check-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.check() };
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:check-update", null, cause);
+
       return { ok: false, error: "Couldn't check for updates." };
     }
   });
   handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.download() };
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:download-update", null, cause);
+
       return { ok: false, error: "Download failed. Nothing was changed." };
     }
   });
@@ -642,7 +692,9 @@ async function startApp(): Promise<void> {
 
     try {
       installer = await updates.installerForApprovedHandoff();
-    } catch {
+    } catch (cause) {
+      diagnostics.record("permit:install-update:verify", null, cause);
+
       return { ok: false, error: "The update failed verification. Check again." };
     }
 
@@ -663,8 +715,9 @@ async function startApp(): Promise<void> {
       app.quit();
 
       return { ok: true, value: null };
-    } catch {
+    } catch (cause) {
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
+      diagnostics.record("permit:install-update:start", null, cause);
       resumeAfterFailedShutdown();
 
       return { ok: false, error: "The installer couldn't start. Restart the app and try again." };
@@ -677,13 +730,19 @@ async function startApp(): Promise<void> {
       return { ok: false, error: "A check is still running. Try again." };
     }
 
+    // An update download writes inside the data folder, so it has to stop and let go of its files first.
+    await updates.cancel();
     store.close();
+    // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.
+    diagnostics.stop();
 
     try { setOpenAtLogin(false); } catch { /* local data deletion continues */ }
 
     try {
       await rm(dataRoot(), { recursive: true, force: true });
-    } catch {
+    } catch (cause) {
+      diagnostics.restart();
+      diagnostics.record("permit:delete-local-data", null, cause);
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
       resumeAfterFailedShutdown();
 
@@ -716,7 +775,8 @@ app.on("before-quit", (event) => {
   }
 
   event.preventDefault();
-  void stopChecks().then((stopped) => {
+  // A stopped update download removes its partial file instead of leaving it for the next run.
+  void Promise.all([stopChecks(), updates.cancel()]).then(([stopped]) => {
     if (stopped) store.close();
     quitAllowed = true;
     app.quit();

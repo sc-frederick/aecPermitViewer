@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
@@ -28,8 +28,6 @@ const dueSchema = z.object({ id: z.string(), jurisdictionId: z.string() });
 const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
-
-const browserVersionSchema = z.object({ version: z.string() });
 
 const storedPermitSchema = z.object({
   id: z.string(),
@@ -68,6 +66,29 @@ const observationSchema = z.object({
   recordUrl: z.string(),
 }) satisfies z.ZodType<ObservationRow>;
 
+/**
+ * How node:sqlite reports a UNIQUE constraint violation: its generic code plus SQLite's extended result code
+ * SQLITE_CONSTRAINT_UNIQUE (2067). The message text is SQLite's and not part of the contract, so it isn't read.
+ */
+const uniqueViolationSchema = z.object({ code: z.literal("ERR_SQLITE_ERROR"), errcode: z.literal(2067) });
+
+/** The jurisdiction already has a permit whose number compares equal to the one being added. */
+export class AlreadyTracked extends Error {
+  readonly _tag = "AlreadyTracked" as const;
+  readonly jurisdictionId: JurisdictionId;
+  readonly permitNumber: string;
+
+  constructor(jurisdictionId: JurisdictionId, permitNumber: string, cause: unknown) {
+    super(`Permit ${permitNumber} is already tracked for ${jurisdictionId}.`, { cause });
+    this.name = "AlreadyTracked";
+    this.jurisdictionId = jurisdictionId;
+    this.permitNumber = permitNumber;
+  }
+}
+
+/** The new permit's id, or the reason it was not added. */
+export type AddPermitResult = { _tag: "ok"; value: string } | { _tag: "err"; error: AlreadyTracked };
+
 function userVersion(db: DatabaseSync): number {
   return userVersionSchema.parse(db.prepare("PRAGMA user_version").get()).user_version;
 }
@@ -102,6 +123,11 @@ function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
   };
 }
 
+/**
+ * The app's SQLite database of permits, check runs, status observations, and settings. Opening it migrates older
+ * schema versions after writing a backup, and marks runs left unfinished by an earlier exit as interrupted.
+ * All methods are synchronous; failures other than the typed results below throw.
+ */
 export class PermitStore {
   private readonly db: DatabaseSync;
   private readonly statements = new Map<string, StatementSync>();
@@ -111,10 +137,16 @@ export class PermitStore {
 
     if (existsSync(filePath)) {
       const prior = new DatabaseSync(filePath, { readOnly: true });
-      const version = userVersion(prior);
-      prior.close();
 
-      if (version < 3) copyFileSync(filePath, `${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+      try {
+        const version = userVersion(prior);
+
+        // VACUUM INTO writes one standalone file through SQLite, so commits still sitting in the WAL after an abrupt
+        // exit are included. Copying the main file alone would leave them out.
+        if (version < 3) prior.prepare("VACUUM INTO ?").run(`${filePath}.before-v${version + 1}-${Date.now()}.bak`);
+      } finally {
+        prior.close();
+      }
     }
 
     this.db = new DatabaseSync(filePath);
@@ -130,6 +162,9 @@ export class PermitStore {
 
     if (version > 3) throw new Error("Database was created by a newer app version.");
 
+    // permits.interval_hours is retired: scheduling now uses the check times in settings, and nothing reads or writes
+    // the column. It stays in the schema because dropping a column rewrites every permit row, which isn't worth the
+    // risk on its own. Remove it in a future migration that has another reason to rewrite permits.
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
@@ -203,7 +238,8 @@ export class PermitStore {
     if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
 
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
-    // Lets the latest browser version be read without scanning every run. Older app versions ignore it.
+    // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
+    // kept rather than dropped by a migration of its own. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
   }
 
@@ -238,6 +274,7 @@ export class PermitStore {
     });
   }
 
+  /** Close the database. The store must not be used afterward. */
   close(): void {
     this.statements.clear();
     this.db.close();
@@ -284,24 +321,45 @@ export class PermitStore {
       .run(new Date().toISOString());
   }
 
-  addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): string {
+  /**
+   * Saves a permit and returns its new id. A permit whose number compares equal to one already saved for the same
+   * jurisdiction is not added again and returns AlreadyTracked. Other SQLite failures throw.
+   */
+  addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): AddPermitResult {
     if (!getJurisdiction(jurisdictionId)) throw new Error("Unsupported jurisdiction");
     const id = randomUUID();
-    // New permits join the scheduled checks by default; each can be excluded from its details.
-    // Hand-checked permits never do, because a scheduled check can't read their portal.
-    this.sql(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
-        permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
-        isManualJurisdiction(jurisdictionId) ? 0 : 1);
 
-    return id;
+    try {
+      // New permits join the scheduled checks by default; each can be excluded from its details.
+      // Hand-checked permits never do, because a scheduled check can't read their portal.
+      this.sql(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
+        VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
+          permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
+          isManualJurisdiction(jurisdictionId) ? 0 : 1);
+    } catch (cause) {
+      // The only UNIQUE constraint on permits is (jurisdiction_id, comparison_value). A clash on the fresh UUID
+      // primary key would report SQLITE_CONSTRAINT_PRIMARYKEY instead and still throw.
+      if (uniqueViolationSchema.safeParse(cause).success) {
+        return { _tag: "err", error: new AlreadyTracked(jurisdictionId, permitNumber, cause) };
+      }
+
+      throw cause;
+    }
+
+    return { _tag: "ok", value: id };
   }
 
+  /**
+   * Saved permits, newest first. Permits whose jurisdiction the app no longer supports are left out but kept on disk.
+   *
+   * @param checkingIds - Permits with a check in progress, reported with `checking: true`.
+   */
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`)
       .flatMap((row) => mapPermit(row, checkingIds.has(row.id)) ?? []);
   }
 
+  /** The permit, or null when it doesn't exist or its jurisdiction is no longer supported. `checking` is always false. */
   getPermit(id: string): PermitRow | null {
     const row = this.row(storedPermitSchema, `${PERMIT_SELECT} WHERE p.id = ?`, id);
 
@@ -334,6 +392,12 @@ export class PermitStore {
     return id;
   }
 
+  /**
+   * Complete a run started by `startRun` and schedule the permit's next check from the outcome. The observation is saved,
+   * and becomes the permit's latest status and record link, only when the outcome is `success`.
+   *
+   * @throws Error when the run doesn't exist.
+   */
   finishRun(input: {
     runId: string;
     permitId: string;
@@ -398,6 +462,7 @@ export class PermitStore {
     });
   }
 
+  /** The permit's check runs, newest start first, and its saved observations, newest observation first. */
   history(permitId: string): PermitHistory {
     const runs = this.rows(checkRunSchema, `SELECT id, permit_id AS permitId, started_at AS startedAt,
       finished_at AS finishedAt, outcome, action_count AS actionCount,
@@ -418,6 +483,7 @@ export class PermitStore {
       FROM status_observations WHERE id = ?`, id);
   }
 
+  /** The jurisdiction of the permit an observation belongs to, or null when either is gone or no longer supported. */
   getObservationJurisdictionId(id: string): JurisdictionId | null {
     const row = this.row(jurisdictionRefSchema, `SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
       JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`, id);
@@ -439,6 +505,7 @@ export class PermitStore {
     this.sql("INSERT INTO settings(key, value) VALUES ('monitoring', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(mode);
   }
 
+  /** Whether scheduled checks run. Defaults to scheduled when never set. */
   getMonitoring(): "manual" | "scheduled" {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
 
@@ -446,6 +513,7 @@ export class PermitStore {
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
+  /** The saved daily check times, or the defaults when none are saved or the saved value no longer parses. */
   getCheckTimes(): CheckTimes {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'check_times'");
     const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
@@ -460,6 +528,7 @@ export class PermitStore {
     this.alignSchedule(now);
   }
 
+  /** A boolean setting, or `fallback` when it has never been saved. */
   getFlag(key: string, fallback: boolean): boolean {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key);
 
@@ -471,13 +540,12 @@ export class PermitStore {
       .run(key, value ? "1" : "0");
   }
 
-  latestBrowserVersion(): string | null {
-    const row = this.row(browserVersionSchema, `SELECT browser_version AS version FROM check_runs
-      WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`);
-
-    return row?.version ?? null;
-  }
-
+  /**
+   * Included permits whose next check is unset or at or before `now`, earliest due first. Hand-checked permits are
+   * never returned.
+   *
+   * @param now - An ISO timestamp, compared as text with the stored ISO due times.
+   */
   duePermitIds(now: string): string[] {
     return this.rows(dueSchema, `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
       AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`, now)
@@ -490,6 +558,7 @@ export class PermitStore {
     this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(value, id, value);
   }
 
+  /** Delete the permit with its runs and observations. Returns false when no permit had that id. */
   removePermit(id: string): boolean {
     return this.sql("DELETE FROM permits WHERE id = ?").run(id).changes === 1;
   }
@@ -506,6 +575,11 @@ export class PermitStore {
       .run(projectNumber?.trim() || null, id).changes === 1;
   }
 
+  /**
+   * Include or exclude a permit from scheduled checks. Including it makes it due immediately.
+   *
+   * @throws Error when including a hand-checked permit, which scheduled checks can't read.
+   */
   setPermitMonitoring(id: string, enabled: boolean): void {
     const permit = this.getPermit(id);
 

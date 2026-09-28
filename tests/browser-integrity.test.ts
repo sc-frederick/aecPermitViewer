@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { verifyBrowserPayload } from "../src/main/browser-integrity.js";
+import { defined } from "./support/defined.js";
 
 const temporary: string[] = [];
 
@@ -36,7 +37,7 @@ describe("bundled browser integrity", () => {
     const manifest = { version: 1, files: names.map((name) => ({ path: name, sha256: createHash("sha256").update(name).digest("hex") })) };
     await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify(manifest));
     await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
-    await writeFile(path.join(directory, names[10]!), "changed");
+    await writeFile(path.join(directory, defined(names[10], "an eleventh payload file")), "changed");
     await expect(verifyBrowserPayload(directory)).rejects.toThrow("integrity");
   });
 });

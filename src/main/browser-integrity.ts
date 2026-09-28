@@ -29,6 +29,13 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
   return files;
 }
 
+/**
+ * Check a staged browser directory against its packaged `sha256-manifest.json` before the browser is launched.
+ *
+ * @param directory - The browser payload directory, which holds the manifest.
+ * @throws Error when the manifest is malformed, the directory holds a file (or entry) the manifest does not list or
+ *   lacks one it does, or any file's SHA-256 differs. The payload is treated as tampered and must not be launched.
+ */
 export async function verifyBrowserPayload(directory: string): Promise<void> {
   const parsed = browserManifestSchema.safeParse(JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")));
 
@@ -42,12 +49,16 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
   }
 
   if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256))) throw new Error("Browser payload hash is invalid");
-  let next = 0;
+  // Readers share one iterator, so each file is claimed exactly once.
+  const pending = manifest.files.values();
   let failed = false;
 
   const verifyNext = async (): Promise<void> => {
-    while (!failed && next < manifest.files.length) {
-      const entry = manifest.files[next++]!;
+    while (!failed) {
+      const step = pending.next();
+
+      if (step.done) return;
+      const entry = step.value;
 
       try {
         const hash = createHash("sha256");

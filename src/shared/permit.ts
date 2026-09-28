@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { KeyState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
 import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
 
@@ -22,6 +23,7 @@ export const runOutcomeSchema = z.enum([
 
 export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 
+/** A saved permit as the window shows it, with its latest verified status and latest check attempt. */
 export interface PermitRow {
   id: string;
   jurisdictionId: JurisdictionId;
@@ -49,6 +51,7 @@ export interface CheckRunRow {
   requestCount: number;
 }
 
+/** A status read from the portal's record page after the displayed permit number and record link were verified. */
 export interface ObservationRow {
   id: string;
   runId: string;
@@ -78,12 +81,17 @@ export interface AppPreferences {
 
 export type { PreferenceKey } from "./bridge.js";
 
+/** Everything the window renders, sent whole from main on each change. */
 export interface AppSnapshot {
+  /**
+   * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
+   * any lower one that arrives later.
+   */
+  revision: number;
   permits: PermitRow[];
   preferences: AppPreferences;
-  keyState: "configured" | "missing" | "unavailable";
+  keyState: KeyState;
   appVersion: string;
-  browserVersion: string;
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */
   checkTimes: string[];
@@ -120,15 +128,16 @@ export function resolveJurisdiction(input: string): JurisdictionId | null {
   return JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ?? null;
 }
 
+/** Exact comparison after trimming, for portals that display the number exactly as it is entered. */
 export function samePermitNumber(requested: string, displayed: string): boolean {
   return requested.trim() === displayed.trim();
 }
 
 /** Split a Click2Gov application number such as "25-05001277" into its two-digit year and serial. */
 export function parseApplicationNumber(value: string): { year: string; serial: string } | null {
-  const parts = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim());
+  const [, year, serial] = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim()) ?? [];
 
-  return parts ? { year: parts[1]!, serial: parts[2]! } : null;
+  return year !== undefined && serial !== undefined ? { year, serial } : null;
 }
 
 function usesApplicationNumber(jurisdictionId: JurisdictionId): boolean {
@@ -148,11 +157,12 @@ export function parseWmisNumber(value: string, module: string): WmisNumber | nul
   if (module === "WCP") return /^\d{1,7}$/.test(text) && Number(text) > 0 ? { kind: "well", permit: Number(text) } : null;
   // An ERP permit is written with its two-digit type prefix and six-digit serial, such as 43047590.008;
   // the search and record page show it without them, such as 47590.008.
-  const prefixed = module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null;
-  const short = /^(\d{1,6})\.(\d{1,3})$/.exec(text);
+  const [, typePrefix, prefixedPermit, prefixedRevision] = (module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null) ?? [];
+  const [, shortPermit, shortRevision] = /^(\d{1,6})\.(\d{1,3})$/.exec(text) ?? [];
 
-  const parts = prefixed ? { prefix: prefixed[1]!, permit: prefixed[2]!, revision: prefixed[3]! }
-    : short ? { prefix: null, permit: short[1]!, revision: short[2]! } : null;
+  const parts = typePrefix !== undefined && prefixedPermit !== undefined && prefixedRevision !== undefined
+    ? { prefix: typePrefix, permit: prefixedPermit, revision: prefixedRevision }
+    : shortPermit !== undefined && shortRevision !== undefined ? { prefix: null, permit: shortPermit, revision: shortRevision } : null;
 
   if (parts) {
     return Number(parts.permit) > 0
@@ -240,10 +250,10 @@ export function sameEpermitRowNumber(requested: string, shown: string): boolean 
  */
 function sameEpermitNumber(requested: string, displayed: string): boolean {
   const input = parseEpermitNumber(requested);
-  const shown = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim());
+  const [, rowNumber, permit, sequence] = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim()) ?? [];
 
-  return Boolean(input && shown && sameEpermitRowNumber(requested, shown[1]!) &&
-    Number(shown[2]) === input.permit && Number(shown[3]) === input.sequence);
+  return Boolean(input && rowNumber !== undefined && sameEpermitRowNumber(requested, rowNumber) &&
+    Number(permit) === input.permit && Number(sequence) === input.sequence);
 }
 
 /** The ePermit record link the portal's own Copy Link gives, keyed by permit number and sequence. */
@@ -280,12 +290,12 @@ const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
  * view carries. The address the page settles on afterward needs a sign-in, so it is never saved.
  */
 export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string): string | null {
-  const parts = /^(\S+) (\S+)$/.exec(key.trim());
+  const [, recordClass, number] = /^(\S+) (\S+)$/.exec(key.trim()) ?? [];
 
-  if (profile.portalFamily !== "regpermitting" || !parts || !REG_RECORD_CLASSES.includes(parts[1]!) ||
-    !parseRegPermittingNumber(parts[2]!)) return null;
+  if (profile.portalFamily !== "regpermitting" || recordClass === undefined || number === undefined ||
+    !REG_RECORD_CLASSES.includes(recordClass) || !parseRegPermittingNumber(number)) return null;
 
-  return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${parts[1]} ${parts[2]!.toUpperCase()}`)}`;
+  return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${recordClass} ${number.toUpperCase()}`)}`;
 }
 
 /** Click2Gov removes leading zeros from the displayed application serial, and WMIS from its permit serials. */
@@ -520,16 +530,24 @@ const STATUS_LABELS = {
 
 /** The record-level status label for an authority; a profile names its own when its programs differ. */
 export function expectedStatusLabel(profile: AutomatedJurisdictionProfile): string {
-  return statusLabels(profile)[0]!;
+  return statusLabels(profile)[0];
 }
 
 /** Every label the authority's record-level status can carry; SFWMD labels applications and permits differently. */
-export function statusLabels(profile: AutomatedJurisdictionProfile): readonly string[] {
+export function statusLabels(profile: AutomatedJurisdictionProfile): readonly [string, ...string[]] {
   if ("statusLabels" in profile) return profile.statusLabels;
 
   return ["statusLabel" in profile ? profile.statusLabel : STATUS_LABELS[profile.portalFamily]];
 }
 
+/**
+ * Decide whether what the worker read from a record page can be saved as the permit's status. The displayed number
+ * must match the requested one under the jurisdiction's comparison rules, the label must be one of its record-level
+ * status labels (for SFWMD, the one for the record's kind), the status must be nonblank plain text, the record link
+ * must be the portal's own detail link for this same record, and `observedAt` must be a canonical ISO timestamp.
+ *
+ * @returns The observation to save, or the run outcome that explains why nothing was saved.
+ */
 export function parseDisplayedStatus(input: {
   jurisdictionId: JurisdictionId;
   requestedNumber: string;
@@ -538,7 +556,7 @@ export function parseDisplayedStatus(input: {
   statusValue: string;
   recordUrl: string;
   observedAt: string;
-}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: RunOutcome } {
+}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
   const { jurisdictionId } = input;
   const profile = getAutomatedJurisdiction(jurisdictionId);
 
