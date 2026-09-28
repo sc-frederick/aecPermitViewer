@@ -42,12 +42,16 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
   }
 
   if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256))) throw new Error("Browser payload hash is invalid");
-  let next = 0;
+  // Readers share one iterator, so each file is claimed exactly once.
+  const pending = manifest.files.values();
   let failed = false;
 
   const verifyNext = async (): Promise<void> => {
-    while (!failed && next < manifest.files.length) {
-      const entry = manifest.files[next++]!;
+    while (!failed) {
+      const step = pending.next();
+
+      if (step.done) return;
+      const entry = step.value;
 
       try {
         const hash = createHash("sha256");

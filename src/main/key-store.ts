@@ -28,7 +28,7 @@ export class KeyStorageUnavailable extends Error {
 export class KeyWriteFailed extends Error {
   readonly _tag = "KeyWriteFailed" as const;
 
-  constructor(readonly cause: unknown) {
+  constructor(override readonly cause: unknown) {
     super("The key couldn't be written");
   }
 }

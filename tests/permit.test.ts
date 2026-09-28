@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { epermitRecordUrl, HILLSBOROUGH_ID, parseDisplayedStatus, parseEpermitNumber, parseRegPermittingNumber, parseWmisNumber, permitComparisonValue, permitNumberProblem, permitNumberSchema, parsePortalUrl, regPermittingRecordUrl, resolveJurisdiction, sameJurisdictionPermitNumber, samePermitNumber } from "../src/shared/permit.js";
 import { getJurisdiction, JURISDICTIONS } from "../src/shared/jurisdictions.js";
+import { defined } from "./support/defined.js";
 
 const detailUrl = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
 
@@ -248,7 +249,7 @@ describe("St. Johns River-hosted ePermit records", () => {
     expect(parsePortalUrl(nw, "detail", "nwfwmd")).not.toBeNull();
     expect(parsePortalUrl(nw, "detail", "srwmd")).toBeNull();
     expect(parsePortalUrl(nw.replace("seqNo=3", "seqNo=3&x=1"), "detail", "nwfwmd")).toBeNull();
-    expect(epermitRecordUrl(getJurisdiction("nwfwmd")!, "2E-131-6688-3")).toBe(nw);
+    expect(epermitRecordUrl(defined(getJurisdiction("nwfwmd"), "the nwfwmd profile"), "2E-131-6688-3")).toBe(nw);
   });
 
   it("saves the combined status on a link to the same number and sequence", () => {
@@ -260,8 +261,8 @@ describe("St. Johns River-hosted ePermit records", () => {
 });
 
 describe("SFWMD RegPermitting records", () => {
-  const sfwmd = getJurisdiction("sfwmd")!;
-  const permitUrl = regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-P")!;
+  const sfwmd = defined(getJurisdiction("sfwmd"), "the sfwmd profile");
+  const permitUrl = defined(regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-P"), "an ERP permit record link");
 
   const permit = { ...candidate, jurisdictionId: "sfwmd" as const, requestedNumber: "48-112909-P", displayedNumber: "48-112909-P",
     statusLabel: "Permit Status", statusValue: "Approved", recordUrl: permitUrl };
@@ -292,11 +293,11 @@ describe("SFWMD RegPermitting records", () => {
     expect(parseDisplayedStatus({ ...permit, statusLabel: "Application Status" })).toEqual({ _tag: "err", outcome: "status_unavailable" });
 
     const application = { ...permit, requestedNumber: "260915-67760", displayedNumber: "260915-67760", statusLabel: "App Status",
-      statusValue: "Pending-TechnicalReview", recordUrl: regPermittingRecordUrl(sfwmd, "SFWMD-REG-WUPERMIT-WORK 260915-67760")! };
+      statusValue: "Pending-TechnicalReview", recordUrl: defined(regPermittingRecordUrl(sfwmd, "SFWMD-REG-WUPERMIT-WORK 260915-67760"), "a water use application record link") };
 
     expect(parseDisplayedStatus(application)).toMatchObject({ _tag: "ok", value: { statusValue: "Pending-TechnicalReview" } });
     expect(parseDisplayedStatus({ ...application, statusLabel: "Permit Status" })).toEqual({ _tag: "err", outcome: "status_unavailable" });
-    expect(parseDisplayedStatus({ ...permit, recordUrl: regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-M")! }))
+    expect(parseDisplayedStatus({ ...permit, recordUrl: defined(regPermittingRecordUrl(sfwmd, "SFWMD-REG-PERMIT-WORK 48-112909-M"), "a modified ERP permit record link") }))
       .toEqual({ _tag: "err", outcome: "record_link_unavailable" });
   });
 });

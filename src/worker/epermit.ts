@@ -1,5 +1,6 @@
 import type { Locator, Page } from "playwright";
 import { epermitRecordUrl, expectedStatusLabel, parseEpermitNumber, sameEpermitRowNumber } from "../shared/permit.js";
+import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import type { DisplayedRecord, PortalAdapter, SearchObservation } from "./adapter.js";
@@ -159,10 +160,10 @@ async function submitEpermitSearch(page: Page, requested: string): Promise<void>
 }
 
 async function openEpermitResult(page: Page, requested: string): Promise<void> {
-  const exact = await exactLinks(page, requested);
+  const exact = onlyElement(await exactLinks(page, requested));
 
-  if (exact.length !== 1) return;
-  await exact[0]!.link.click();
+  if (!exact) return;
+  await exact.link.click();
   // The record fills in after its own request, so wait for its number and status to hold text.
   await page.waitForFunction((selector) => {
     const frame = document.querySelector<HTMLIFrameElement>(selector);
@@ -190,8 +191,7 @@ async function rowStatus(link: Locator): Promise<string | null> {
 /** Read the open record: the result row's full number and Status, with the record's Project Number and process stage. */
 async function readEpermitRecord(page: Page, profile: EpermitProfile, requested: string): Promise<DisplayedRecord> {
   const fields = await recordFields(page);
-  const exact = await exactLinks(page, requested);
-  const row = exact.length === 1 ? exact[0]! : null;
+  const row = onlyElement(await exactLinks(page, requested));
   const rowNumber = row?.text ?? null;
   const project = field(fields, "Project Number");
   const status = row ? await rowStatus(row.link) : null;

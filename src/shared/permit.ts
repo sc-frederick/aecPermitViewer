@@ -131,9 +131,9 @@ export function samePermitNumber(requested: string, displayed: string): boolean 
 
 /** Split a Click2Gov application number such as "25-05001277" into its two-digit year and serial. */
 export function parseApplicationNumber(value: string): { year: string; serial: string } | null {
-  const parts = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim());
+  const [, year, serial] = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim()) ?? [];
 
-  return parts ? { year: parts[1]!, serial: parts[2]! } : null;
+  return year !== undefined && serial !== undefined ? { year, serial } : null;
 }
 
 function usesApplicationNumber(jurisdictionId: JurisdictionId): boolean {
@@ -153,11 +153,12 @@ export function parseWmisNumber(value: string, module: string): WmisNumber | nul
   if (module === "WCP") return /^\d{1,7}$/.test(text) && Number(text) > 0 ? { kind: "well", permit: Number(text) } : null;
   // An ERP permit is written with its two-digit type prefix and six-digit serial, such as 43047590.008;
   // the search and record page show it without them, such as 47590.008.
-  const prefixed = module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null;
-  const short = /^(\d{1,6})\.(\d{1,3})$/.exec(text);
+  const [, typePrefix, prefixedPermit, prefixedRevision] = (module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null) ?? [];
+  const [, shortPermit, shortRevision] = /^(\d{1,6})\.(\d{1,3})$/.exec(text) ?? [];
 
-  const parts = prefixed ? { prefix: prefixed[1]!, permit: prefixed[2]!, revision: prefixed[3]! }
-    : short ? { prefix: null, permit: short[1]!, revision: short[2]! } : null;
+  const parts = typePrefix !== undefined && prefixedPermit !== undefined && prefixedRevision !== undefined
+    ? { prefix: typePrefix, permit: prefixedPermit, revision: prefixedRevision }
+    : shortPermit !== undefined && shortRevision !== undefined ? { prefix: null, permit: shortPermit, revision: shortRevision } : null;
 
   if (parts) {
     return Number(parts.permit) > 0
@@ -245,10 +246,10 @@ export function sameEpermitRowNumber(requested: string, shown: string): boolean 
  */
 function sameEpermitNumber(requested: string, displayed: string): boolean {
   const input = parseEpermitNumber(requested);
-  const shown = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim());
+  const [, rowNumber, permit, sequence] = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim()) ?? [];
 
-  return Boolean(input && shown && sameEpermitRowNumber(requested, shown[1]!) &&
-    Number(shown[2]) === input.permit && Number(shown[3]) === input.sequence);
+  return Boolean(input && rowNumber !== undefined && sameEpermitRowNumber(requested, rowNumber) &&
+    Number(permit) === input.permit && Number(sequence) === input.sequence);
 }
 
 /** The ePermit record link the portal's own Copy Link gives, keyed by permit number and sequence. */
@@ -285,12 +286,12 @@ const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
  * view carries. The address the page settles on afterward needs a sign-in, so it is never saved.
  */
 export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string): string | null {
-  const parts = /^(\S+) (\S+)$/.exec(key.trim());
+  const [, recordClass, number] = /^(\S+) (\S+)$/.exec(key.trim()) ?? [];
 
-  if (profile.portalFamily !== "regpermitting" || !parts || !REG_RECORD_CLASSES.includes(parts[1]!) ||
-    !parseRegPermittingNumber(parts[2]!)) return null;
+  if (profile.portalFamily !== "regpermitting" || recordClass === undefined || number === undefined ||
+    !REG_RECORD_CLASSES.includes(recordClass) || !parseRegPermittingNumber(number)) return null;
 
-  return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${parts[1]} ${parts[2]!.toUpperCase()}`)}`;
+  return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${recordClass} ${number.toUpperCase()}`)}`;
 }
 
 /** Click2Gov removes leading zeros from the displayed application serial, and WMIS from its permit serials. */
@@ -525,11 +526,11 @@ const STATUS_LABELS = {
 
 /** The record-level status label for an authority; a profile names its own when its programs differ. */
 export function expectedStatusLabel(profile: AutomatedJurisdictionProfile): string {
-  return statusLabels(profile)[0]!;
+  return statusLabels(profile)[0];
 }
 
 /** Every label the authority's record-level status can carry; SFWMD labels applications and permits differently. */
-export function statusLabels(profile: AutomatedJurisdictionProfile): readonly string[] {
+export function statusLabels(profile: AutomatedJurisdictionProfile): readonly [string, ...string[]] {
   if ("statusLabels" in profile) return profile.statusLabels;
 
   return ["statusLabel" in profile ? profile.statusLabel : STATUS_LABELS[profile.portalFamily]];

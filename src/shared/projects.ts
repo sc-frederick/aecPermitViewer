@@ -23,7 +23,7 @@ export function projectKey(projectNumber: string): string {
  * no project last. Permits keep their incoming order within a group.
  */
 export function groupByProject(permits: readonly PermitRow[]): ProjectGroup[] {
-  const groups = new Map<string, ProjectGroup>();
+  const groups = new Map<string, { projectNumber: string; permits: PermitRow[] }>();
   const unassigned: PermitRow[] = [];
 
   for (const permit of permits) {
@@ -37,7 +37,7 @@ export function groupByProject(permits: readonly PermitRow[]): ProjectGroup[] {
     if (group) group.permits.push(permit); else groups.set(key, { projectNumber: number, permits: [permit] });
   }
 
-  const sorted = [...groups.values()].sort((a, b) => projectOrder.compare(a.projectNumber!, b.projectNumber!));
+  const sorted = [...groups.values()].sort((a, b) => projectOrder.compare(a.projectNumber, b.projectNumber));
 
   return unassigned.length > 0 ? [...sorted, { projectNumber: null, permits: unassigned }] : sorted;
 }

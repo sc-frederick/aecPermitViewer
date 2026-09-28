@@ -7,6 +7,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
+import { defined } from "./support/defined.js";
 
 /** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
@@ -209,7 +210,9 @@ beforeEach(async () => {
 
 describe("permit table updates", () => {
   it("keeps focus and unchanged rows when another permit's check starts", async () => {
-    const focused = page.locator(`button[data-action="check"][data-permit-id="${fifty[9]!.id}"]`);
+    const tenth = defined(fifty[9], "a tenth permit");
+    const twentieth = defined(fifty[19], "a twentieth permit");
+    const focused = page.locator(`button[data-action="check"][data-permit-id="${tenth.id}"]`);
     await focused.focus();
     await page.evaluate(() => {
       window.keptRows = new Set(document.querySelectorAll("#permit-table tbody tr"));
@@ -220,7 +223,7 @@ describe("permit table updates", () => {
     expect(await focused.evaluate((node) => node === document.activeElement)).toBe(true);
     expect(await page.evaluate(() => [...document.querySelectorAll("#permit-table tbody tr")]
       .every((row) => window.keptRows.has(row)))).toBe(true);
-    await expect.poll(() => page.locator(`button[data-permit-id="${fifty[19]!.id}"][data-action="cancel"]`).count()).toBe(1);
+    await expect.poll(() => page.locator(`button[data-permit-id="${twentieth.id}"][data-action="cancel"]`).count()).toBe(1);
   });
 
   it("groups by project and moves rows between groups as numbers change", async () => {
@@ -329,15 +332,16 @@ describe("AEC filter", () => {
 
 describe("details history", () => {
   it("requests history once while snapshots about other permits arrive, then again when this permit changes", async () => {
-    await page.locator(`button[data-action="details"][data-permit-id="${fifty[0]!.id}"]`).click();
-    expect(await historyCalls()).toEqual([fifty[0]!.id]);
+    const first = defined(fifty[0], "a first permit");
+    await page.locator(`button[data-action="details"][data-permit-id="${first.id}"]`).click();
+    expect(await historyCalls()).toEqual([first.id]);
 
     await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
     await push(snapshot(fifty.map((entry, index) => index === 6 ? { ...entry, checking: true } : entry)));
-    expect(await historyCalls()).toEqual([fifty[0]!.id]);
+    expect(await historyCalls()).toEqual([first.id]);
 
     await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
-    expect(await historyCalls()).toEqual([fifty[0]!.id, fifty[0]!.id]);
+    expect(await historyCalls()).toEqual([first.id, first.id]);
 
     // The older answer arrives last and is dropped; the newer one is shown.
     await page.evaluate(() => window.testBridge.answerHistory(1, "Newer"));
