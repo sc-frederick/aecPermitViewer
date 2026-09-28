@@ -34,6 +34,12 @@ export type MainToWorker =
   | { kind: "reobserve"; runId: string }
   | { kind: "cancel"; runId: string };
 
+/** Outcomes a worker may end a run with. Success is only ever reached through a `verified` message that main checks. */
+const workerFailureSchema = runOutcomeSchema.exclude(["success"]);
+
+/** How the worker reports a run it couldn't verify. */
+export type WorkerFailure = z.infer<typeof workerFailureSchema>;
+
 /** Messages from the browser worker, parsed in main because the worker process drives untrusted pages. */
 export const workerToMainSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("observation"), runId: z.string(), observation: pageObservationSchema }),
@@ -41,8 +47,9 @@ export const workerToMainSchema = z.discriminatedUnion("kind", [
     kind: z.literal("verified"), runId: z.string(), displayedNumber: z.string(), statusLabel: z.string(), statusValue: z.string(),
     observedAt: z.string(), recordUrl: z.string(), browserVersion: z.string(),
   }),
-  z.object({ kind: z.literal("failed"), runId: z.string(), outcome: runOutcomeSchema }),
-  z.object({ kind: z.literal("action_count"), runId: z.string(), count: z.number() }),
+  z.object({ kind: z.literal("failed"), runId: z.string(), outcome: workerFailureSchema }),
+  // The number of page actions the worker has taken so far in this run.
+  z.object({ kind: z.literal("action_count"), runId: z.string(), count: z.number().int().nonnegative() }),
 ]);
 
 export type WorkerToMain = z.infer<typeof workerToMainSchema>;
