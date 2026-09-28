@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { expectedStatusLabel, parseApplicationNumber } from "../shared/permit.js";
+import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl } from "../shared/permit.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
 
@@ -41,7 +41,7 @@ const TYLER_FIELDS = {
 } as const satisfies Record<string, DetailFields>;
 
 /** The kind of Tyler record an address shows, from its "#/permit/<id>" or "#/plan/<id>" route; null for anything else. */
-export function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
+function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
   const hash = new URL(url).hash;
 
   if (/^#\/permit\/[^/]+$/i.test(hash)) return "permit";
@@ -70,7 +70,7 @@ function detailFields(profile: AutomatedJurisdictionProfile, url: string): Detai
  * The trimmed text of the one visible element matching `selector`, read in a single browser round trip. Null when
  * nothing matches, more than one element does, or the match isn't visible (no size, or hidden by style).
  */
-export async function visibleText(page: Page, selector: string): Promise<string | null> {
+async function visibleText(page: Page, selector: string): Promise<string | null> {
   const texts = await page.locator(selector).evaluateAll((nodes) => nodes.map((node) => {
     if (!(node instanceof HTMLElement)) return null;
     const box = node.getBoundingClientRect();
@@ -82,7 +82,7 @@ export async function visibleText(page: Page, selector: string): Promise<string 
 }
 
 /** St. Petersburg's record link, rebuilt from the application number because Click2Gov's own address is a form post. */
-export function stPeteRecordUrl(number: string): string | null {
+function stPeteRecordUrl(number: string): string | null {
   const parts = parseApplicationNumber(number);
 
   if (!parts) return null;
@@ -137,6 +137,24 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
 
   await ready.waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
   await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+}
+
+/**
+ * Waits for the page a run just opened, its start page or a saved record link, to be ready to observe. A record page
+ * waits for its number and status (see `waitForDetail`), and a Tyler search page for its keyword field. A record page
+ * has no search controls, so it never waits on them. Other families' start pages are the worker's to wait on.
+ */
+export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
+  const url = page.url();
+
+  // The worker's own order: an address the portal uses for its search is a search page even if it could show a record.
+  if (parsePortalUrl(url, "search", profile.id)) {
+    if (profile.portalFamily === "tyler-civic-access") await waitForTylerSearch(page);
+
+    return;
+  }
+
+  if (parsePortalUrl(url, "detail", profile.id)) await waitForDetail(page, profile);
 }
 
 /** Waits for Tyler's visible result count or no-results message after a search. */

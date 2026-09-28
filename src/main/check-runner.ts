@@ -207,8 +207,16 @@ export function runCheck(input: {
 
           if (decision.actualModel) actualModel = decision.actualModel;
 
-          if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page") {
+          if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page" ||
+            decision._tag === "cancelled") {
             finish(decision._tag);
+
+            return;
+          }
+
+          // A reply that breaks the service's contract is the service's fault, not the portal's, so it retries like an outage.
+          if (decision._tag === "malformed_response") {
+            finish("api_unavailable");
 
             return;
           }

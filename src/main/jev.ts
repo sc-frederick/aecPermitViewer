@@ -1,23 +1,66 @@
-import { AuthenticationError, RateLimitError, TypeSafeClient, choice } from "@typesafe-ai/sdk";
+import { APIUserAbortError, AuthenticationError, RateLimitError, TypeSafeClient, choice, type Fetch, type TypeSafeClientConfig } from "@typesafe-ai/sdk";
 import { z } from "zod";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
 
-/** The model's answer as sent over the wire; numbers must be finite for the confidence and margin checks to mean anything. */
+/** A confidence or probability, which the service reports from 0 to 1. Zod 4 numbers already refuse NaN and infinity. */
+const unitIntervalSchema = z.number().min(0).max(1);
+
+/**
+ * The reply around the answer. The SDK hands back the body as the service sent it, unchecked against the question, so
+ * the model name and the answers are parsed here before anything reads them.
+ */
+const replySchema = z.object({
+  model: z.string().min(1),
+  answers: z.object({ next: z.unknown() }),
+});
+
+/** The model's answer as sent over the wire. Which labels it names is checked against the offered criteria afterwards. */
 const choiceAnswerSchema = z.object({
   type: z.literal("choice"),
   choice: z.string(),
-  confidence: z.number(),
-  probabilities: z.record(z.string(), z.number()),
+  confidence: unitIntervalSchema,
+  probabilities: z.record(z.string(), unitIntervalSchema),
 });
 
-/** The next navigation step. `actualModel` is the model that answered, or null when no model was asked or none answered. */
+type ChoiceAnswer = z.infer<typeof choiceAnswerSchema>;
+
+/**
+ * How far the probabilities may sum from 1. The service documents them as the full distribution across every option,
+ * summing to 1; this only absorbs per-label rounding across the at most 32 labels offered (30 candidates, WAIT, STOP).
+ */
+const PROBABILITY_SUM_TOLERANCE = 0.02;
+
+/**
+ * Why a reply was refused before the confidence and margin thresholds were applied:
+ * - `reply`: the body isn't a reply with a model name and answers.
+ * - `invalid_answer`: no answer to the question asked, not a choice answer, or a confidence or probability outside 0 to 1.
+ * - `unknown_choice`: the chosen label wasn't offered.
+ * - `missing_alternative`: an offered label has no probability, so the margin can't account for it.
+ * - `unexpected_alternative`: a probability names a label that wasn't offered.
+ * - `not_normalized`: the probabilities don't sum to 1.
+ */
+export type MalformedAnswerProblem =
+  | "reply"
+  | "invalid_answer"
+  | "unknown_choice"
+  | "missing_alternative"
+  | "unexpected_alternative"
+  | "not_normalized";
+
+/**
+ * The next navigation step. `actualModel` is the model that answered, or null when no model was asked or none answered.
+ * `unsupported_page` is a page Jev can't be asked about or an answer too uncertain to act on; `malformed_response` is a
+ * reply that breaks the service's contract; `cancelled` means the run's signal ended the request or its retry wait.
+ */
 export type NavigationDecision =
   | { _tag: "chosen"; candidateId: string; actualModel: string | null; attempts: number }
   | { _tag: "wait"; actualModel: string; attempts: number }
   | { _tag: "stop"; actualModel: string; attempts: number }
   | { _tag: "authentication_error"; actualModel: null; attempts: number }
   | { _tag: "api_unavailable"; actualModel: null; attempts: number }
+  | { _tag: "cancelled"; actualModel: null; attempts: number }
+  | { _tag: "malformed_response"; problem: MalformedAnswerProblem; actualModel: string | null; attempts: number }
   | { _tag: "unsupported_page"; actualModel: string | null; attempts: number };
 
 /** The model and prompt behind navigation choices. Each run records these as its requested configuration. */
@@ -42,18 +85,61 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** One client per check run, so a run's navigation calls share its connection settings. */
-export function navigationClient(key: string): TypeSafeClient {
-  return new TypeSafeClient({
+/**
+ * Checks an answer against the labels that were offered: it must choose one of them and give every one, and nothing
+ * else, a probability, with the probabilities summing to 1. Returns the chosen label, the reported confidence, and the
+ * chosen label's lead over the likeliest other label.
+ */
+function readChoice(answer: ChoiceAnswer, offered: readonly string[]):
+  | { _tag: "ok"; choice: string; confidence: number; margin: number }
+  | { _tag: "malformed"; problem: MalformedAnswerProblem } {
+  const probabilities = new Map(Object.entries(answer.probabilities));
+
+  if (!offered.includes(answer.choice)) return { _tag: "malformed", problem: "unknown_choice" };
+
+  if (offered.some((label) => !probabilities.has(label))) return { _tag: "malformed", problem: "missing_alternative" };
+
+  if (probabilities.size !== offered.length) return { _tag: "malformed", problem: "unexpected_alternative" };
+  let total = 0;
+  let chosen = 0;
+  let runnerUp = 0;
+
+  for (const [label, probability] of probabilities) {
+    total += probability;
+
+    if (label === answer.choice) chosen = probability;
+    else runnerUp = Math.max(runnerUp, probability);
+  }
+
+  if (Math.abs(total - 1) > PROBABILITY_SUM_TOLERANCE) return { _tag: "malformed", problem: "not_normalized" };
+
+  return { _tag: "ok", choice: answer.choice, confidence: answer.confidence, margin: chosen - runnerUp };
+}
+
+/**
+ * One client per check run, so a run's navigation calls share its connection settings. `fetch` replaces the global
+ * fetch for the client's HTTP transport; production leaves it unset.
+ */
+export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
+  const config: TypeSafeClientConfig = {
     apiKey: key,
     defaultModel: NAVIGATION_MODEL.model,
     retry: { maxRetries: 0 },
     timeout: 8_000,
     logLevel: "off",
-  });
+  };
+
+  if (fetch) config.fetch = fetch;
+
+  return new TypeSafeClient(config);
 }
 
-/** Asks Jev which offered step, if any, advances the lookup. Callers bound the candidate count. */
+/**
+ * Asks Jev which offered step, if any, advances the lookup. Callers bound the candidate count. A rate-limited request
+ * is tried at most twice within `remainingRequests` and `deadline`; any other failure ends the call. The reply is
+ * parsed in full before the confidence and margin thresholds apply, so a reply that omits an offered label or reports
+ * values outside 0 to 1 is `malformed_response`, never a chosen step.
+ */
 export async function chooseNavigation(input: {
   client: TypeSafeClient;
   jurisdictionId: JurisdictionId;
@@ -74,10 +160,12 @@ export async function chooseNavigation(input: {
   const criteria: Record<string, string> = Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.description]));
   criteria.WAIT = "The current page is still loading or a submitted search has not visibly settled.";
   criteria.STOP = "No listed action safely advances the exact permit lookup.";
+  const offered = Object.keys(criteria);
 
   let attempts = 0;
 
   while (attempts < Math.min(2, input.remainingRequests) && Date.now() + 1_000 < input.deadline) {
+    if (input.signal.aborted) return { _tag: "cancelled", actualModel: null, attempts };
     attempts += 1;
     input.onAttempt();
 
@@ -101,34 +189,39 @@ export async function chooseNavigation(input: {
         },
       }, { signal: input.signal, retry: { maxRetries: 0 }, timeout: 8_000 });
 
-      const answer = choiceAnswerSchema.safeParse(result.answers.next);
+      const reply = replySchema.safeParse(result);
 
-      if (!answer.success) return { _tag: "unsupported_page", attempts, actualModel: result.model };
-      const { choice: selected, confidence, probabilities } = answer.data;
-      const probability = probabilities[selected];
-      const others = Object.entries(probabilities).flatMap(([id, value]) => id === selected ? [] : [value]);
-      const margin = probability === undefined ? -1 : probability - Math.max(0, ...others);
+      if (!reply.success) return { _tag: "malformed_response", problem: "reply", actualModel: null, attempts };
+      const actualModel = reply.data.model;
+      const answer = choiceAnswerSchema.safeParse(reply.data.answers.next);
 
-      if (!Object.hasOwn(criteria, selected) || confidence < MIN_CONFIDENCE || margin < MIN_MARGIN) {
-        return { _tag: "unsupported_page", attempts, actualModel: result.model };
-      }
+      if (!answer.success) return { _tag: "malformed_response", problem: "invalid_answer", actualModel, attempts };
+      const read = readChoice(answer.data, offered);
 
-      if (selected === "WAIT") return { _tag: "wait", actualModel: result.model, attempts };
+      if (read._tag === "malformed") return { _tag: "malformed_response", problem: read.problem, actualModel, attempts };
 
-      if (selected === "STOP") return { _tag: "stop", actualModel: result.model, attempts };
+      if (read.confidence < MIN_CONFIDENCE || read.margin < MIN_MARGIN) return { _tag: "unsupported_page", attempts, actualModel };
 
-      if (!allowed.has(selected)) return { _tag: "unsupported_page", attempts, actualModel: result.model };
+      if (read.choice === "WAIT") return { _tag: "wait", actualModel, attempts };
 
-      return { _tag: "chosen", candidateId: selected, actualModel: result.model, attempts };
-    } catch (error) {
-      if (error instanceof AuthenticationError) return { _tag: "authentication_error", actualModel: null, attempts };
+      if (read.choice === "STOP") return { _tag: "stop", actualModel, attempts };
 
-      if (error instanceof RateLimitError && attempts < Math.min(2, input.remainingRequests)) {
-        const wait = Math.min(error.retryAfterMs ?? 1_000, 5_000);
+      return { _tag: "chosen", candidateId: read.choice, actualModel, attempts };
+    } catch (cause) {
+      if (cause instanceof APIUserAbortError || input.signal.aborted) return { _tag: "cancelled", actualModel: null, attempts };
+
+      if (cause instanceof AuthenticationError) return { _tag: "authentication_error", actualModel: null, attempts };
+
+      if (cause instanceof RateLimitError && attempts < Math.min(2, input.remainingRequests)) {
+        const wait = Math.min(cause.retryAfterMs ?? 1_000, 5_000);
 
         if (Date.now() + wait + 1_000 >= input.deadline) return { _tag: "api_unavailable", actualModel: null, attempts };
 
-        try { await delay(wait, input.signal); } catch { return { _tag: "api_unavailable", actualModel: null, attempts }; }
+        try {
+          await delay(wait, input.signal);
+        } catch {
+          return { _tag: "cancelled", actualModel: null, attempts };
+        }
 
         continue;
       }

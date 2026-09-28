@@ -4,7 +4,7 @@ import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, t
 import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
-import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForTylerResults, waitForTylerSearch } from "./detail.js";
+import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForLanding, waitForTylerResults, waitForTylerSearch } from "./detail.js";
 import { wmisAdapter } from "./wmis.js";
 import { epermitAdapter, watchEpermitForm } from "./epermit.js";
 import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
@@ -456,16 +456,12 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
 
   openedRecordUrl = recordOpened ? target : null;
 
-  if (page && !stopped && locationOf(page.url()) === "permit-detail") await waitForDetail(page, jurisdiction);
+  // A saved record link opens straight to the record, which has no search controls to wait for.
+  if (page && !stopped) await waitForLanding(page, jurisdiction);
 
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
     await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
       .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
-  }
-
-  // A saved record link opens straight to the record, which has no search controls to wait for.
-  if (jurisdiction.portalFamily === "tyler-civic-access" && page && !stopped && locationOf(page.url()) === "permit-search") {
-    await waitForTylerSearch(page);
   }
 
   if (epermitFormReady && page && !stopped) await epermitFormReady();
