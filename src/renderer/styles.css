@@ -288,6 +288,8 @@ dialog { color: var(--color-ink); padding: 0; border: 0; }
 .check-time-list input { width: 160px; height: 40px; padding: 8px 0; border: 0; border-bottom: var(--hairline-fog); border-radius: 0; background: transparent; font-family: var(--font-mono); font-size: 14px; font-variant-numeric: tabular-nums; outline: none; }
 .check-time-list input:hover { border-bottom-color: var(--color-graphite); }
 .check-time-list input:focus { border-bottom: var(--rule-bold); padding-bottom: 7px; }
+.check-time-list input[aria-invalid="true"], .check-time-list input[aria-invalid="true"]:focus { border-bottom-color: var(--color-error); }
+.check-times .field-error { margin: 0; }
 /* The OS time picker can't take the system's styling; times are typed or stepped with the arrow keys. */
 .check-time-list input::-webkit-calendar-picker-indicator { display: none; }
 .check-time-list .icon-button { width: 32px; height: 32px; }

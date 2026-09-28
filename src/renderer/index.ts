@@ -496,17 +496,16 @@ function renderPreferences(preferences: AppPreferences): void {
 }
 
 function renderCheckTimeRows(times: readonly string[]): void {
-  const rows = times.map((value, index) => {
+  const rows = times.map((value) => {
     const row = make("li");
     const input = make("input");
     input.type = "time";
     input.required = true;
     input.value = value;
-    input.setAttribute("aria-label", `Check time ${index + 1}`);
+    input.setAttribute("aria-describedby", "check-time-error");
     const remove = make("button", "icon-button");
     remove.type = "button";
-    remove.dataset.removeTime = String(index);
-    remove.disabled = times.length === 1;
+    remove.dataset.removeTime = "";
     const time = parseCheckTime(value);
     remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
     remove.append(icon("close"));
@@ -516,11 +515,42 @@ function renderCheckTimeRows(times: readonly string[]): void {
   });
 
   element("check-time-list", HTMLUListElement).replaceChildren(...rows);
-  element("add-check-time", HTMLButtonElement).disabled = times.length >= MAX_CHECK_TIMES;
+  syncCheckTimeRows();
+  markIncompleteCheckTime(null);
 }
 
+/** Numbers the rows, keeps the last one from being removed, and allows adding up to the limit. */
+function syncCheckTimeRows(): void {
+  const rows = [...element("check-time-list", HTMLUListElement).querySelectorAll("li")];
+
+  for (const [index, row] of rows.entries()) {
+    row.querySelector("input")?.setAttribute("aria-label", `Check time ${index + 1}`);
+    const remove = row.querySelector("button");
+
+    if (remove) remove.disabled = rows.length === 1;
+  }
+
+  element("add-check-time", HTMLButtonElement).disabled = rows.length >= MAX_CHECK_TIMES;
+}
+
+/** Flags `input` as the row that still needs a time, or clears the flag when given null. */
+function markIncompleteCheckTime(input: HTMLInputElement | null): void {
+  for (const row of element("check-time-list", HTMLUListElement).querySelectorAll("input")) {
+    if (row === input) row.setAttribute("aria-invalid", "true");
+    else row.removeAttribute("aria-invalid");
+  }
+
+  element("check-time-error").hidden = !input;
+}
+
+/** The schedule editor's rows as typed, one per row in order; a cleared or half-typed field reads as "". */
 function editedCheckTimes(): string[] {
-  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].flatMap((input) => (input.value ? [input.value] : []));
+  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].map((input) => input.value);
+}
+
+/** The first row without a full time. It has to be filled in or removed before the rows can be saved. */
+function incompleteCheckTime(): HTMLInputElement | null {
+  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].find((input) => !input.value) ?? null;
 }
 
 function renderSchedule(snapshot: AppSnapshot): void {
@@ -1056,7 +1086,8 @@ const checkTimeList = element("check-time-list", HTMLUListElement);
 
 checkTimeList.addEventListener("change", () => {
   // A half-cleared field reads as empty; wait until every row holds a full time.
-  if ([...checkTimeList.querySelectorAll("input")].some((input) => !input.value)) return;
+  if (incompleteCheckTime()) return;
+  markIncompleteCheckTime(null);
   void saveCheckTimes(editedCheckTimes());
 });
 
@@ -1067,19 +1098,41 @@ checkTimeList.addEventListener("focusout", (event) => {
 });
 
 checkTimeList.addEventListener("click", (event) => {
-  const target = eventButton(event, "button[data-remove-time]");
+  const row = eventButton(event, "button[data-remove-time]")?.closest("li");
 
-  if (!target) return;
-  const times = editedCheckTimes();
-  times.splice(Number(target.dataset.removeTime), 1);
+  if (!row || checkTimeList.children.length === 1) return;
+  // The rows kept are found by leaving out the clicked row itself, so a cleared row can't shift which time goes.
+  const kept = [...checkTimeList.querySelectorAll("input")].filter((input) => !row.contains(input));
+  const incomplete = kept.find((input) => !input.value);
 
-  if (times.length === 0) return;
-  // Focus leaves the row being removed so the refreshed list can replace it.
+  // Focus moves before the row goes: removing the focused button would count as leaving the list, which puts the
+  // saved times back.
+  if (incomplete) {
+    // Nothing is saved until the cleared row holds a time. Focus stays in the list, which keeps the edit in place.
+    incomplete.focus();
+    row.remove();
+    syncCheckTimeRows();
+    markIncompleteCheckTime(incomplete);
+
+    return;
+  }
+
+  const times = kept.map((input) => input.value);
+  // Focus leaves the list so the refreshed list can replace it.
   element("add-check-time", HTMLButtonElement).focus();
   void saveCheckTimes(times);
 });
 
 element("add-check-time", HTMLButtonElement).addEventListener("click", () => {
+  const incomplete = incompleteCheckTime();
+
+  if (incomplete) {
+    markIncompleteCheckTime(incomplete);
+    incomplete.focus();
+
+    return;
+  }
+
   const times = editedCheckTimes();
   const taken = new Set(times);
   const last = parseCheckTime(times[times.length - 1] ?? "") ?? { hour: 8, minute: 0 };
