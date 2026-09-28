@@ -6,10 +6,13 @@ import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitR
 import { dailyHistory } from "../shared/history.js";
 import { groupByProject, recentProjects, type ProjectGroup } from "../shared/projects.js";
 import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
+import { actionOn, actionText, statusAction, type StatusAction } from "../shared/action.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
-type Filter = "all" | "failed" | "unverified";
+const FILTERS = ["all", "applicant", "failed", "unverified"] as const;
+
+type Filter = typeof FILTERS[number];
 
 type OutcomeKind = "ok" | "failed" | "checking" | "none";
 
@@ -53,6 +56,10 @@ function eventButton(event: Event, selector: string): HTMLButtonElement | null {
   const button = event.target instanceof Element ? event.target.closest(selector) : null;
 
   return button instanceof HTMLButtonElement ? button : null;
+}
+
+function filterValue(value: string): Filter | null {
+  return FILTERS.find((entry) => entry === value) ?? null;
 }
 
 function preferenceKey(value: string | undefined): PreferenceKey | null {
@@ -194,6 +201,20 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   return wrap;
 }
 
+/** Who the verified status waits on, as a small badge; an unclassified status shows a dash. */
+function actionBadge(classified: StatusAction | null): HTMLElement {
+  if (!classified) return make("span", "muted", "—");
+  const badge = make("span", "action");
+  badge.dataset.actionOn = classified.action;
+
+  if (!classified.listed) badge.title = "This wording isn't on the jurisdiction's list, so it's marked AEC to be safe.";
+
+  if (classified.action !== "none") badge.append(make("span", "dot"));
+  badge.append(make("span", "", actionText[classified.action]));
+
+  return badge;
+}
+
 function actionButton(label: string, action: string, permit: PermitRow, className: string): HTMLButtonElement {
   const node = make("button", className, label);
   node.type = "button";
@@ -261,6 +282,13 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
     status.append(make("span", "muted", "—"));
   }
 
+  const action = statusAction(permit.jurisdictionId, permit.lastStatus);
+  const waiting = make("td");
+  waiting.append(actionBadge(action));
+
+  if (action) row.dataset.actionOn = action.action;
+  else if (permit.lastStatus) waiting.title = "Water management district statuses aren't classified yet.";
+
   const observed = make("td", "timestamp");
   observed.append(timeNode(permit.lastObservedAt));
 
@@ -280,7 +308,7 @@ function renderPermit(permit: PermitRow, monitoring: AppSnapshot["monitoring"]):
   actions.append(record);
   controls.append(actions);
 
-  row.append(identity, status, observed, attempt, controls);
+  row.append(identity, status, waiting, observed, attempt, controls);
 
   return row;
 }
@@ -295,7 +323,7 @@ function renderGroup(group: ProjectGroup | null, permits: PermitRow[], monitorin
     const head = make("tr", "group-row");
     const cell = make("th");
     cell.scope = "rowgroup";
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     const wrap = make("div", "group-head");
 
     if (group.projectNumber) {
@@ -316,6 +344,8 @@ function renderGroup(group: ProjectGroup | null, permits: PermitRow[], monitorin
 }
 
 function matchesFilter(permit: PermitRow): boolean {
+  if (filter === "applicant") return actionOn(permit.jurisdictionId, permit.lastStatus) === "applicant";
+
   if (filter === "failed") return !permit.checking && outcomeKind(permit.latestOutcome) === "failed";
 
   if (filter === "unverified") return !permit.lastStatus;
@@ -429,9 +459,12 @@ function render(snapshot: AppSnapshot): void {
   const total = snapshot.permits.length;
   const failed = snapshot.permits.filter((permit) => !permit.checking && outcomeKind(permit.latestOutcome) === "failed").length;
   const unverified = snapshot.permits.filter((permit) => !permit.lastStatus).length;
+  const applicant = snapshot.permits.filter((permit) => actionOn(permit.jurisdictionId, permit.lastStatus) === "applicant").length;
+  const counts: Record<Filter, number> = { all: total, applicant, failed, unverified };
 
   for (const option of element("permit-filter", HTMLSelectElement).options) {
-    const count = option.value === "all" ? total : option.value === "failed" ? failed : unverified;
+    const key = filterValue(option.value);
+    const count = key ? counts[key] : 0;
     option.textContent = count > 0 ? `${option.dataset.label} (${count})` : option.dataset.label ?? "";
   }
 
@@ -457,7 +490,8 @@ function render(snapshot: AppSnapshot): void {
   table.hidden = visible.length === 0;
   element("empty-state").hidden = visible.length > 0;
   element("empty-state").textContent = total === 0 ? "No permits yet."
-    : filter === "failed" ? "No failed checks." : "Every permit has a status.";
+    : filter === "applicant" ? "Nothing is waiting on AEC."
+      : filter === "failed" ? "No failed checks." : "Every permit has a status.";
 
   for (const permit of snapshot.permits) knownPermitIds.add(permit.id);
   firstRender = false;
@@ -476,6 +510,10 @@ function renderDetailsSummary(permit: PermitRow): void {
   const status = element("details-status");
   status.textContent = permit.lastStatus ?? "No status yet";
   status.classList.toggle("muted", !permit.lastStatus);
+  const action = statusAction(permit.jurisdictionId, permit.lastStatus);
+  const actionSlot = element("details-action");
+  actionSlot.hidden = !action;
+  actionSlot.replaceChildren(...(action ? [make("span", "field-label", "Action"), actionBadge(action)] : []));
   const manual = isManualJurisdiction(permit.jurisdictionId);
   element("details-observed").textContent = permit.lastObservedAt
     ? `${manual ? "Entered" : "Verified"} ${stamp(permit.lastObservedAt)}` : "";
@@ -1010,9 +1048,9 @@ function setFilter(next: Filter): void {
 const permitFilter = element("permit-filter", HTMLSelectElement);
 
 permitFilter.addEventListener("change", () => {
-  const next = permitFilter.value;
+  const next = filterValue(permitFilter.value);
 
-  if (next === "all" || next === "failed" || next === "unverified") setFilter(next);
+  if (next) setFilter(next);
 });
 
 // Table actions

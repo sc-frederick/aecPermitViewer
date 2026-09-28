@@ -21,6 +21,13 @@ describe("check notifications", () => {
       .toMatchObject({ kind: "status-changed", body: "“In Process” → “Issued”" });
   });
 
+  it("says when the new status waits on the applicant", () => {
+    expect(describeCheckEvent(verified, { ...verified, lastStatus: "Awaiting Client Reply" }, "success"))
+      .toMatchObject({ kind: "status-changed", body: "“In Process” → “Awaiting Client Reply” · Action: AEC" });
+    expect(describeCheckEvent(base, { ...verified, lastStatus: "Awaiting Client Reply" }, "success"))
+      .toMatchObject({ kind: "first-status", body: "“Awaiting Client Reply” · Action: AEC" });
+  });
+
   it("stays quiet when the status is unchanged", () => {
     expect(describeCheckEvent(verified, verified, "success")).toBeNull();
   });
