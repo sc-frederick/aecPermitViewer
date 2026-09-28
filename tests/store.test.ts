@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -328,6 +329,45 @@ describe("project numbers", () => {
       expect(migrated.getPermit(permitId)?.projectNumber).toBe("28069");
     } finally {
       migrated.close();
+    }
+  });
+});
+
+describe("migration backups", () => {
+  it("includes a commit left in the WAL by a writer that exited without closing", () => {
+    const store = newStore();
+    const directory = directories[directories.length - 1] ?? "";
+    const filePath = path.join(directory, "data.sqlite");
+    store.close();
+
+    // The child commits in WAL mode and exits with SQLite still open, so nothing checkpoints the WAL into the main file.
+    const writer = spawnSync(process.execPath, ["-e", `
+      const { DatabaseSync } = require("node:sqlite");
+      const [filePath, jurisdictionId] = process.argv.slice(1);
+      const db = new DatabaseSync(filePath);
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA user_version = 2");
+      db.prepare("INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run("committed-before-exit", jurisdictionId, "HC-BLD-26-0087599", "HC-BLD-26-0087599", "2026-09-28T12:00:00.000Z");
+      process.exit(0);
+    `, filePath, HILLSBOROUGH_ID], { encoding: "utf8" });
+
+    expect(writer.stderr).toBe("");
+    expect(writer.status).toBe(0);
+
+    new PermitStore(filePath).close();
+
+    const backups = readdirSync(directory).filter((name) => /^data\.sqlite\.before-v3-\d+\.bak$/.test(name));
+    expect(backups).toHaveLength(1);
+    // Restoring means putting the backup where a fresh install would open it, with no WAL beside it.
+    const restored = path.join(directory, "restored.sqlite");
+    copyFileSync(path.join(directory, backups[0] ?? ""), restored);
+    const restoredStore = new PermitStore(restored);
+
+    try {
+      expect(restoredStore.getPermit("committed-before-exit")).toMatchObject({ permitNumber: "HC-BLD-26-0087599" });
+    } finally {
+      restoredStore.close();
     }
   });
 });
