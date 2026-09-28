@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,10 +21,6 @@ const directories: string[] = [];
 
 afterEach(() => {
   for (const directory of directories.splice(0)) {
-    const cachePath = path.join(directory, RUN_ID);
-
-    // A test may have left the run's folder read-only on purpose.
-    if (existsSync(cachePath)) chmodSync(cachePath, 0o700);
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -78,7 +74,7 @@ class TestWorker implements CheckWorker {
 }
 
 /** Runs one check against a scripted worker, collecting what it reported. */
-function check(start: (environment: NodeJS.ProcessEnv) => WorkerStart) {
+function check(start: (environment: NodeJS.ProcessEnv) => WorkerStart, removeCache?: (cachePath: string) => Promise<void>) {
   const cacheRoot = mkdtempSync(path.join(tmpdir(), "permit-monitor-check-"));
   directories.push(cacheRoot);
   const reports: Array<{ operation: CheckOperation; code: string | null }> = [];
@@ -87,7 +83,7 @@ function check(start: (environment: NodeJS.ProcessEnv) => WorkerStart) {
     startWorker: start,
     report: (operation, cause) => {
       reports.push({ operation, code: classifyCause(cause).code });
-    } });
+    }, removeCache });
 
   return { active, reports, cachePath: path.join(cacheRoot, RUN_ID) };
 }
@@ -133,14 +129,12 @@ describe("running a check", () => {
     expect(reports).toEqual([{ operation: "handle-message", code: "ERR_IPC_CHANNEL_CLOSED" }]);
   });
 
-  it.skipIf(process.getuid?.() === 0)("still closes, and reports it, when the run's cache can't be removed", async () => {
-    const { active, reports, cachePath } = check(scripted((message, worker, environment) => {
-      if (message.kind !== "start" || !environment.TEMP) return;
-      // The browser left a file in its temporary folder, and the folder can no longer be changed.
-      writeFileSync(path.join(environment.TEMP, "leftover"), "");
-      chmodSync(environment.TEMP, 0o500);
-      worker.emit({ kind: "failed", runId: RUN_ID, outcome: "not_found_in_supported_search" });
-    }));
+  it("still closes, and reports it, when the run's cache can't be removed", async () => {
+    const { active, reports, cachePath } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit({ kind: "failed", runId: RUN_ID, outcome: "not_found_in_supported_search" });
+    }), async () => {
+      throw Object.assign(new Error("access denied"), { code: "EACCES" });
+    });
 
     expect((await active.result).outcome).toBe("not_found_in_supported_search");
     await active.closed;
