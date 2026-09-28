@@ -538,7 +538,7 @@ export function parseDisplayedStatus(input: {
   statusValue: string;
   recordUrl: string;
   observedAt: string;
-}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: RunOutcome } {
+}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
   const { jurisdictionId } = input;
   const profile = getAutomatedJurisdiction(jurisdictionId);
 

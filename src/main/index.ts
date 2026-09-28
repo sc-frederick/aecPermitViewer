@@ -5,6 +5,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { KeyStore } from "./key-store.js";
+import { DiagnosticLog } from "./diagnostics.js";
+import { startUtilityWorker } from "./utility-worker.js";
 import { keyProblem } from "../shared/key-format.js";
 import { PermitStore } from "./store.js";
 import { runCheck, type ActiveCheck } from "./check-runner.js";
@@ -75,6 +77,9 @@ let quitting = false;
 let background: Background | null = null;
 
 let keyNoticeShown = false;
+
+/** Failures the user only sees as a generic message are recorded here, without their messages or any user data. */
+let diagnostics: DiagnosticLog;
 
 let broadcastPending: Promise<void> | null = null;
 
@@ -206,8 +211,9 @@ async function sendSnapshot(): Promise<void> {
       checkTimes: describeCheckTimes(store.getCheckTimes()),
     });
     mainWindow.webContents.send("permit:snapshot-changed", current);
-  } catch {
+  } catch (cause) {
     // The next UI request will surface local storage errors through its reply.
+    diagnostics.record("snapshot:broadcast", null, cause);
   }
 }
 
@@ -219,7 +225,10 @@ function safeSender(event: Electron.IpcMainInvokeEvent): boolean {
 
 const NO_INPUT = z.undefined();
 
-/** Answers a window request once its input parses; otherwise answers with `invalid`. */
+/**
+ * Answers a window request once its input parses; otherwise answers with `invalid`. A failure the callback didn't
+ * answer itself gets a generic reply, and its classified cause is recorded under the channel's name.
+ */
 function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
   callback: (input: I) => Promise<BridgeResult<T>> | BridgeResult<T>): void {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -230,7 +239,9 @@ function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
 
     try {
       return await callback(parsed.data);
-    } catch {
+    } catch (cause) {
+      diagnostics.record(channel, null, cause);
+
       return { ok: false, error: "Something went wrong. Try again." };
     }
   });
@@ -268,10 +279,14 @@ function startCheck(permitId: string, key: string): StartedCheck {
       ? path.join(process.resourcesPath, "playwright-browsers")
       : path.join(app.getAppPath(), "vendor", "playwright-browsers");
 
+    const workerPath = path.join(__dirname, "worker.cjs");
+
     try {
       running = runCheck({ runId, permit, key, browserPath, cacheRoot: path.join(dataRoot(), "cache"),
-        workerPath: path.join(__dirname, "worker.cjs") });
-    } catch {
+        startWorker: (environment) => startUtilityWorker(workerPath, environment),
+        report: (operation, cause) => diagnostics.record(`check:${operation}`, runId, cause) });
+    } catch (cause) {
+      diagnostics.record("check:create-cache", runId, cause);
       finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
         requestCount: 0, actualModel: null, browserVersion: null });
 
@@ -382,6 +397,7 @@ async function startApp(): Promise<void> {
     return false;
   });
 
+  diagnostics = new DiagnosticLog(path.join(dataRoot(), "logs", "diagnostics.jsonl"));
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
   store.alignSchedule(new Date());
   checks = createQueue();
@@ -435,7 +451,11 @@ async function startApp(): Promise<void> {
   ipcMain.handle("permit:snapshot", async (event) => {
     if (!safeSender(event)) return null;
 
-    return snapshot();
+    // The window has no snapshot to show instead, so the request still fails; the cause is kept.
+    return snapshot().catch((cause: unknown) => {
+      diagnostics.record("permit:snapshot", null, cause);
+      throw cause;
+    });
   });
   handle("permit:add-and-check", addPermitSchema, "Enter a permit number.", (input) => {
     const jurisdictionId = resolveJurisdiction(input.jurisdiction);
@@ -523,10 +543,13 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    try {
-      await keys.save(key);
-    } catch {
-      return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
+    const saved = await keys.save(key);
+
+    if (saved._tag === "failed") {
+      if (saved.error._tag === "KeyStorageUnavailable") return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
+      diagnostics.record("permit:save-key", null, saved.error.cause);
+
+      return { ok: false, error: "The key couldn't be saved. Try again." };
     }
 
     keyNoticeShown = false;
