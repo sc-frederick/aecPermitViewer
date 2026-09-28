@@ -448,18 +448,12 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    try {
-      const id = store.addPermit(input.permitNumber, jurisdictionId);
-      checks.enqueue(id, "manual");
+    const added = store.addPermit(input.permitNumber, jurisdictionId);
 
-      return { ok: true, value: id };
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "SQLITE_CONSTRAINT_UNIQUE") {
-        return { ok: false, error: "That permit is already in the list." };
-      }
+    if (added._tag === "err") return { ok: false, error: "That permit is already in the list." };
+    checks.enqueue(added.value, "manual");
 
-      throw error;
-    }
+    return { ok: true, value: added.value };
   });
   handle("permit:check", permitIdSchema, "Permit not found.", async (id) => {
     const permit = store.getPermit(id);

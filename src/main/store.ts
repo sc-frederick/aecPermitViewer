@@ -68,6 +68,29 @@ const observationSchema = z.object({
   recordUrl: z.string(),
 }) satisfies z.ZodType<ObservationRow>;
 
+/**
+ * How node:sqlite reports a UNIQUE constraint violation: its generic code plus SQLite's extended result code
+ * SQLITE_CONSTRAINT_UNIQUE (2067). The message text is SQLite's and not part of the contract, so it isn't read.
+ */
+const uniqueViolationSchema = z.object({ code: z.literal("ERR_SQLITE_ERROR"), errcode: z.literal(2067) });
+
+/** The jurisdiction already has a permit whose number compares equal to the one being added. */
+export class AlreadyTracked extends Error {
+  readonly _tag = "AlreadyTracked" as const;
+  readonly jurisdictionId: JurisdictionId;
+  readonly permitNumber: string;
+
+  constructor(jurisdictionId: JurisdictionId, permitNumber: string, cause: unknown) {
+    super(`Permit ${permitNumber} is already tracked for ${jurisdictionId}.`, { cause });
+    this.name = "AlreadyTracked";
+    this.jurisdictionId = jurisdictionId;
+    this.permitNumber = permitNumber;
+  }
+}
+
+/** The new permit's id, or the reason it was not added. */
+export type AddPermitResult = { _tag: "ok"; value: string } | { _tag: "err"; error: AlreadyTracked };
+
 function userVersion(db: DatabaseSync): number {
   return userVersionSchema.parse(db.prepare("PRAGMA user_version").get()).user_version;
 }
@@ -290,17 +313,32 @@ export class PermitStore {
       .run(new Date().toISOString());
   }
 
-  addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): string {
+  /**
+   * Saves a permit and returns its new id. A permit whose number compares equal to one already saved for the same
+   * jurisdiction is not added again and returns AlreadyTracked. Other SQLite failures throw.
+   */
+  addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): AddPermitResult {
     if (!getJurisdiction(jurisdictionId)) throw new Error("Unsupported jurisdiction");
     const id = randomUUID();
-    // New permits join the scheduled checks by default; each can be excluded from its details.
-    // Hand-checked permits never do, because a scheduled check can't read their portal.
-    this.sql(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
-        permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
-        isManualJurisdiction(jurisdictionId) ? 0 : 1);
 
-    return id;
+    try {
+      // New permits join the scheduled checks by default; each can be excluded from its details.
+      // Hand-checked permits never do, because a scheduled check can't read their portal.
+      this.sql(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
+        VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
+          permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
+          isManualJurisdiction(jurisdictionId) ? 0 : 1);
+    } catch (cause) {
+      // The only UNIQUE constraint on permits is (jurisdiction_id, comparison_value). A clash on the fresh UUID
+      // primary key would report SQLITE_CONSTRAINT_PRIMARYKEY instead and still throw.
+      if (uniqueViolationSchema.safeParse(cause).success) {
+        return { _tag: "err", error: new AlreadyTracked(jurisdictionId, permitNumber, cause) };
+      }
+
+      throw cause;
+    }
+
+    return { _tag: "ok", value: id };
   }
 
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
