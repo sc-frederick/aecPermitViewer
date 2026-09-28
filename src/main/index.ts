@@ -726,12 +726,15 @@ async function startApp(): Promise<void> {
     // An update download writes inside the data folder, so it has to stop and let go of its files first.
     await updates.cancel();
     store.close();
+    // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.
+    diagnostics.stop();
 
     try { setOpenAtLogin(false); } catch { /* local data deletion continues */ }
 
     try {
       await rm(dataRoot(), { recursive: true, force: true });
     } catch {
+      diagnostics.restart();
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
       resumeAfterFailedShutdown();
 
