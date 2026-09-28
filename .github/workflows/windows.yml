@@ -7,6 +7,11 @@ on:
     tags: ['v*']
   pull_request:
 
+# A newer push to the same pull request replaces its run. Branch and tag runs always finish.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   package:
     runs-on: windows-latest
@@ -29,8 +34,9 @@ jobs:
       - run: npm ci --allow-git=all
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test
+      # Renderer and worker tests run in the staged browser.
       - run: npm run browser:stage
+      - run: npm test
       - run: npm run make:win
       - name: Test packaged browser HTTPS path
         shell: pwsh

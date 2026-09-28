@@ -252,6 +252,14 @@ export function recordHost(profile: JurisdictionProfile): string {
   return "recordHost" in profile ? profile.recordHost : new URL(profile.startUrl).host;
 }
 
+/**
+ * The portal a check's traffic lands on, used to pace checks: authorities that share one host, such as the Accela
+ * tenants on aca-prod.accela.com or the districts on one ePermit server, share one pace.
+ */
+export function checkScope(profile: AutomatedJurisdictionProfile): string {
+  return new URL(profile.startUrl).host;
+}
+
 /** An example of the number format the authority's search accepts, for the add form. */
 export function numberExample(profile: JurisdictionProfile): string | null {
   return "numberExample" in profile ? profile.numberExample : null;

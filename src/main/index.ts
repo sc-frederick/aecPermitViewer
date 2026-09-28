@@ -8,16 +8,19 @@ import { KeyStore } from "./key-store.js";
 import { keyProblem } from "../shared/key-format.js";
 import { PermitStore } from "./store.js";
 import { runCheck, type ActiveCheck } from "./check-runner.js";
+import { CheckQueue, type StartedCheck } from "./check-queue.js";
+import { NAVIGATION_MODEL } from "./jev.js";
 import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
 import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
 import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, openAtLoginAvailable, setOpenAtLogin } from "./background.js";
-import { describeCheckEvent, type CheckEvent } from "./notifications.js";
+import { describeCheckEvent, keyNotice, type CheckEvent } from "./notifications.js";
 import { isFailure } from "../shared/outcomes.js";
-import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot } from "../shared/permit.js";
-import { getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
-import { PREFERENCE_KEYS, type BridgeResult } from "../shared/bridge.js";
+import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
+import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot, type RunOutcome } from "../shared/permit.js";
+import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
+import { PREFERENCE_KEYS, type AppEvent, type BridgeResult } from "../shared/bridge.js";
+import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
 
 // The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
 // Electron's default so development builds can still show toasts.
@@ -59,17 +62,9 @@ let keys: KeyStore;
 
 let updates: UpdateManager;
 
-let active: { permitId: string; check: ActiveCheck } | null = null;
+let checks: CheckQueue;
 
-let pendingPermitId: string | null = null;
-
-let pendingCancelled = false;
-
-let processing: Promise<void> | null = null;
-
-const queue: string[] = [];
-
-let lastJurisdictionCheckEndedAt = 0;
+let schedulerTimer: NodeJS.Timeout | null = null;
 
 let shuttingDown = false;
 
@@ -93,6 +88,8 @@ const PREF_FLAGS = {
 } as const;
 
 const BACKGROUND_HINT_SHOWN = "background_hint_shown";
+
+const PLAYWRIGHT_VERSION = "1.63.0";
 
 function showWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -124,19 +121,21 @@ function announce(event: CheckEvent): void {
     keyNoticeShown = true;
   }
 
+  const notice: AppEvent = { tone: event.kind === "check-failed" || event.kind === "key-needed" ? "error" : "info", title: event.title, body: event.body };
+
+  if (event.permitId) notice.permitId = event.permitId;
   const windowInFront = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused());
 
   // Desktop toasts are a Windows feature here; on other development platforms (for example WSL,
   // where no notification service may answer) the message stays inside the app window.
   if (windowInFront || process.platform !== "win32") {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const tone = event.kind === "check-failed" || event.kind === "key-needed" ? "error" : "info";
-    mainWindow.webContents.send("permit:app-event", { tone, title: event.title, body: event.body, permitId: event.permitId });
+    mainWindow.webContents.send("permit:app-event", notice);
 
     return;
   }
 
-  background?.notify(event);
+  background?.notify(notice);
 }
 
 /** Records the result and, when it changes what the user knows, tells them. */
@@ -160,18 +159,13 @@ function dataRoot(): string {
 }
 
 async function snapshot(): Promise<AppSnapshot> {
-  const checking = new Set(queue);
-
-  if (active) checking.add(active.permitId);
-
-  if (pendingPermitId) checking.add(pendingPermitId);
   const browserVersion = store.latestBrowserVersion();
 
   return {
-    permits: store.listPermits(checking),
+    permits: store.listPermits(checks.checkingIds()),
     keyState: await keys.state().catch(() => "unavailable"),
     appVersion: app.getVersion(),
-    browserVersion: browserVersion ? `Playwright 1.63.0 · Chromium ${browserVersion}` : "Playwright 1.63.0 · bundled Chromium",
+    browserVersion: `Playwright ${PLAYWRIGHT_VERSION} · ${browserVersion ? `Chromium ${browserVersion}` : "bundled Chromium"}`,
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
@@ -242,128 +236,132 @@ function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
   });
 }
 
-function scheduleCheck(permitId: string): void {
-  if (shuttingDown || active?.permitId === permitId || pendingPermitId === permitId || queue.includes(permitId)) return;
-  const permit = store.getPermit(permitId);
+/** Whether a scheduled check may start now: scheduling on, inside the check window, and the permit included. */
+function scheduledEligible(permitId: string): boolean {
+  if (shuttingDown || store.getMonitoring() !== "scheduled" || !withinCheckWindow(new Date(), store.getCheckTimes())) return false;
 
-  // A permit saved under a jurisdiction the app no longer supports stays visible but is never checked,
-  // and a hand-checked permit is never sent to the browser worker.
-  if (!permit || !getAutomatedJurisdiction(permit.jurisdictionId)) return;
-  queue.push(permitId);
-  void broadcast();
-  kickQueue();
+  return store.getPermit(permitId)?.monitoringEnabled === true;
 }
 
-function kickQueue(): void {
-  if (processing || shuttingDown || queue.length === 0) return;
-  processing = runNext().catch(() => {
-    // Persistence failures cannot be represented as a portal status.
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("permit:local-error", "Couldn't save locally. Restart the app.");
-  }).finally(() => {
-    processing = null;
+/** The portal pacing scope for a permit. Hand-checked permits and unsupported jurisdictions have none, so they're never queued. */
+function permitScope(permitId: string): string | null {
+  const permit = store.getPermit(permitId);
+  const profile = permit ? getAutomatedJurisdiction(permit.jurisdictionId) : null;
 
-    if (!shuttingDown && queue.length > 0) kickQueue();
-  });
+  return profile ? checkScope(profile) : null;
 }
 
-async function runNext(): Promise<void> {
-  if (shuttingDown || queue.length === 0) return;
-  const permitId = queue.shift()!;
-  pendingPermitId = permitId;
-  pendingCancelled = false;
+/** Runs one browser check and records its result. Resolves null when no run was recorded. */
+function startCheck(permitId: string, key: string): StartedCheck {
+  let cancelled = false;
+  let running: ActiveCheck | null = null;
 
-  try {
-  const permit = store.getPermit(permitId);
+  const finished = (async (): Promise<RunOutcome | null> => {
+    const permit = store.getPermit(permitId);
 
-  if (!permit) return;
-  const spacing = Math.max(0, 30_000 - (Date.now() - lastJurisdictionCheckEndedAt));
+    if (!permit || !(await browserVerified) || cancelled || shuttingDown) return null;
 
-  if (spacing > 0) {
-    const until = Date.now() + spacing;
+    const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: PLAYWRIGHT_VERSION,
+      requestedModel: NAVIGATION_MODEL.model, promptVersion: NAVIGATION_MODEL.promptVersion });
 
-    while (Date.now() < until && !shuttingDown && !pendingCancelled) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(100, until - Date.now())));
+    const browserPath = app.isPackaged
+      ? path.join(process.resourcesPath, "playwright-browsers")
+      : path.join(app.getAppPath(), "vendor", "playwright-browsers");
+
+    try {
+      running = runCheck({ runId, permit, key, browserPath, cacheRoot: path.join(dataRoot(), "cache"),
+        workerPath: path.join(__dirname, "worker.cjs") });
+    } catch {
+      finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
+        requestCount: 0, actualModel: null, browserVersion: null });
+
+      return "browser_error";
     }
-  }
 
-  if (shuttingDown || pendingCancelled) return;
-  const key = await keys.read().catch(() => null);
-
-  if (shuttingDown || pendingCancelled) return;
-
-  if (!(await browserVerified) || shuttingDown || pendingCancelled) return;
-  const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: "1.63.0" });
-
-  if (!key) {
-    finishAndAnnounce({ runId, permitId, outcome: "authentication_error", actionCount: 0,
-      requestCount: 0, actualModel: null, browserVersion: null });
-    lastJurisdictionCheckEndedAt = Date.now();
-
-    return;
-  }
-
-  const browserPath = app.isPackaged
-    ? path.join(process.resourcesPath, "playwright-browsers")
-    : path.join(app.getAppPath(), "vendor", "playwright-browsers");
-
-  let check: ActiveCheck;
-
-  try {
-    check = runCheck({ runId, permit, key, browserPath, cacheRoot: path.join(dataRoot(), "cache"),
-      workerPath: path.join(__dirname, "worker.cjs") });
-  } catch {
-    finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
-      requestCount: 0, actualModel: null, browserVersion: null });
-
-    return;
-  }
-
-  active = { permitId, check };
-  // The row already shows checking, but an open history now has a started run to show.
-  void broadcast();
-  const result = await check.result;
-  await check.closed;
-
-  try {
+    if (cancelled) running.cancel();
+    // The row already shows checking, but an open history now has a started run to show.
+    void broadcast();
+    const result = await running.result;
+    await running.closed;
     finishAndAnnounce({ runId, permitId, ...result });
-  } finally {
-    active = null;
-  }
 
-  lastJurisdictionCheckEndedAt = Date.now();
-  } finally {
-    pendingPermitId = null;
-    pendingCancelled = false;
-    // Every path out of a check, including a saved result, is sent once the permit is no longer pending.
-    await broadcast();
-  }
+    return result.outcome;
+  })();
+
+  return { finished, cancel: () => { cancelled = true; running?.cancel(); } };
+}
+
+function createQueue(): CheckQueue {
+  return new CheckQueue({
+    scopeOf: permitScope,
+    scheduledEligible,
+    readKey: () => keys.read(),
+    start: startCheck,
+    defer: (permitId) => store.deferDue(permitId, nextSlotAfter(new Date(), store.getCheckTimes())),
+    keyUnavailable: (problem, requested) => {
+      // Someone who asked for a check hears why it didn't run, even after the first notice.
+      if (requested) keyNoticeShown = false;
+
+      // A notification problem must never stop the queue.
+      try { announce(keyNotice(problem)); } catch { /* the key banner still shows in the window */ }
+    },
+    saveFailed: () => {
+      // Persistence failures cannot be represented as a portal status.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("permit:local-error", "Couldn't save locally. Restart the app.");
+    },
+    changed: () => { void broadcast(); },
+  });
 }
 
 async function stopChecks(): Promise<boolean> {
   shuttingDown = true;
-  queue.length = 0;
-  active?.check.cancel();
+  stopScheduler();
 
-  if (processing) {
-    const completed = await Promise.race([
-      processing.then(() => true),
-      new Promise<boolean>((resolve) => { const timer = setTimeout(() => resolve(false), 10_000); timer.unref(); }),
-    ]);
+  const completed = await Promise.race([
+    checks.stop().then(() => true),
+    new Promise<boolean>((resolve) => { const timer = setTimeout(() => resolve(false), 10_000); timer.unref(); }),
+  ]);
 
-    if (!completed) return false;
-  }
-
-  return active === null;
+  return completed && !checks.busy;
 }
 
-async function scheduleDue(): Promise<void> {
-  if (store.getMonitoring() !== "scheduled") return;
+/** An update or deletion that couldn't go ahead returns to the running app. */
+function resumeAfterFailedShutdown(): void {
+  shuttingDown = false;
+  checks.restart();
+  startScheduler();
+  void broadcast();
+}
+
+/** Queues due permits. The interval and resume listener are stopped before the store closes, and this checks as well. */
+function scheduleDue(): void {
+  if (shuttingDown || checks.keyPaused || store.getMonitoring() !== "scheduled") return;
   const now = new Date();
 
   // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
   if (!withinCheckWindow(now, store.getCheckTimes())) return;
 
-  for (const id of store.duePermitIds(now.toISOString())) scheduleCheck(id);
+  for (const id of store.duePermitIds(now.toISOString())) checks.enqueue(id, "scheduled");
+}
+
+function startScheduler(): void {
+  if (schedulerTimer) return;
+  schedulerTimer = setInterval(scheduleDue, 60_000);
+  schedulerTimer.unref();
+  powerMonitor.on("resume", scheduleDue);
+}
+
+function stopScheduler(): void {
+  if (schedulerTimer) clearInterval(schedulerTimer);
+  schedulerTimer = null;
+  powerMonitor.off("resume", scheduleDue);
+}
+
+/** A scheduling setting changed: queued scheduled work that no longer qualifies is dropped, and newly due work queued. */
+function scheduleChanged(): void {
+  checks.prune();
+  scheduleDue();
+  void broadcast();
 }
 
 async function startApp(): Promise<void> {
@@ -384,12 +382,9 @@ async function startApp(): Promise<void> {
     return false;
   });
 
-  if (process.platform !== "win32") {
-    // Development on other platforms is permitted; the packaged release is Windows-only.
-  }
-
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
   store.alignSchedule(new Date());
+  checks = createQueue();
   keys = new KeyStore(dataRoot());
   updates = new UpdateManager(dataRoot(), app.getVersion(),
     app.isPackaged ? path.join(process.resourcesPath, "authenticode.ps1") : path.join(__dirname, "authenticode.ps1"),
@@ -398,11 +393,10 @@ async function startApp(): Promise<void> {
   background = new Background(path.join(__dirname, "assets"), {
     showWindow,
     openPermit: openPermitInWindow,
-    checkAll: () => { for (const permit of store.listPermits()) scheduleCheck(permit.id); },
+    checkAll: () => { for (const permit of store.listPermits()) checks.enqueue(permit.id, "manual"); },
     setScheduled: (enabled) => {
       store.setMonitoring(enabled ? "scheduled" : "manual");
-      void scheduleDue();
-      void broadcast();
+      scheduleChanged();
     },
     quit: () => app.quit(),
   });
@@ -456,7 +450,7 @@ async function startApp(): Promise<void> {
 
     try {
       const id = store.addPermit(input.permitNumber, jurisdictionId);
-      scheduleCheck(id);
+      checks.enqueue(id, "manual");
 
       return { ok: true, value: id };
     } catch (error) {
@@ -467,13 +461,19 @@ async function startApp(): Promise<void> {
       throw error;
     }
   });
-  handle("permit:check", permitIdSchema, "Permit not found.", (id) => {
+  handle("permit:check", permitIdSchema, "Permit not found.", async (id) => {
     const permit = store.getPermit(id);
 
     if (!permit) return { ok: false, error: "Permit not found." };
 
     if (isManualJurisdiction(permit.jurisdictionId)) return { ok: false, error: "This permit is checked by hand." };
-    scheduleCheck(permit.id);
+    const keyState = await keys.state().catch(() => "unavailable");
+
+    if (keyState !== "configured") {
+      return { ok: false, error: keyState === "missing" ? "Add your TypeSafe key in Settings first." : "Key storage isn't available on this computer." };
+    }
+
+    checks.enqueue(permit.id, "manual");
 
     return { ok: true, value: null };
   });
@@ -505,13 +505,7 @@ async function startApp(): Promise<void> {
     return { ok: true, value: null };
   });
   handle("permit:cancel", permitIdSchema, "Permit not found.", (id) => {
-    const queuedAt = queue.indexOf(id);
-
-    if (queuedAt >= 0) queue.splice(queuedAt, 1);
-
-    if (pendingPermitId === id) pendingCancelled = true;
-
-    if (active?.permitId === id) active.check.cancel();
+    checks.cancel(id);
     void broadcast();
 
     return { ok: true, value: null };
@@ -536,6 +530,9 @@ async function startApp(): Promise<void> {
     }
 
     keyNoticeShown = false;
+    // Work paused for want of a key picks up now rather than at the next slot.
+    checks.resume();
+    scheduleDue();
     await broadcast();
 
     return { ok: true, value: null };
@@ -571,13 +568,8 @@ async function startApp(): Promise<void> {
   });
   handle("permit:remove", permitIdSchema, "Permit not found.", (id) => {
     if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
-    const queuedAt = queue.indexOf(id);
 
-    if (queuedAt >= 0) queue.splice(queuedAt, 1);
-
-    if (active?.permitId === id || pendingPermitId === id) {
-      return { ok: false, error: "Cancel the running check first." };
-    }
+    if (!checks.remove(id)) return { ok: false, error: "Cancel the running check first." };
 
     store.removePermit(id);
     void broadcast();
@@ -586,8 +578,7 @@ async function startApp(): Promise<void> {
   });
   handle("permit:set-monitoring", z.enum(["manual", "scheduled"]), "Invalid monitoring mode.", (mode) => {
     store.setMonitoring(mode);
-    void scheduleDue();
-    void broadcast();
+    scheduleChanged();
 
     return { ok: true, value: null };
   });
@@ -598,22 +589,20 @@ async function startApp(): Promise<void> {
 
     if (!normalized) return { ok: false, error: checkTimesProblem };
     store.setCheckTimes(normalized, new Date());
-    void scheduleDue();
-    void broadcast();
+    scheduleChanged();
 
     return { ok: true, value: null };
   });
   handle("permit:set-permit-monitoring", z.object({ permitId: permitIdSchema, enabled: z.boolean() }), "Permit not found.", (input) => {
     if (!store.getPermit(input.permitId)) return { ok: false, error: "Permit not found." };
     store.setPermitMonitoring(input.permitId, input.enabled);
-    void scheduleDue();
-    void broadcast();
+    scheduleChanged();
 
     return { ok: true, value: null };
   });
   // Any other permit ID is simply not found, so only the project number can be invalid.
   handle("permit:set-project-number", setProjectNumberSchema.extend({ permitId: z.string() }),
-    "Use letters, numbers, spaces, and - . _ / only (40 at most).", (input) => {
+    `Use letters, numbers, spaces, and - . _ / only (${PROJECT_NUMBER_MAX} at most).`, (input) => {
     if (!store.setProjectNumber(input.permitId, input.projectNumber)) return { ok: false, error: "Permit not found." };
     void broadcast();
 
@@ -658,7 +647,7 @@ async function startApp(): Promise<void> {
     }
 
     if (!(await stopChecks())) {
-      shuttingDown = false;
+      resumeAfterFailedShutdown();
 
       return { ok: false, error: "A check is still running. Try again." };
     }
@@ -676,14 +665,14 @@ async function startApp(): Promise<void> {
       return { ok: true, value: null };
     } catch {
       store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
-      shuttingDown = false;
+      resumeAfterFailedShutdown();
 
       return { ok: false, error: "The installer couldn't start. Restart the app and try again." };
     }
   });
   handle("permit:delete-local-data", z.literal("DELETE LOCAL DATA"), "Deletion was not confirmed.", async () => {
     if (!(await stopChecks())) {
-      shuttingDown = false;
+      resumeAfterFailedShutdown();
 
       return { ok: false, error: "A check is still running. Try again." };
     }
@@ -692,7 +681,15 @@ async function startApp(): Promise<void> {
 
     try { setOpenAtLogin(false); } catch { /* local data deletion continues */ }
 
-    await rm(dataRoot(), { recursive: true, force: true });
+    try {
+      await rm(dataRoot(), { recursive: true, force: true });
+    } catch {
+      store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
+      resumeAfterFailedShutdown();
+
+      return { ok: false, error: "Some local data couldn't be deleted. Try again." };
+    }
+
     quitAllowed = true;
     app.quit();
 
@@ -705,9 +702,8 @@ async function startApp(): Promise<void> {
   if (!(process.argv.includes(HIDDEN_LAUNCH_ARG) && background.available)) mainWindow.show();
   await broadcast(); // Populates the tray menu and tooltip before anything changes.
 
-  setInterval(() => { void scheduleDue(); }, 60_000).unref();
-  powerMonitor.on("resume", () => { void scheduleDue(); });
-  await scheduleDue();
+  startScheduler();
+  scheduleDue();
 }
 
 app.on("before-quit", (event) => {

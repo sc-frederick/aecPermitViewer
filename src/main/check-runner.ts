@@ -2,7 +2,8 @@ import { utilityProcess } from "electron";
 import { mkdirSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { chooseNavigation } from "./jev.js";
+import type { TypeSafeClient } from "@typesafe-ai/sdk";
+import { chooseNavigation, navigationClient, type NavigationDecision } from "./jev.js";
 import { parseDisplayedStatus, type ObservationRow, type PermitRow, type RunOutcome } from "../shared/permit.js";
 import { workerToMainSchema, type MainToWorker, type WorkerToMain } from "../shared/worker-protocol.js";
 
@@ -26,6 +27,25 @@ const MAX_ACTIONS = 20;
 const MAX_REQUESTS = 20;
 
 const DEADLINE_MS = 180_000;
+
+/** More offered steps than this means the page isn't one the worker understands. */
+const MAX_CANDIDATES = 30;
+
+/** Variables the browser worker needs on Windows. The key and the rest of the app's environment stay out. */
+const WORKER_ENVIRONMENT = ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"] as const;
+
+/** The environment a browser worker starts with: the allow-listed variables and the bundled browser's location. */
+export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+
+  for (const name of WORKER_ENVIRONMENT) {
+    if (process.env[name]) environment[name] = process.env[name];
+  }
+
+  environment.PLAYWRIGHT_BROWSERS_PATH = browserPath;
+
+  return environment;
+}
 
 export function runCheck(input: {
   runId: string;
@@ -53,13 +73,8 @@ export function runCheck(input: {
     let decisionPending = false;
     let forceKillTimer: NodeJS.Timeout | null = null;
     const repeated = new Map<string, number>();
-    const environment: NodeJS.ProcessEnv = {};
-
-    for (const name of ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"]) {
-      if (process.env[name]) environment[name] = process.env[name];
-    }
-
-    environment.PLAYWRIGHT_BROWSERS_PATH = input.browserPath;
+    let client: TypeSafeClient | null = null;
+    const environment = workerEnvironment(input.browserPath);
     environment.TEMP = cachePath;
     environment.TMP = cachePath;
     let worker: Electron.UtilityProcess;
@@ -158,30 +173,39 @@ export function runCheck(input: {
 
           const observation = message.observation;
 
-          if (observation.candidates.length === 0 || observation.candidates.length > 30) {
+          if (observation.candidates.length === 0 || observation.candidates.length > MAX_CANDIDATES) {
             finish("unsupported_page");
 
             return;
           }
 
           decisionPending = true;
+          const [only] = observation.candidates;
 
-          const decision = await chooseNavigation({
-            key: input.key,
-            jurisdictionId: input.permit.jurisdictionId,
-            observation,
-            requestedNumber: input.permit.permitNumber,
-            signal: controller.signal,
-            remainingRequests: MAX_REQUESTS - requestCount,
-            deadline,
-            onAttempt: () => { requestCount += 1; },
-          });
+          const settled = only && observation.candidates.length === 1 && only.established &&
+            !repeated.has(`${observation.fingerprint}:${only.id}`);
+
+          // A lone step the worker's own checks established needs no model call. The worker still revalidates the
+          // page before acting, and the repeat and action limits below still apply. If the page hasn't moved since
+          // that step, Jev decides instead, so a slow page can still get WAIT.
+          const decision: NavigationDecision = settled
+            ? { _tag: "chosen", candidateId: only.id, attempts: 0, actualModel: null }
+            : await chooseNavigation({
+              client: client ??= navigationClient(input.key),
+              jurisdictionId: input.permit.jurisdictionId,
+              observation,
+              requestedNumber: input.permit.permitNumber,
+              signal: controller.signal,
+              remainingRequests: MAX_REQUESTS - requestCount,
+              deadline,
+              onAttempt: () => { requestCount += 1; },
+            });
 
           decisionPending = false;
 
           if (done) return;
 
-          if ("actualModel" in decision && decision.actualModel) actualModel = decision.actualModel;
+          if (decision.actualModel) actualModel = decision.actualModel;
 
           if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page") {
             finish(decision._tag);

@@ -124,7 +124,7 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
 
   if (!frame) {
     return await page.locator(SEARCH_RECORDS_LINK).count() > 0
-      ? { phase: "search", ...none, visibleControls: ["Search Records link"], candidates: [{ id: "open_public_search",
+      ? { phase: "search", ...none, visibleControls: ["Search Records link"], candidates: [{ id: "open_public_search", established: true,
         description: "Open Search Records, RegPermitting's public search." }] }
       : { phase: "search", ...none };
   }
@@ -140,15 +140,15 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
     return exact.length > 1
       ? { phase: "results", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact, candidates: [] }
       : { phase: "search", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact,
-        candidates: exact.length === 1 ? [{ id: "open_exact_result", description: `Open the result whose number exactly matches ${requested}.` }] : [] };
+        candidates: exact.length === 1 ? [{ id: "open_exact_result", established: true, description: `Open the result whose number exactly matches ${requested}.` }] : [] };
   }
 
   const candidates: Candidate[] = [];
 
   if (!entered) {
-    candidates.push({ id: "fill_record_number", description: `Open ${tab} and enter the exact ${wanted.kind} number.` });
+    candidates.push({ id: "fill_record_number", established: true, description: `Open ${tab} and enter the exact ${wanted.kind} number.` });
   } else if (await frame.locator(form(requested).button).filter({ visible: true }).count() > 0) {
-    candidates.push({ id: "search_record_number", description: `Submit ${tab} for the exact ${wanted.kind} number.` });
+    candidates.push({ id: "search_record_number", established: true, description: `Submit ${tab} for the exact ${wanted.kind} number.` });
   }
 
   return { phase: "search", inputValue, formLabels: [tab], visibleControls: [`${tab} field`], resultNumbers: [], candidates };

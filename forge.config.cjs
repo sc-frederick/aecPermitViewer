@@ -39,6 +39,19 @@ async function appFilesToSign(directory) {
   return files;
 }
 
+// Only what the packaged app loads goes into its archive. The browser payload ships once, as its own resource below;
+// source, tests, docs, tooling, and build output stay out.
+const RUNTIME_PATHS = [/^\/package\.json$/, /^\/dist(\/|$)/, /^\/node_modules(\/|$)/];
+
+// Tool caches and links that live beside the packages, such as .bin, .cache, and .vite.
+const BUILD_ONLY_PATHS = [/^\/node_modules\/\.[^/]+(\/|$)/, /^\/dist\/.*\.map$/];
+
+function excludedFromApp(file) {
+  if (file === "") return false;
+
+  return !RUNTIME_PATHS.some((pattern) => pattern.test(file)) || BUILD_ONLY_PATHS.some((pattern) => pattern.test(file));
+}
+
 module.exports = {
   hooks: {
     postPackage: async ({ platform, outputPaths }) => {
@@ -57,6 +70,7 @@ module.exports = {
   },
   packagerConfig: {
     asar: true,
+    ignore: excludedFromApp,
     executableName: "PermitMonitor",
     icon: path.resolve(__dirname, "assets/icon"),
     extraResource: [

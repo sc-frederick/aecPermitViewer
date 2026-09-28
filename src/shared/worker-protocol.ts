@@ -5,6 +5,11 @@ import type { JurisdictionId } from "./jurisdictions.js";
 const candidateSchema = z.object({
   id: z.string(),
   description: z.string(),
+  /**
+   * True when the worker's own checks establish this step: the field is visible and enabled, the result's number is an
+   * exact match, or the link leads to the portal's own search. Main takes an established lone step without asking Jev.
+   */
+  established: z.boolean(),
 });
 
 export type Candidate = z.infer<typeof candidateSchema>;

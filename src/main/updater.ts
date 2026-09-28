@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, randomUUID, timingSafeEqual, verify } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, readFileSync } from "node:fs";
-import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, rename, rm, stat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { UpdateCheck } from "../shared/bridge.js";
@@ -67,6 +67,7 @@ function safeHttpsUrl(value: string): URL | null {
   }
 }
 
+/** Follows up to three HTTPS redirects by hand. Each redirect's body is released before the next request. */
 async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
   let current = url;
 
@@ -74,6 +75,7 @@ async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
     const response = await fetch(current, { redirect: "manual", signal });
 
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    await response.body?.cancel().catch(() => undefined);
     const location = response.headers.get("location");
 
     if (!location) throw new Error("Update redirect missing location");
@@ -125,6 +127,51 @@ function sameHex(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Writes a download to `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure the
+ * stream is cancelled, the file is closed and removed, and the error is rethrown. `onProgress` runs after each read.
+ */
+export async function saveDownload(body: ReadableStream<Uint8Array>, file: string, size: number, onProgress: () => void): Promise<string> {
+  const reader = body.getReader();
+  let handle: FileHandle | null = null;
+
+  try {
+    handle = await open(file, "wx", 0o600);
+    const hash = createHash("sha256");
+    let bytes = 0;
+
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      onProgress();
+
+      if (done) break;
+      bytes += chunk.byteLength;
+
+      if (bytes > size) throw new Error("Update size exceeded");
+      hash.update(chunk);
+      let offset = 0;
+
+      while (offset < chunk.byteLength) {
+        const result = await handle.write(chunk, offset, chunk.byteLength - offset, null);
+
+        if (result.bytesWritten <= 0) throw new Error("Update write failed");
+        offset += result.bytesWritten;
+      }
+    }
+
+    if (bytes !== size) throw new Error("Update ended early");
+    await handle.close();
+    handle = null;
+
+    return hash.digest("hex");
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    await handle?.close().catch(() => undefined);
+    await rm(file, { force: true });
+    throw error;
+  }
+}
+
 export class UpdateManager {
   private readonly config: { feedUrl: string; publicKeySpkiBase64: string; expectedPublisher: string };
   private available: UpdatePayload | null = null;
@@ -142,7 +189,11 @@ export class UpdateManager {
     if (!feed || !this.config.publicKeySpkiBase64) return { state: "unavailable" };
     const response = await fetchHttps(feed, AbortSignal.timeout(10_000));
 
-    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 32_768) throw new Error("Update manifest unavailable");
+    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 32_768) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("Update manifest unavailable");
+    }
+
     const text = await boundedText(response, 32_768);
     const payload = verifyReleaseEnvelope(text, this.config.publicKeySpkiBase64, this.config.expectedPublisher);
 
@@ -166,54 +217,29 @@ export class UpdateManager {
     // The installer is large, so abort on a stalled connection rather than a fixed total time.
     const stall = new AbortController();
     let stallTimer = setTimeout(() => stall.abort(), 60_000);
-
-    const response = await fetchHttps(installerUrl, stall.signal).catch((cause: unknown) => {
-      clearTimeout(stallTimer);
-      throw cause;
-    });
-
-    if (!response.ok || !response.body) {
-      clearTimeout(stallTimer);
-      throw new Error("Update download failed");
-    }
-
-    const file = await open(temporary, "wx", 0o600);
-    let bytes = 0;
-    const hash = createHash("sha256");
+    let hash: string;
 
     try {
-      const reader = response.body.getReader();
+      const response = await fetchHttps(installerUrl, stall.signal);
 
-      while (true) {
-        const { done, value: chunk } = await reader.read();
+      if (!response.ok || !response.body) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error("Update download failed");
+      }
+
+      hash = await saveDownload(response.body, temporary, payload.size, () => {
         clearTimeout(stallTimer);
         stallTimer = setTimeout(() => stall.abort(), 60_000);
-
-        if (done) break;
-        bytes += chunk.byteLength;
-
-        if (bytes > payload.size || bytes > 1_000_000_000) throw new Error("Update size exceeded");
-        hash.update(chunk);
-        let offset = 0;
-
-        while (offset < chunk.byteLength) {
-          const result = await file.write(chunk, offset, chunk.byteLength - offset, null);
-
-          if (result.bytesWritten <= 0) throw new Error("Update write failed");
-          offset += result.bytesWritten;
-        }
-      }
+      });
     } catch (error) {
-      await file.close();
-      await rm(temporary, { force: true });
+      // Aborting ends the connection, whatever step failed.
+      stall.abort();
       throw error;
     } finally {
       clearTimeout(stallTimer);
     }
 
-    await file.close();
-
-    if (bytes !== payload.size || !sameHex(hash.digest("hex"), payload.sha256)) {
+    if (!sameHex(hash, payload.sha256)) {
       await rm(temporary, { force: true });
       throw new Error("Update hash mismatch");
     }

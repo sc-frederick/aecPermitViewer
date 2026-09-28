@@ -8,9 +8,9 @@ The app classifies the record-level status it saves (see `src/shared/action.ts`)
 - **AHJ**: the authority having jurisdiction is working on it: intake, review, other-agency review, or issuing after payment.
 - **None**: the record was issued, finished, or deliberately ended (withdrawn, void, canceled).
 
-When in doubt, a status counts as AEC's. It's better to look at a permit that turns out not to need anything than to miss one that does. So "AEC, to be safe" below covers two groups. One is wording the survey couldn't pin down. The other is records that stopped short: expired, denied, revoked, abandoned, or closed by staff, where someone at AEC should decide whether to renew, resubmit, or let it go. AHJ is used only where the survey saw the authority working under that wording. Revise these as the portals' wording becomes better understood.
+When in doubt, a status counts as AEC's, and its badge reads **AEC?** so it stands apart from an explicit request. It's better to look at a permit that turns out not to need anything than to miss one that does. So "AEC, to be safe" below covers two groups. One is wording the survey couldn't pin down. The other is records that stopped short: expired, denied, revoked, abandoned, or closed by staff, where someone at AEC should decide whether to renew, resubmit, or let it go. AHJ is used only where the survey saw the authority working under that wording. Revise these as the portals' wording becomes better understood.
 
-Wording is matched per authority, ignoring case and runs of spaces. The same words can mean different things on different portals, so nothing carries over between authorities. Wording a county or city hasn't been seen to use also counts as AEC, and its badge's tooltip says the wording isn't on the list. Water management district permits show a dash.
+Wording is matched per authority, ignoring case and runs of spaces. The same words can mean different things on different portals, so nothing carries over between authorities. Wording a county or city hasn't been seen to use also counts as AEC?, and its badge's tooltip says the wording isn't on the list. Water management district permits show a dash.
 
 ## Method
 
@@ -56,7 +56,7 @@ Field: `Status` on the permit page. The portal's Permit Status dropdown lists 23
 
 "On Hold" and "Health Department Hold" count as AEC because the holds seen were the applicant's to clear (a revision fee, a septic release), but the reason varies; the record's Holds tab gives it. Fees can also be due under another status: one plan record read "In Review" with $238.00 unpaid.
 
-Plan records (numbers like DEVP-, SUB-, CSC-, REZ-) show their status in a different field, `#label-PlanDetail-Status`, which the app does not read, so a plan number would likely fail its check.
+Plan records (numbers like DEVP-, SUB-, CSC-, REZ-) show their status in a different field, `#label-PlanDetail-Status`. Since September 28, 2026 the app reads a `#/plan/` record from its plan fields and a `#/permit/` record from its permit fields, never one from the other. Plan statuses seen then include Requires Resubmittal, Void, and Deficient; Deficient isn't on the list above, so it shows as AEC?.
 
 ## Click2Gov: St. Petersburg
 

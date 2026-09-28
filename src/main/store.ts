@@ -308,10 +308,13 @@ export class PermitStore {
     return row ? mapPermit(row, false) : null;
   }
 
+  /** Records a started check with the versions and model configuration it runs under. */
   startRun(input: {
     permitId: string;
     appVersion: string;
     playwrightVersion: string;
+    requestedModel: string;
+    promptVersion: string;
   }): string {
     const permit = this.row(jurisdictionRefSchema, "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?", input.permitId);
 
@@ -322,8 +325,9 @@ export class PermitStore {
     this.transaction(() => {
       this.sql(`INSERT INTO check_runs
         (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
-        VALUES (?, ?, ?, ?, ?, 'navigation-3', 'jev-1.13.0', ?)`)
-        .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.playwrightVersion);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.promptVersion,
+          input.requestedModel, input.playwrightVersion);
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });
 
@@ -478,6 +482,12 @@ export class PermitStore {
     return this.rows(dueSchema, `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
       AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`, now)
       .flatMap((row) => isManualJurisdiction(row.jurisdictionId) ? [] : [row.id]);
+  }
+
+  /** Moves a permit's due time to `slot` unless it is already due later, so a cancelled check isn't picked up again. */
+  deferDue(id: string, slot: Date): void {
+    const value = slot.toISOString();
+    this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(value, id, value);
   }
 
   removePermit(id: string): boolean {
