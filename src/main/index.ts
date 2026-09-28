@@ -251,8 +251,11 @@ function permitScope(permitId: string): string | null {
   return profile ? checkScope(profile) : null;
 }
 
-/** Runs one browser check and records its result. Resolves null when no run was recorded. */
-function startCheck(permitId: string, key: string): StartedCheck {
+/**
+ * Runs one browser check and records its result. Resolves null when no run was recorded, including when the queue no
+ * longer wants the check once the browser payload is verified.
+ */
+function startCheck(permitId: string, key: string, stillWanted: () => boolean): StartedCheck {
   let cancelled = false;
   let running: ActiveCheck | null = null;
 
@@ -260,6 +263,9 @@ function startCheck(permitId: string, key: string): StartedCheck {
     const permit = store.getPermit(permitId);
 
     if (!permit || !(await browserVerified) || cancelled || shuttingDown) return null;
+
+    // Verification can take a while; scheduled work that stopped qualifying meanwhile doesn't start.
+    if (!stillWanted()) return null;
 
     const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: PLAYWRIGHT_VERSION,
       requestedModel: NAVIGATION_MODEL.model, promptVersion: NAVIGATION_MODEL.promptVersion });

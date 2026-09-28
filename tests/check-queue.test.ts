@@ -2,10 +2,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckQueue, SCOPE_SPACING_MS, type KeyProblem, type StartedCheck } from "../src/main/check-queue.js";
 import type { RunOutcome } from "../src/shared/permit.js";
 
-/** What the test changes between steps: the saved key ("unreadable" makes reading it fail), and whether scheduled work still qualifies. */
+/**
+ * What the test changes between steps: the saved key ("unreadable" makes reading it fail), when reading it finishes,
+ * and whether scheduled work still qualifies.
+ */
 interface HarnessState {
   key: string | null;
+  keyRead: Promise<void>;
   eligible: boolean;
+}
+
+/** A promise the test settles by hand, standing in for a slow prerequisite. */
+interface Gate {
+  promise: Promise<void>;
+  open: () => void;
+}
+
+/** A gate that stays closed until the test opens it. */
+function gate(): Gate {
+  let open: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+
+  return { promise, open };
 }
 
 /** A queue wired to in-memory answers; each started check waits until the test finishes it. */
@@ -14,12 +32,14 @@ function harness(scopes: Record<string, string>) {
   const running = new Map<string, (outcome: RunOutcome) => void>();
   const deferred: string[] = [];
   const keyNotices: Array<[KeyProblem, boolean]> = [];
-  const state: HarnessState = { key: "key", eligible: true };
+  const state: HarnessState = { key: "key", keyRead: Promise.resolve(), eligible: true };
 
   const queue = new CheckQueue({
     scopeOf: (permitId) => scopes[permitId] ?? null,
     scheduledEligible: () => state.eligible,
     readKey: async () => {
+      await state.keyRead;
+
       if (state.key === "unreadable") throw new Error("decryption failed");
 
       return state.key;
@@ -180,6 +200,78 @@ describe("scheduled eligibility", () => {
     await finish("a1");
     await vi.advanceTimersByTimeAsync(SCOPE_SPACING_MS);
     expect(started).toEqual(["a1", "a2"]);
+  });
+
+  it("drops scheduled work that stops qualifying while its key is read", async () => {
+    const { queue, started, deferred, state } = harness({ a1: "accela" });
+    const keyRead = gate();
+    state.keyRead = keyRead.promise;
+    queue.enqueue("a1", "scheduled");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queue.busy).toBe(true);
+
+    // Switching to manual mode prunes the queue, but this entry is already starting.
+    state.eligible = false;
+    queue.prune();
+    keyRead.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual([]);
+    expect(deferred).toEqual([]);
+    expect(queue.busy).toBe(false);
+  });
+
+  it("still starts a manual request after scheduling turns off during its key read", async () => {
+    const { queue, started, state } = harness({ a1: "accela" });
+    const keyRead = gate();
+    state.keyRead = keyRead.promise;
+    queue.enqueue("a1", "manual");
+    await vi.advanceTimersByTimeAsync(0);
+    state.eligible = false;
+    queue.prune();
+    keyRead.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual(["a1"]);
+  });
+
+  it("tells the starter scheduled work stopped qualifying while the browser was verified, but keeps manual requests", async () => {
+    const browser = gate();
+    const launched: string[] = [];
+    const deferred: string[] = [];
+    let eligible = true;
+
+    const queue = new CheckQueue({
+      scopeOf: (permitId) => permitId,
+      scheduledEligible: () => eligible,
+      readKey: async () => "key",
+      // Like main: wait for the browser payload, then ask the queue before launching anything.
+      start: (permitId, _key, stillWanted): StartedCheck => ({
+        finished: browser.promise.then(() => {
+          if (!stillWanted()) return null;
+          launched.push(permitId);
+
+          return "success";
+        }),
+        cancel: () => undefined,
+      }),
+      defer: (permitId) => deferred.push(permitId),
+      keyUnavailable: () => undefined,
+      saveFailed: () => undefined,
+      changed: () => undefined,
+    });
+
+    queue.enqueue("scheduled", "scheduled");
+    await vi.advanceTimersByTimeAsync(0);
+    eligible = false;
+    queue.prune();
+    browser.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(launched).toEqual([]);
+    expect(deferred).toEqual([]);
+    expect(queue.busy).toBe(false);
+
+    queue.enqueue("manual", "manual");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(launched).toEqual(["manual"]);
   });
 
   it("prunes queued scheduled work after a setting change", async () => {
