@@ -78,9 +78,19 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
 
         return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
       },
-      publish(fail?: string) {
-        const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, R2_ENDPOINT: "https://r2.example.test", FAKE_AWS_ROOT: store };
-        const result = spawnSync(process.execPath, [SCRIPT], { cwd: path.join(root, "work"), env: fail ? { ...env, FAKE_AWS_FAIL: fail } : env, encoding: "utf8" });
+      publish(fail?: string, racedManifest?: string) {
+        const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          R2_ENDPOINT: "https://r2.example.test", FAKE_AWS_ROOT: store };
+
+        if (fail) env.FAKE_AWS_FAIL = fail;
+
+        if (racedManifest) {
+          const file = path.join(root, "raced-manifest.json");
+          writeFileSync(file, racedManifest);
+          env.FAKE_AWS_RACE_MANIFEST = file;
+        }
+
+        const result = spawnSync(process.execPath, [SCRIPT], { cwd: path.join(root, "work"), env, encoding: "utf8" });
 
         return { status: result.status, output: `${result.stdout}${result.stderr}` };
       },
@@ -130,6 +140,27 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(older.output).toContain("::warning::");
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
     expect(feed.stored("release-manifest.json")).toBe(manifest("0.9.0", "nine"));
+  });
+
+  it("does not replace a newer manifest first published during the final upload", () => {
+    const feed = workspace();
+    feed.build("0.8.0", "eight");
+    const newer = manifest("0.9.0", "nine");
+    const result = feed.publish(undefined, newer);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("PreconditionFailed");
+    expect(feed.stored("release-manifest.json")).toBe(newer);
+  });
+
+  it("does not replace a manifest that changed after its etag was read", () => {
+    const feed = workspace();
+    feed.seed("release-manifest.json", manifest("0.7.0", "seven"));
+    feed.build("0.8.0", "eight");
+    const newer = manifest("0.9.0", "nine");
+    const result = feed.publish(undefined, newer);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("PreconditionFailed");
+    expect(feed.stored("release-manifest.json")).toBe(newer);
   });
 
   it("orders versions numerically", () => {

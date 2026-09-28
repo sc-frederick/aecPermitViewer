@@ -81,7 +81,9 @@ export class MemoryBucket implements FeedBucket {
   async put(key: string, value: string, options: FeedPutOptions): Promise<FeedObject | null> {
     this.check("put");
 
-    if (options.onlyIf && this.objects.get(key)?.etag !== options.onlyIf.etagMatches) return null;
+    if (options.onlyIf instanceof Headers) {
+      if (options.onlyIf.get("if-none-match") === "*" && this.objects.has(key)) return null;
+    } else if (options.onlyIf && this.objects.get(key)?.etag !== options.onlyIf.etagMatches) return null;
     this.seed(key, value, options.httpMetadata.contentType);
     const stored = this.objects.get(key);
 

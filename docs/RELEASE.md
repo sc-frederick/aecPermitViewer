@@ -25,13 +25,15 @@ The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by th
 
 Both publication paths follow the same rules (`infra/update-server/src/release-policy.ts`):
 
-- A versioned installer is written once. Its SHA-256 is recorded as object metadata. Republishing identical bytes is skipped; different bytes under the same version are refused, so a rebuilt release needs a new version. Installers uploaded before hashes were recorded are hashed on a CI rerun and matched by size in the Worker.
+- During serialized publication, a versioned installer is written once. Its SHA-256 is recorded as object metadata. Republishing identical bytes is skipped; different bytes under the same version are refused, so a rebuilt release needs a new version. Installers uploaded before hashes were recorded are hashed on a CI rerun and matched by size in the Worker.
 - The manifest only moves to a newer version. Re-sending the identical manifest is a no-op. A different manifest for the published version is refused. CI leaves a newer published manifest in place with a warning; the manual script stops before uploading.
 - If the published manifest can't be parsed, both paths stop and leave it for a person to replace.
 
 Deploy Worker changes with `npx wrangler deploy` from `infra/update-server`. The Worker is TypeScript and bundles `zod` from the repository's `node_modules`, so run `npm ci --allow-git=all` first. `npm test` covers it with an in-memory bucket.
 
-Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint with `scripts/publish-feed.mjs` instead of through the Worker. Release jobs share one concurrency group, so only one publishes at a time. GitHub cancels an older release job that is still waiting when a newer tag queues; rerun it after the newer one finishes.
+Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint with `scripts/publish-feed.mjs` instead of through the Worker.
+
+Release jobs share one concurrency group, so only one publishes at a time. The manifest write also requires the ETag it read (or that no manifest exists), so it refuses a concurrent manual manifest change. Do not run a manual installer upload while a CI release is publishing: R2 multipart completion can still write the same installer key after CI checks it. GitHub cancels an older release job that is still waiting when a newer tag queues; rerun it after the newer one finishes.
 
 CI inputs:
 
