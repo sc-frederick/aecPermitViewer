@@ -80,13 +80,17 @@ const MAX_LOG_BYTES = 256 * 1024;
  * later. The file lives with the app's data and is deleted along with it.
  */
 export class DiagnosticLog {
+  /** True between `stop()` and `restart()`. */
+  private stopped = false;
+
   constructor(private readonly filePath: string, private readonly now: () => Date = () => new Date()) {}
 
   /**
-   * Appends one diagnostic. Never throws: when the log itself can't be written there is nowhere left to report that,
-   * and a diagnostics problem must not change the answer the user gets.
+   * Appends one diagnostic, unless the log is stopped. Never throws: when the log itself can't be written there is
+   * nowhere left to report that, and a diagnostics problem must not change the answer the user gets.
    */
   record(operation: string, runId: string | null, cause: unknown): void {
+    if (this.stopped) return;
     const entry: Diagnostic = { at: this.now().toISOString(), operation, runId, cause: classifyCause(cause) };
 
     try {
@@ -98,5 +102,18 @@ export class DiagnosticLog {
     } catch {
       // See above: the failure being recorded has already been answered, and this one has no other place to go.
     }
+  }
+
+  /**
+   * Drops every later record until `restart()`. Called before the data folder is deleted: failures after the store
+   * closes, such as a snapshot still on its way, would otherwise recreate the folder to record themselves.
+   */
+  stop(): void {
+    this.stopped = true;
+  }
+
+  /** Records again after a deletion that didn't go ahead. */
+  restart(): void {
+    this.stopped = false;
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -93,6 +93,20 @@ describe("the diagnostic log", () => {
 
     expect(statSync(`${file}.1`).size).toBe(300 * 1024);
     expect(readEntries(file).map((entry) => entry.cause.class)).toEqual(["defect"]);
+  });
+
+  it("records nothing while stopped, so a deleted data folder isn't recreated, and records again after a restart", () => {
+    const logs = path.join(temporaryDirectory(), "logs");
+    const file = path.join(logs, "diagnostics.jsonl");
+    const log = new DiagnosticLog(file);
+
+    log.stop();
+    log.record("snapshot:broadcast", null, new Error("database is not open"));
+    expect(existsSync(logs)).toBe(false);
+
+    log.restart();
+    log.record("snapshot:broadcast", null, new TypeError("boom"));
+    expect(readEntries(file).map((entry) => entry.operation)).toEqual(["snapshot:broadcast"]);
   });
 
   it("stays quiet when the log can't be written", () => {
