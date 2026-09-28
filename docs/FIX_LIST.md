@@ -238,15 +238,17 @@ Every check creates a utility process and Chromium, then closes both. Measure la
 
 [windows.yml](../.github/workflows/windows.yml) stages browsers, creates the full installer, and runs a live public-portal smoke on every PR. Artifact upload is already restricted to releases/manual runs. Measure step timings before changing job boundaries. Consider canceling superseded PR runs and giving code checks an earlier result while retaining a required Windows package/smoke gate for shipping. Do not weaken coverage simply to report a shorter build.
 
-## Validation gaps to close with the fixes
+## Validation gaps
 
-The existing tests mostly cover domain functions and SQLite behavior. There are no automated renderer, queue-orchestration, worker-DOM, or `chooseNavigation` tests. Add focused regression coverage alongside F01-F17, not a general test-count target:
+When this list was written, the tests covered domain functions and SQLite behavior only. Since then, these have gained tests: the built renderer with a controlled bridge (focus, row reuse, filtering, pending history), `CheckQueue` through its ports with controlled time (pacing, cancellation, keys, eligibility, shutdown), recorded Hernando pages for record-vs-plan fields and readiness waits, `chooseNavigation` through the SDK's fetch seam (malformed, uncertain, and unknown answers, cancellation, and retries), and update downloads that stop early or fail while writing.
 
-- Recorded local portal fixtures for identity, record-vs-plan fields, workflow chronology, and changing pages. Run live smokes separately from repeatable fixture tests.
-- Real renderer behavior for retained focus, filtering, and pending history requests. Use the actual renderer with a controlled bridge.
-- Queue behavior with controlled time and a narrow check-runner seam: pacing, cancellation, credential recovery, eligibility, and shutdown.
-- Jev response-boundary cases and a labeled permit evaluation: unknown choices, WAIT/STOP, malformed probabilities, weak evidence, outstanding requests, and cleared requests. Keep the exact state, selected outcome, and safe diagnostics needed to distinguish missing evidence from model mistakes. Never record the key.
-- Controlled update streams that stop early or fail during writing, alongside the existing signature tests.
+Still open, as of September 28, 2026 (see the [codebase audit](AUDIT-2026-09-28.md) for detail):
+
+- A labeled permit evaluation and workflow-chronology fixtures for F01, F02, and F08: outstanding requests, cleared requests, and missing evidence. Keep the exact state, selected outcome, and safe diagnostics needed to tell missing evidence from model mistakes. Never record the key.
+- Recorded pages for the other portal families (Accela, Click2Gov, WMIS, ePermit, RegPermitting): success, ambiguity, stale pages, and not found. Only Hernando has DOM fixtures; the others rely on parsing and URL tests. Run live smokes separately from repeatable fixture tests.
+- The main-process composition: IPC handlers, credential recovery, snapshot ordering, and the check runner's utility-process lifecycle.
+- `UpdateManager` operation ordering (a recheck during a download), and the update Worker's handler.
+- Migration backups taken while committed data is still in SQLite's WAL file.
 
 Do not add module mocks, tests for trivial wrappers, or assertions pinning incidental markup, function calls, list lengths, or private names. Tiny functions that centralize real rules or boundaries still earn their place: the preload bridge, SQLite parsing/transaction helpers, `parsePortalUrl`, and shared action lookup should not be deleted just for being small.
 
