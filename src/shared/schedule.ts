@@ -4,7 +4,7 @@ import type { RunOutcome } from "./permit.js";
  * Scheduled checks run at the user's chosen times each day, in the computer's local time. A slot
  * missed while the app was closed or asleep is caught up once, but only inside the check window
  * (first slot until half an hour after the last), so nothing fires overnight; the next morning's
- * first slot covers it.
+ * first slot covers it. A late last slot keeps its full half hour even when that runs past midnight.
  */
 export interface CheckTime { hour: number; minute: number }
 
@@ -17,6 +17,7 @@ export const DEFAULT_CHECK_TIMES: CheckTimes = [
   { hour: 16, minute: 30 },
 ];
 
+/** The most daily check times a user can set. */
 export const MAX_CHECK_TIMES = 8;
 
 const WINDOW_GRACE_MINUTES = 30;
@@ -30,6 +31,7 @@ export function formatCheckTime(time: CheckTime): string {
   return `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
 }
 
+/** Parse a 24-hour "HH:MM" time with two-digit fields, or return null. */
 export function parseCheckTime(value: string): CheckTime | null {
   const match = TIME_PATTERN.exec(value);
 
@@ -58,10 +60,19 @@ function at(day: Date, time: CheckTime): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), time.hour, time.minute, 0, 0);
 }
 
-export function withinCheckWindow(now: Date, times: CheckTimes): boolean {
-  const end = new Date(at(now, times[times.length - 1] ?? times[0]).getTime() + WINDOW_GRACE_MINUTES * 60_000);
+/** When a day's check window closes: half an hour after its last slot, which is past midnight for a slot after 11:30 PM. */
+function windowEnd(day: Date, times: CheckTimes): Date {
+  return new Date(at(day, times[times.length - 1] ?? times[0]).getTime() + WINDOW_GRACE_MINUTES * 60_000);
+}
 
-  return now >= at(now, times[0]) && now < end;
+/**
+ * Whether scheduled checks may run at `now`: from today's first slot until half an hour after today's last, or still
+ * inside yesterday's window when its last slot's half hour runs past midnight.
+ */
+export function withinCheckWindow(now: Date, times: CheckTimes): boolean {
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+
+  return (now >= at(now, times[0]) && now < windowEnd(now, times)) || now < windowEnd(yesterday, times);
 }
 
 /** The first scheduled slot strictly after `now`, rolling to tomorrow's first slot after the last one. */
@@ -100,7 +111,10 @@ export function describeCheckTimes(times: CheckTimes, locale?: string): string {
     .format(times.map((time) => format.format(at(reference, time))));
 }
 
-/** When a check due at `due` will actually run, given that scheduled checks wait for the check window. */
+/**
+ * When a check due at `due` will actually run, given that scheduled checks wait for the check window. A check that is
+ * overdue within the half hour after a late slot runs then, even after midnight, rather than waiting for the next slot.
+ */
 export function effectiveRunTime(due: Date, now: Date, times: CheckTimes): Date {
   const start = due > now ? due : now;
 

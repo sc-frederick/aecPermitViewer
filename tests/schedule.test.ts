@@ -78,4 +78,27 @@ describe("custom check times", () => {
     expect(withinCheckWindow(on(19, 29), spread)).toBe(true);
     expect(nextDueAfter(on(6, 5), "success", spread)).toEqual(on(19, 0));
   });
+
+  it("keeps a late last time's half-hour grace past midnight", () => {
+    const late = checkTimes("08:30", "23:45");
+    expect(withinCheckWindow(on(23, 59), late)).toBe(true);
+    expect(withinCheckWindow(on(0, 5, 25), late)).toBe(true);
+    expect(withinCheckWindow(on(0, 14, 25), late)).toBe(true);
+    expect(withinCheckWindow(on(0, 15, 25), late)).toBe(false);
+    expect(withinCheckWindow(on(8, 29, 25), late)).toBe(false);
+    expect(withinCheckWindow(on(8, 30, 25), late)).toBe(true);
+
+    // The 11:45 PM check that is overdue just after midnight runs then, not at 11:45 the next night.
+    expect(effectiveRunTime(on(23, 45), on(0, 5, 25), late)).toEqual(on(0, 5, 25));
+    expect(effectiveRunTime(on(23, 45), on(0, 15, 25), late)).toEqual(on(8, 30, 25));
+    expect(nextDueAfter(on(0, 5, 25), "success", late)).toEqual(on(8, 30, 25));
+  });
+
+  it("leaves a window that closes before midnight shut overnight", () => {
+    const evening = checkTimes("08:30", "23:00");
+    expect(withinCheckWindow(on(23, 29), evening)).toBe(true);
+    expect(withinCheckWindow(on(23, 30), evening)).toBe(false);
+    expect(withinCheckWindow(on(0, 5, 25), evening)).toBe(false);
+    expect(effectiveRunTime(on(23, 0), on(0, 5, 25), evening)).toEqual(on(8, 30, 25));
+  });
 });

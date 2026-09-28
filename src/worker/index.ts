@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
-import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber, type RunOutcome } from "../shared/permit.js";
+import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
+import { onlyElement } from "../shared/array.js";
 import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import type { Candidate, MainToWorker, PageObservation, WorkerToMain } from "../shared/worker-protocol.js";
+import type { Candidate, MainToWorker, PageObservation, WorkerFailure, WorkerToMain } from "../shared/worker-protocol.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
-import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForTylerResults, waitForTylerSearch } from "./detail.js";
+import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForLanding, waitForTylerResults, waitForTylerSearch } from "./detail.js";
 import { wmisAdapter } from "./wmis.js";
 import { epermitAdapter, watchEpermitForm } from "./epermit.js";
 import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
@@ -72,7 +73,7 @@ async function closeAll(): Promise<void> {
 }
 
 /** Reports the run's outcome and closes the browser. */
-function fail(outcome: RunOutcome): void {
+function fail(outcome: WorkerFailure): void {
   if (currentRun) send({ kind: "failed", runId: currentRun, outcome });
   void closeAll();
 }
@@ -262,8 +263,10 @@ async function observe(): Promise<Observed> {
 
     if (links.length > 1) phase = "results";
 
-    if (links.length === 1) {
-      const target = new URL(links[0]!.href, page.url());
+    const onlyLink = onlyElement(links);
+
+    if (onlyLink) {
+      const target = new URL(onlyLink.href, page.url());
 
       // Global Search result rows open their record through a postback rather than a link.
       if (jurisdiction && (globalSearch() || parsePortalUrl(target.toString(), "detail", jurisdiction.id))) {
@@ -456,16 +459,12 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
 
   openedRecordUrl = recordOpened ? target : null;
 
-  if (page && !stopped && locationOf(page.url()) === "permit-detail") await waitForDetail(page, jurisdiction);
+  // A saved record link opens straight to the record, which has no search controls to wait for.
+  if (page && !stopped) await waitForLanding(page, jurisdiction);
 
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
     await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
       .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
-  }
-
-  // A saved record link opens straight to the record, which has no search controls to wait for.
-  if (jurisdiction.portalFamily === "tyler-civic-access" && page && !stopped && locationOf(page.url()) === "permit-search") {
-    await waitForTylerSearch(page);
   }
 
   if (epermitFormReady && page && !stopped) await epermitFormReady();
@@ -572,18 +571,18 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         break;
       }
 
-      const links = await exactResultLinks();
+      const link = onlyElement(await exactResultLinks());
 
-      if (links.length !== 1) break;
+      if (!link) break;
 
       if (globalSearch()) {
         if (!onGlobalResults(page.url())) break;
-        await page.locator(`[id="${links[0]!.id}"]`).click({ noWaitAfter: true });
+        await page.locator(`[id="${link.id}"]`).click({ noWaitAfter: true });
         await page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
         break;
       }
 
-      const target = new URL(links[0]!.href, page.url());
+      const target = new URL(link.href, page.url());
 
       if (!jurisdiction || !parsePortalUrl(target.toString(), "detail", jurisdiction.id)) break;
       await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 12_000 });

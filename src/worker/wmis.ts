@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { expectedStatusLabel, parsePortalUrl, parseWmisNumber, sameJurisdictionPermitNumber, wmisRecordUrl } from "../shared/permit.js";
+import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import type { DisplayedRecord, PortalAdapter, SearchObservation } from "./adapter.js";
@@ -73,11 +74,16 @@ function rowIdentity(row: ResultRow, profile: WmisProfile): string | null {
     : `Application: ${application}${prefix}`;
 }
 
-function exactRows(rows: ResultRow[] | null, profile: WmisProfile, requested: string): ResultRow[] {
-  return (rows ?? []).filter((row) => {
+interface MatchedRow {
+  readonly row: ResultRow;
+  readonly identity: string;
+}
+
+function exactRows(rows: ResultRow[] | null, profile: WmisProfile, requested: string): MatchedRow[] {
+  return (rows ?? []).flatMap((row) => {
     const identity = rowIdentity(row, profile);
 
-    return identity !== null && sameJurisdictionPermitNumber(requested, identity, profile.id);
+    return identity !== null && sameJurisdictionPermitNumber(requested, identity, profile.id) ? [{ row, identity }] : [];
   });
 }
 
@@ -106,8 +112,9 @@ async function criteriaEntered(page: Page, profile: WmisProfile, requested: stri
   if (wanted.kind === "application") return permits.length === 0 && applications.length === 1 && Number(applications[0]) === wanted.id;
   const listed = /^(\d+)\.(\d+)$/.exec(permits[0] ?? "");
 
-  return wanted.kind === "permit" && applications.length === 0 && permits.length === 1 && Boolean(listed) &&
-    Number(listed![1]) === wanted.permit && Number(listed![2]) === wanted.revision;
+  if (wanted.kind !== "permit" || applications.length !== 0 || permits.length !== 1 || !listed) return false;
+
+  return Number(listed[1]) === wanted.permit && Number(listed[2]) === wanted.revision;
 }
 
 /** Offer the next step on a search page, or report that its results hold the record itself (water use). */
@@ -119,7 +126,7 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
 
   if (rows) {
     const exact = exactRows(rows, profile, requested);
-    const resultNumbers = exact.map((row) => rowIdentity(row, profile)!);
+    const resultNumbers = exact.map((match) => match.identity);
     const visibleControls = ["Search results"];
 
     // Water use record pages don't show a status, so the matching result row is the record.
@@ -219,10 +226,10 @@ async function submitWmisSearch(page: Page, profile: WmisProfile, requested: str
  * opened on HTTPS from the row's numbers.
  */
 async function openWmisResult(page: Page, profile: WmisProfile, requested: string): Promise<void> {
-  const exact = exactRows(await resultRows(page), profile, requested);
+  const match = onlyElement(exactRows(await resultRows(page), profile, requested));
 
-  if (exact.length !== 1) return;
-  const row = exact[0]!;
+  if (!match) return;
+  const { row } = match;
 
   const url = profile.module === "ERP" ? wmisRecordUrl(profile, { id: Number(row["ERP App ID"]) })
     : wmisRecordUrl(profile, { permit: Number(row["Permit #"]) });
@@ -246,12 +253,12 @@ async function labelBefore(page: Page, selector: string): Promise<string | null>
 /** Read the record's displayed identity and record-level status: a record page, or water use's result row. */
 async function readWmisRecord(page: Page, profile: WmisProfile, requested: string): Promise<DisplayedRecord> {
   if (profile.module === "WUP") {
-    const exact = exactRows(await resultRows(page), profile, requested);
-    const row = exact.length === 1 ? exact[0]! : null;
+    const match = onlyElement(exactRows(await resultRows(page), profile, requested));
+    const row = match?.row ?? null;
     const label = expectedStatusLabel(profile);
 
     return {
-      displayedNumber: row && rowIdentity(row, profile),
+      displayedNumber: match?.identity ?? null,
       statusLabel: row && label in row ? label : null,
       statusValue: row?.[label] || null,
       recordUrl: row && wmisRecordUrl(profile, { st: Number(row["Permit #"]), rev: Number(row["Rev #"]) }),
@@ -282,6 +289,7 @@ async function readWmisRecord(page: Page, profile: WmisProfile, requested: strin
   };
 }
 
+/** Drive SWFWMD's WMIS search for one requested number in the profile's module: ERP, water use, or well construction. */
 export function wmisAdapter(page: Page, profile: WmisProfile, requested: string): PortalAdapter {
   return {
     observe: () => observeWmisSearch(page, profile, requested),
