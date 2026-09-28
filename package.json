@@ -34,7 +34,13 @@
     "esbuild": "0.25.12",
     "oxlint": "1.85.0",
     "typescript": "5.9.3",
-    "vite": "7.3.5",
+    "vite": "7.3.6",
     "vitest": "4.1.11"
+  },
+  "overrides": {
+    "@electron-forge/cli": {
+      "tar": "7.5.22",
+      "tmp": "0.2.7"
+    }
   }
 }
