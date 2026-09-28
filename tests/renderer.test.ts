@@ -8,12 +8,22 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
 
-/** What the test drives in the page: snapshots from "main", and the history requests the renderer made. */
+/** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
   historyCalls: string[];
+  /** Each schedule the renderer asked main to save, in order. */
+  checkTimeCalls: string[][];
+  /** Reasons of promise rejections nothing in the page handled. */
+  unhandled: string[];
   push(next: AppSnapshot): void;
   /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string): void;
+  /** Answers the index-th history request with a failure main reported. */
+  failHistory(index: number, error: string): void;
+  /** Rejects the index-th history request, as a broken IPC channel would. */
+  rejectHistory(index: number): void;
+  /** Makes every later call of the named bridge method answer with a failure carrying `error`. */
+  fail(method: string, error: string): void;
 }
 
 declare global {
@@ -83,12 +93,25 @@ async function open(initial: AppSnapshot): Promise<void> {
   page = await browser.newPage();
   await page.addInitScript((first) => {
     const listeners: Array<(value: AppSnapshot) => void> = [];
-    const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void }> = [];
-    const ok = async () => ({ ok: true, value: null });
+
+    const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void; reject: (cause: Error) => void }> = [];
+
+    const failures = new Map<string, string>();
+
+    const answer = (method: string) => async (): Promise<BridgeResult<null>> => {
+      const error = failures.get(method);
+
+      return error === undefined ? { ok: true, value: null } : { ok: false, error };
+    };
 
     const control: TestBridge = {
       historyCalls: [],
+      checkTimeCalls: [],
+      unhandled: [],
       push: (next) => { for (const listener of listeners) listener(next); },
+      failHistory: (index, error) => { pending[index]?.resolve({ ok: false, error }); },
+      rejectHistory: (index) => { pending[index]?.reject(new Error("IPC channel closed")); },
+      fail: (method, error) => { failures.set(method, error); },
       answerHistory: (index: number, status: string) => {
         const request = pending[index];
 
@@ -100,14 +123,26 @@ async function open(initial: AppSnapshot): Promise<void> {
       },
     };
 
+    window.addEventListener("unhandledrejection", (event) => { control.unhandled.push(String(event.reason)); });
+
+    const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
+      "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
+      "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData"];
+
     Object.assign(window, {
       testBridge: control,
       permitMonitor: {
+        ...Object.fromEntries(methods.map((method) => [method, answer(method)])),
         snapshot: async () => first,
         history: (permitId: string) => {
           control.historyCalls.push(permitId);
 
-          return new Promise((resolve) => pending.push({ permitId, resolve }));
+          return new Promise((resolve, reject) => pending.push({ permitId, resolve, reject }));
+        },
+        setCheckTimes: async (times: string[]) => {
+          control.checkTimeCalls.push(times);
+
+          return answer("setCheckTimes")();
         },
         onSnapshot: (callback: (value: AppSnapshot) => void) => {
           listeners.push(callback);
@@ -117,10 +152,6 @@ async function open(initial: AppSnapshot): Promise<void> {
         onLocalError: () => () => undefined,
         onOpenDetails: () => () => undefined,
         onAppEvent: () => () => undefined,
-        addAndCheck: ok, checkNow: ok, cancel: ok, openPortal: ok, recordManualStatus: ok, saveKey: ok, removeKey: ok,
-        openRecord: ok, openObservationRecord: ok, removePermit: ok, setMonitoring: ok, setCheckTimes: ok,
-        setPermitMonitoring: ok, setProjectNumber: ok, setPreference: ok, checkForUpdate: ok, downloadUpdate: ok,
-        installUpdate: ok, deleteLocalData: ok,
       },
     });
   }, initial);
@@ -134,6 +165,21 @@ async function push(next: AppSnapshot): Promise<void> {
 
 async function historyCalls(): Promise<string[]> {
   return page.evaluate(() => window.testBridge.historyCalls);
+}
+
+async function checkTimeCalls(): Promise<string[][]> {
+  return page.evaluate(() => window.testBridge.checkTimeCalls);
+}
+
+/** Whether the notice is showing and a click at its center would land on it, so no dialog covers it. */
+async function noticeOnTop(): Promise<boolean> {
+  return page.locator("#notice").evaluate((node) => {
+    if (!(node instanceof HTMLElement) || node.hidden) return false;
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+
+    return hit !== null && node.contains(hit);
+  });
 }
 
 const fifty = Array.from({ length: 50 }, (_, index) => permit(index + 1));
@@ -170,6 +216,76 @@ describe("permit table updates", () => {
     await push(snapshot(fifty));
     expect(await page.locator("#permit-table tr.group-row").count()).toBe(0);
     expect(await page.locator("#permit-table tbody").count()).toBe(1);
+  });
+
+  it("treats a permit that leaves the list and returns as new", async () => {
+    const returning = permit(1);
+    await push(snapshot(fifty.slice(1)));
+    await push(snapshot(fifty));
+
+    expect(await page.locator(`#permit-table tr:has(button[data-permit-id="${returning.id}"])`).getAttribute("class")).toBe("row-enter");
+  });
+});
+
+describe("check time editing", () => {
+  const schedule = { ...snapshot(fifty), monitoring: "scheduled" as const, checkTimes: ["08:30", "12:30", "16:30"] };
+
+  const times = () => page.locator("#check-time-list input").evaluateAll((nodes) =>
+    nodes.map((node) => node instanceof HTMLInputElement ? node.value : null));
+
+  beforeEach(async () => {
+    await open(schedule);
+    await page.locator("#open-settings").click();
+  });
+
+  it("saves the schedule without the removed time", async () => {
+    await page.locator("#check-time-list button[data-remove-time]").nth(1).click();
+
+    await expect.poll(checkTimeCalls).toEqual([["08:30", "16:30"]]);
+  });
+
+  it("removes the clicked row and holds the save until a cleared row is filled in", async () => {
+    const inputs = page.locator("#check-time-list input");
+    await inputs.nth(0).fill("");
+    await page.locator("#check-time-list button[data-remove-time]").nth(1).click();
+
+    expect(await times()).toEqual(["", "16:30"]);
+    expect(await inputs.nth(0).getAttribute("aria-invalid")).toBe("true");
+    expect(await page.locator("#check-time-error").isVisible()).toBe(true);
+    expect(await checkTimeCalls()).toEqual([]);
+
+    await inputs.nth(0).fill("09:00");
+    await expect.poll(checkTimeCalls).toEqual([["09:00", "16:30"]]);
+  });
+});
+
+describe("notices over dialogs", () => {
+  it("shows a failed check from the details sheet in front of the sheet", async () => {
+    await page.evaluate(() => window.testBridge.fail("checkNow", "The portal didn't answer."));
+    await page.locator(`button[data-action="details"][data-permit-id="${permit(1).id}"]`).click();
+    await page.locator("#details-check").click();
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("The portal didn't answer.");
+    await expect.poll(noticeOnTop).toBe(true);
+  });
+
+  it("shows a failed delete from Settings in front of Settings", async () => {
+    await page.evaluate(() => window.testBridge.fail("deleteLocalData", "Data couldn't be deleted."));
+    await page.locator("#open-settings").click();
+    await page.locator("#delete-local-data").click();
+    await page.locator("#confirm-accept").click();
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("Data couldn't be deleted.");
+    await expect.poll(noticeOnTop).toBe(true);
+  });
+
+  it("moves a showing notice in front of a sheet opened after it", async () => {
+    await page.evaluate(() => window.testBridge.fail("checkNow", "The portal didn't answer."));
+    await page.locator(`button[data-action="check"][data-permit-id="${permit(1).id}"]`).click();
+    await expect.poll(noticeOnTop).toBe(true);
+
+    await page.locator("#open-settings").click();
+    await expect.poll(noticeOnTop).toBe(true);
   });
 });
 
@@ -209,5 +325,30 @@ describe("details history", () => {
     await page.evaluate(() => window.testBridge.answerHistory(0, "Older"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newer");
     expect(await page.locator("#history-list").innerText()).not.toContain("Older");
+  });
+
+  it("shows a failed read apart from an empty history, and retries it", async () => {
+    const shown = permit(1);
+    await page.locator(`button[data-action="details"][data-permit-id="${shown.id}"]`).click();
+    await page.evaluate(() => window.testBridge.rejectHistory(0));
+
+    const retry = page.locator("#history-list button[data-history-retry]");
+    await retry.waitFor();
+    expect(await page.locator("#history-list").innerText()).not.toContain("No checks yet");
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
+
+    // Snapshots about other permits leave the failure alone rather than asking again.
+    await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
+    expect(await historyCalls()).toEqual([shown.id]);
+
+    await retry.click();
+    expect(await historyCalls()).toEqual([shown.id, shown.id]);
+    await page.evaluate(() => window.testBridge.answerHistory(1, "Issued"));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Issued");
+
+    await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
+    await page.evaluate(() => window.testBridge.failHistory(2, "Permit not found."));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Permit not found.");
+    expect(await retry.count()).toBe(1);
   });
 });
