@@ -131,7 +131,20 @@ function icon(name: string, className = "icon"): SVGSVGElement {
   return svg;
 }
 
+/**
+ * Keeps the notice inside the dialog in front, if one is open. A modal dialog paints over the rest of the page and
+ * makes it inert, so a notice left outside could be neither seen nor announced. The small dialogs only ever open over
+ * a sheet, never under one, so an open one is the one in front.
+ */
+function placeNotice(): void {
+  const node = element("notice", HTMLDivElement);
+  const host = document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
+
+  if (node.parentElement !== host) host.append(node);
+}
+
 function notice(message: string, kind: "info" | "error" = "error"): void {
+  placeNotice();
   const node = element("notice", HTMLDivElement);
   element("notice-text").textContent = message;
   node.dataset.kind = kind;
@@ -1291,6 +1304,9 @@ for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet"
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); closeSheet(dialog); });
   dialog.querySelector<HTMLButtonElement>("[data-close]")?.addEventListener("click", () => closeSheet(dialog));
 }
+
+// A notice already showing follows the dialog in front as dialogs open and close.
+for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("toggle", placeNotice);
 
 const confirmDialog = element("confirm-dialog", HTMLDialogElement);
 
