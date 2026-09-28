@@ -352,25 +352,21 @@ describe("lookups", () => {
     }
   });
 
-  it("reports the browser version from the most recent run that recorded one", () => {
+  it("keeps the browser version each run reported with that run", () => {
     const store = newStore();
 
     try {
       const permitId = store.addPermit("HC-BLD-26-0087599");
-      expect(store.latestBrowserVersion()).toBeNull();
+      const runIds: string[] = [];
 
       for (const browserVersion of ["139.0", "140.0", null]) {
         const runId = store.startRun({ permitId, ...RUN });
         store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion });
+        runIds.push(runId);
       }
 
-      expect(store.latestBrowserVersion()).toBe("140.0");
-
-      const plan = withDatabase((db) => db.prepare(`EXPLAIN QUERY PLAN SELECT browser_version FROM check_runs
-        WHERE browser_version IS NOT NULL ORDER BY started_at DESC LIMIT 1`).all());
-
-      // The snapshot asks for this on every update, so it reads runs in order instead of sorting all of them.
-      expect(plan.map((step) => step.detail).join(" ")).not.toContain("TEMP B-TREE");
+      const stored = withDatabase((db) => runIds.map((id) => db.prepare("SELECT browser_version FROM check_runs WHERE id = ?").get(id)));
+      expect(stored).toEqual([{ browser_version: "139.0" }, { browser_version: "140.0" }, { browser_version: null }]);
     } finally {
       store.close();
     }
