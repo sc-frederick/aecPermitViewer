@@ -91,6 +91,8 @@ export function runCheck(input: {
   cacheRoot: string;
   startWorker: (environment: NodeJS.ProcessEnv) => WorkerStart;
   report: CheckFailureReport;
+  /** Removes one run's cache folder after its worker exits. */
+  removeCache?: ((cachePath: string) => Promise<void>) | undefined;
 }): ActiveCheck {
   const controller = new AbortController();
   const deadline = Date.now() + DEADLINE_MS;
@@ -102,7 +104,7 @@ export function runCheck(input: {
 
   // A folder that can't be removed is reported and left behind; `closed` settles either way.
   const removeCache = () => {
-    void rm(cachePath, { recursive: true, force: true }).then(markClosed, (cause: unknown) => {
+    void (input.removeCache?.(cachePath) ?? rm(cachePath, { recursive: true, force: true })).then(markClosed, (cause: unknown) => {
       markClosed();
       input.report("cache-cleanup", cause);
     });
