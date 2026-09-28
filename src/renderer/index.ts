@@ -1,4 +1,4 @@
-import { PREFERENCE_KEYS, type PermitBridge } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type BridgeResult, type PermitBridge } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
@@ -29,6 +29,9 @@ let historyShown: string | null = null;
 
 /** The check state a history request is under way for, so snapshots that arrive meanwhile don't request it again. */
 let historyLoading: string | null = null;
+
+/** The check state whose history read failed, so snapshots about other permits leave the failure and its retry shown. */
+let historyFailed: string | null = null;
 
 let noticeTimer: number | null = null;
 
@@ -730,6 +733,18 @@ function renderHistory(history: PermitHistory): void {
   else list.replaceChildren(...items);
 }
 
+/** Says the history read failed, which an empty list would misreport as a permit never checked, and offers to ask again. */
+function renderHistoryFailure(message: string): void {
+  const item = make("li", "timeline-error");
+  const body = make("div");
+  const retry = make("button", "link-button", "Try again");
+  retry.type = "button";
+  retry.dataset.historyRetry = "";
+  body.append(make("strong", "", "History didn't load."), make("p", "", message), retry);
+  item.append(body);
+  element("history-list", HTMLOListElement).replaceChildren(item);
+}
+
 /** A permit's history only changes when its latest attempt or verified status does. */
 function historyKey(permit: PermitRow): string {
   return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
@@ -737,7 +752,8 @@ function historyKey(permit: PermitRow): string {
 
 /**
  * Fetches and shows a permit's history unless a request for the same check state is already under way. A newer
- * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped.
+ * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped. A failed read is
+ * shown in the history list with a retry, never as an empty history. Never rejects.
  */
 async function loadHistory(permit: PermitRow): Promise<void> {
   const key = historyKey(permit);
@@ -745,21 +761,24 @@ async function loadHistory(permit: PermitRow): Promise<void> {
   if (key === historyLoading) return;
   const generation = ++historyGeneration;
   historyLoading = key;
-  let result: Awaited<ReturnType<PermitBridge["history"]>>;
 
-  try {
-    result = await api.history(permit.id);
-  } finally {
-    if (generation === historyGeneration) historyLoading = null;
-  }
+  // A rejected call never got an answer from main. It is shown like a failure main reported, so it can be retried.
+  const result = await api.history(permit.id)
+    .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: "The app didn't answer." }));
 
-  if (generation !== historyGeneration || detailsPermitId !== permit.id) return;
+  if (generation !== historyGeneration) return;
+  historyLoading = null;
+
+  if (detailsPermitId !== permit.id) return;
 
   if (result.ok) {
     renderHistory(result.value);
     historyShown = key;
+    historyFailed = null;
   } else {
-    notice(result.error);
+    renderHistoryFailure(result.error);
+    historyShown = null;
+    historyFailed = key;
   }
 }
 
@@ -780,6 +799,7 @@ function openDetails(permitId: string): void {
   if (switching || historyKey(permit) !== historyShown) {
     element("history-list", HTMLOListElement).replaceChildren();
     historyShown = null;
+    historyFailed = null;
     void loadHistory(permit);
   }
 }
@@ -1208,6 +1228,7 @@ function closeSheet(dialog: HTMLDialogElement): void {
     historyGeneration += 1;
     historyShown = null;
     historyLoading = null;
+    historyFailed = null;
   }
 }
 
@@ -1286,6 +1307,13 @@ element("details-remove", HTMLButtonElement).addEventListener("click", async () 
 
   closeSheet(detailsSheet);
   notice(`${permit.permitNumber} removed.`, "info");
+});
+
+element("history-list", HTMLOListElement).addEventListener("click", (event) => {
+  const retry = eventButton(event, "button[data-history-retry]");
+  const permit = currentSnapshot?.permits.find((entry) => entry.id === detailsPermitId);
+
+  if (retry && permit) void busy(retry, () => loadHistory(permit));
 });
 
 element("history-list", HTMLOListElement).addEventListener("click", async (event) => {
@@ -1384,7 +1412,7 @@ api.onSnapshot((snapshot) => {
   render(snapshot);
   const permit = detailsPermitId ? snapshot.permits.find((entry) => entry.id === detailsPermitId) : undefined;
 
-  if (permit && historyKey(permit) !== historyShown) void loadHistory(permit);
+  if (permit && historyKey(permit) !== historyShown && historyKey(permit) !== historyFailed) void loadHistory(permit);
 });
 
 api.onLocalError((message) => notice(message));
