@@ -120,6 +120,7 @@ export async function waitForDetail(page: Page, profile: AutomatedJurisdictionPr
   }
 }
 
+/** The keyword search input on Tyler Civic Access portals. */
 export const TYLER_SEARCH_FIELD = "#SearchKeyword";
 
 /** Tyler shows one of three labels after a search: "Found N results", "Found 1 result", or "No results were found". */
