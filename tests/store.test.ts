@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
-import { JURISDICTIONS } from "../src/shared/jurisdictions.js";
+import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
 
 const directories: string[] = [];
 
@@ -18,6 +19,15 @@ function newStore(): PermitStore {
   directories.push(directory);
 
   return new PermitStore(path.join(directory, "data.sqlite"));
+}
+
+/** Adds a permit that the test expects to be new, returning its id. */
+function addPermit(store: PermitStore, permitNumber: string, jurisdictionId?: JurisdictionId): string {
+  const added = store.addPermit(permitNumber, jurisdictionId);
+
+  if (added._tag === "err") throw added.error;
+
+  return added.value;
 }
 
 /** Run metadata every started check records; its values don't matter to these tests. */
@@ -47,7 +57,7 @@ describe("observation history", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       const successId = store.startRun({ permitId, ...RUN });
       const observedAt = "2026-09-24T12:00:00.000Z";
       store.finishRun({
@@ -73,7 +83,7 @@ describe("observation history", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
 
       for (const observedAt of ["2026-09-24T12:00:00.000Z", "2026-09-25T12:00:00.000Z"]) {
         const runId = store.startRun({ permitId, ...RUN });
@@ -90,12 +100,42 @@ describe("observation history", () => {
   });
 });
 
+describe("adding permits", () => {
+  it("reports a permit that is already in the list as already tracked, without adding a second row", () => {
+    const store = newStore();
+
+    try {
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
+      const again = store.addPermit("HC-BLD-26-0087599");
+      expect(again._tag).toBe("err");
+      expect(again._tag === "err" ? again.error : null).toMatchObject({
+        _tag: "AlreadyTracked", jurisdictionId: HILLSBOROUGH_ID, permitNumber: "HC-BLD-26-0087599",
+      });
+      expect(store.listPermits().map((permit) => permit.id)).toEqual([permitId]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("adds the same number under a different jurisdiction", () => {
+    const store = newStore();
+
+    try {
+      const other = JURISDICTIONS.find((entry) => entry.id !== HILLSBOROUGH_ID) ?? expect.unreachable("Only one jurisdiction");
+      addPermit(store, "HC-BLD-26-0087599");
+      expect(store.addPermit("HC-BLD-26-0087599", other.id)._tag).toBe("ok");
+    } finally {
+      store.close();
+    }
+  });
+});
+
 describe("permit removal", () => {
   it("deletes a permit with its runs and observations", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "success", actionCount: 1, requestCount: 1,
         actualModel: "jev-1.13.0", browserVersion: "test",
@@ -107,7 +147,7 @@ describe("permit removal", () => {
       expect(store.history(permitId)).toEqual({ runs: [], observations: [] });
       expect(store.getObservation(observationId)).toBeNull();
       expect(store.removePermit(permitId)).toBe(false);
-      expect(store.addPermit("HC-BLD-26-0087599")).toBeTruthy();
+      expect(addPermit(store, "HC-BLD-26-0087599")).toBeTruthy();
     } finally {
       store.close();
     }
@@ -119,17 +159,16 @@ describe("jurisdiction persistence", () => {
     const store = newStore();
 
     try {
-      const profile = JURISDICTIONS.find((entry) => entry.id !== HILLSBOROUGH_ID);
-      expect(profile).toBeDefined();
-      const permitId = store.addPermit("TEST-123", profile!.id);
-      expect(store.getPermit(permitId)?.jurisdictionId).toBe(profile!.id);
+      const profile = JURISDICTIONS.find((entry) => entry.id !== HILLSBOROUGH_ID) ?? expect.unreachable("Only one jurisdiction");
+      const permitId = addPermit(store, "TEST-123", profile.id);
+      expect(store.getPermit(permitId)?.jurisdictionId).toBe(profile.id);
       const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0,
         actualModel: null, browserVersion: null });
       withDatabase((db) => {
         expect(db.prepare(`SELECT adapter_version AS version, requested_model AS model, prompt_version AS prompt
           FROM check_runs WHERE id = ?`).get(runId))
-          .toEqual({ version: profile!.adapterVersion, model: RUN.requestedModel, prompt: RUN.promptVersion });
+          .toEqual({ version: profile.adapterVersion, model: RUN.requestedModel, prompt: RUN.promptVersion });
         expect(db.prepare("SELECT COUNT(*) AS count FROM jurisdiction_profiles").get())
           .toEqual({ count: JURISDICTIONS.length });
       });
@@ -142,8 +181,8 @@ describe("jurisdiction persistence", () => {
     const store = newStore();
 
     try {
-      const kept = store.addPermit("HC-BLD-26-0087599");
-      const retired = store.addPermit("HC-BLD-26-0000001");
+      const kept = addPermit(store, "HC-BLD-26-0087599");
+      const retired = addPermit(store, "HC-BLD-26-0000001");
       withDatabase((db) => {
         db.exec(`INSERT INTO jurisdiction_profiles SELECT 'retired-county', display_name, authority_type, portal_family,
           official_start_url, tenant, supported_module, coverage_note, adapter_version, matching_rule_version
@@ -182,7 +221,7 @@ describe("scheduled checks", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       expect(store.getPermit(permitId)?.monitoringEnabled).toBe(true);
       expect(store.getMonitoring()).toBe("scheduled");
       store.setMonitoring("manual");
@@ -198,7 +237,7 @@ describe("scheduled checks", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       const runId = store.startRun({ permitId, ...RUN });
       store.finishRun({ runId, permitId, outcome: "blocked", actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null });
       const due = new Date(store.getPermit(permitId)!.nextDueAt!);
@@ -219,7 +258,7 @@ describe("scheduled checks", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       const slot = new Date(2026, 8, 24, 12, 30);
       store.deferDue(permitId, slot);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(slot.toISOString());
@@ -238,7 +277,7 @@ describe("scheduled checks", () => {
 
     try {
       expect(store.getCheckTimes()).toEqual([{ hour: 8, minute: 30 }, { hour: 12, minute: 30 }, { hour: 16, minute: 30 }]);
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       withDatabase((db) => db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?")
         .run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId));
       store.setCheckTimes([{ hour: 7, minute: 0 }, { hour: 10, minute: 15 }], new Date(2026, 8, 24, 9, 0));
@@ -255,7 +294,7 @@ describe("hand-checked permits", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("BLD2024-01234", "orange-county-building");
+      const permitId = addPermit(store, "BLD2024-01234", "orange-county-building");
       expect(store.getPermit(permitId)?.monitoringEnabled).toBe(false);
       expect(store.duePermitIds(new Date().toISOString())).not.toContain(permitId);
       expect(() => store.setPermitMonitoring(permitId, true)).toThrow();
@@ -277,7 +316,7 @@ describe("hand-checked permits", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       expect(() => store.recordManualStatus({ permitId, status: "Issued", appVersion: "test",
         recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx" })).toThrow();
     } finally {
@@ -291,7 +330,7 @@ describe("project numbers", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       expect(store.getPermit(permitId)?.projectNumber).toBeNull();
       expect(store.setProjectNumber(permitId, " 28069 ")).toBe(true);
       expect(store.getPermit(permitId)?.projectNumber).toBe("28069");
@@ -310,7 +349,7 @@ describe("project numbers", () => {
     let permitId = "";
 
     try {
-      permitId = store.addPermit("HC-BLD-26-0087599");
+      permitId = addPermit(store, "HC-BLD-26-0087599");
     } finally {
       store.close();
     }
@@ -332,13 +371,52 @@ describe("project numbers", () => {
   });
 });
 
+describe("migration backups", () => {
+  it("includes a commit left in the WAL by a writer that exited without closing", () => {
+    const store = newStore();
+    const directory = directories[directories.length - 1] ?? "";
+    const filePath = path.join(directory, "data.sqlite");
+    store.close();
+
+    // The child commits in WAL mode and exits with SQLite still open, so nothing checkpoints the WAL into the main file.
+    const writer = spawnSync(process.execPath, ["-e", `
+      const { DatabaseSync } = require("node:sqlite");
+      const [filePath, jurisdictionId] = process.argv.slice(1);
+      const db = new DatabaseSync(filePath);
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA user_version = 2");
+      db.prepare("INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run("committed-before-exit", jurisdictionId, "HC-BLD-26-0087599", "HC-BLD-26-0087599", "2026-09-28T12:00:00.000Z");
+      process.exit(0);
+    `, filePath, HILLSBOROUGH_ID], { encoding: "utf8" });
+
+    expect(writer.stderr).toBe("");
+    expect(writer.status).toBe(0);
+
+    new PermitStore(filePath).close();
+
+    const backups = readdirSync(directory).filter((name) => /^data\.sqlite\.before-v3-\d+\.bak$/.test(name));
+    expect(backups).toHaveLength(1);
+    // Restoring means putting the backup where a fresh install would open it, with no WAL beside it.
+    const restored = path.join(directory, "restored.sqlite");
+    copyFileSync(path.join(directory, backups[0] ?? ""), restored);
+    const restoredStore = new PermitStore(restored);
+
+    try {
+      expect(restoredStore.getPermit("committed-before-exit")).toMatchObject({ permitNumber: "HC-BLD-26-0087599" });
+    } finally {
+      restoredStore.close();
+    }
+  });
+});
+
 describe("lookups", () => {
   it("reads one permit exactly as the list shows it", () => {
     const store = newStore();
 
     try {
-      const first = store.addPermit("HC-BLD-26-0087599");
-      const second = store.addPermit("HC-BLD-26-0087600");
+      const first = addPermit(store, "HC-BLD-26-0087599");
+      const second = addPermit(store, "HC-BLD-26-0087600");
       store.setProjectNumber(second, "28069");
       const runId = store.startRun({ permitId: second, ...RUN });
       store.finishRun({ runId, permitId: second, outcome: "blocked", actionCount: 0, requestCount: 0,
@@ -356,7 +434,7 @@ describe("lookups", () => {
     const store = newStore();
 
     try {
-      const permitId = store.addPermit("HC-BLD-26-0087599");
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
       expect(store.latestBrowserVersion()).toBeNull();
 
       for (const browserVersion of ["139.0", "140.0", null]) {
