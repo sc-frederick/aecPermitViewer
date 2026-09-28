@@ -450,10 +450,11 @@ async function startApp(): Promise<void> {
   });
   store.alignSchedule(new Date());
   checks = createQueue();
+  // Sharing can send a snapshot as soon as it starts, and a snapshot reads the key state.
+  keys = new KeyStore(dataRoot());
   shareService = loadShareService(path.join(__dirname, "sync-config.json"));
   sharing = createSharing();
   await sharing.start();
-  keys = new KeyStore(dataRoot());
   updates = new UpdateManager(dataRoot(), app.getVersion(),
     app.isPackaged ? path.join(process.resourcesPath, "authenticode.ps1") : path.join(__dirname, "authenticode.ps1"),
     path.join(__dirname, "update-config.json"));
@@ -822,8 +823,9 @@ async function startApp(): Promise<void> {
   handle("permit:follow", z.string().max(200), "That isn't a share code.", async (code) => {
     const result = await sharing.follow(code);
 
-    // This app's own scheduled work stops while another list is shown; a check already running finishes.
-    if (result.ok) checks.prune();
+    // Nothing of this app's own runs while another list is shown, including checks asked for by hand, such as Check
+    // all from the tray; otherwise they would notify about permits the window no longer shows.
+    if (result.ok) for (const permit of store.listPermits()) checks.cancel(permit.id);
 
     return result;
   });
