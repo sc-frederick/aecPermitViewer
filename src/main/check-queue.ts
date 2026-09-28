@@ -20,8 +20,12 @@ export interface CheckQueuePorts {
   scheduledEligible: (permitId: string) => boolean;
   /** The saved key, or null when none is saved. Rejects when a saved key can't be read or decrypted. */
   readKey: () => Promise<string | null>;
-  /** Starts the browser check. `finished` rejects only when its result couldn't be saved. */
-  start: (permitId: string, key: string) => StartedCheck;
+  /**
+   * Starts the browser check. `finished` rejects only when its result couldn't be saved. `stillWanted` answers whether
+   * the check should still go ahead: false once it was cancelled, the queue stopped, or scheduled work stopped qualifying.
+   * Call it after any wait of your own and immediately before the run begins, and settle `finished` with null when false.
+   */
+  start: (permitId: string, key: string, stillWanted: () => boolean) => StartedCheck;
   /** A cancelled check that never started waits for the permit's next scheduled slot instead of being picked up again. */
   defer: (permitId: string) => void;
   /** A check couldn't run for want of a key. `requested` is true when someone asked for that check. */
@@ -47,7 +51,8 @@ export const SCOPE_SPACING_MS = 30_000;
 
 /**
  * Runs permit checks one at a time. Checks on different portals don't wait for each other; checks on one portal are
- * spaced out. Scheduled work is rechecked for eligibility when it is about to start, and pauses while no key works.
+ * spaced out. Scheduled work is rechecked for eligibility when it is about to start, again after the key is read, and
+ * through `stillWanted` after the starter's own waits; it pauses while no key works. Manual requests always go ahead.
  */
 export class CheckQueue {
   private entries: Entry[] = [];
@@ -221,11 +226,15 @@ export class CheckQueue {
     }
   }
 
+  /** Whether an entry may still start: a manual request always may; scheduled work must qualify and not wait on a rejected key. */
+  private wanted(entry: Entry): boolean {
+    return entry.reason === "manual" || (this.paused !== "rejected" && this.ports.scheduledEligible(entry.permitId));
+  }
+
   private async run(entry: Entry): Promise<void> {
     const scope = this.ports.scopeOf(entry.permitId);
-    const ineligible = entry.reason === "scheduled" && (this.paused === "rejected" || !this.ports.scheduledEligible(entry.permitId));
 
-    if (!scope || ineligible) {
+    if (!scope || !this.wanted(entry)) {
       this.ports.changed();
 
       return;
@@ -243,6 +252,9 @@ export class CheckQueue {
         return;
       }
 
+      // Settings can change while the key is read. Work that no longer qualifies stays due for a later pass.
+      if (!this.wanted(entry)) return;
+
       if (key === "missing" || key === "unreadable") {
         this.pause(key, entry.reason === "manual");
 
@@ -252,7 +264,7 @@ export class CheckQueue {
       // A key that reads again ends a pause for a missing or unreadable one; a rejected key waits for a new one.
       if (this.paused !== "rejected") this.paused = null;
 
-      const check = this.ports.start(entry.permitId, key);
+      const check = this.ports.start(entry.permitId, key, () => !this.stopped && !current.cancelled && this.wanted(entry));
       current.cancel = check.cancel;
 
       const outcome = await check.finished.catch(() => {
