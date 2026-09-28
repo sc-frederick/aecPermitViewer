@@ -36,7 +36,6 @@ beforeAll(async () => {
     target: "es2022", platform: "browser", format: "iife", logLevel: "silent" });
   copyFileSync("src/renderer/index.html", path.join(directory, "index.html"));
   copyFileSync("src/renderer/styles.css", path.join(directory, "styles.css"));
-  process.env.PLAYWRIGHT_BROWSERS_PATH = path.resolve("vendor/playwright-browsers");
   browser = await chromium.launch({ headless: true });
 }, 60_000);
 
