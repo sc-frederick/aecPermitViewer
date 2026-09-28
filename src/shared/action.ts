@@ -90,6 +90,14 @@ export const STATUS_WORDING: Partial<Record<JurisdictionId, StatusWording>> = {
     authority: ["Submitted", "Under Review"],
     none: ["Issued", "Finaled", "Completed", "Closed"],
   },
+  // A sample of 194 records showed only ACTIVE, COMPLT, and VOID. ACTIVE covers review, inspections, and lapsed
+  // permits alike (a lapsed one keeps ACTIVE under a "This permit expired on" banner), so it can't settle who's up.
+  "baker-county-building": {
+    applicant: [],
+    cautious: ["ACTIVE", "Expired"],
+    authority: [],
+    none: ["COMPLT", "VOID"],
+  },
 };
 
 /** Portal wording compared without regard to case or runs of spaces, which vary between records and hand entry. */

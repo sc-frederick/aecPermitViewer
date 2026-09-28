@@ -69,9 +69,9 @@ Field: `Application Status` on Status Detail. 5,792 applications from 13 address
 
 "IN PROCESS" covers most active work, including applications with corrections due or permits waiting for pickup. The Plan Tracking Status page shows each trade review's latest step: RFC ("Ready for corrections") and WFP ("Waiting for permit pickup") put the next step with the applicant, while a blank step means the review hasn't happened yet. Older RFC rows stay listed after a resubmittal, so only the latest row per agency counts. The app does not read this page yet.
 
-## Checked by hand: Orange County and Palm Bay
+## Checked by hand: Orange County, Palm Bay, and Baker County
 
-Neither portal can be searched anonymously, so these lists come from the authorities' published material, not from records the app read. The user types the status they see, so matching ignores case and spacing.
+Orange County and Palm Bay can't be searched anonymously, so their lists come from the authorities' published material, not from records the app read. Baker County's search is public but turns away the app's browser, so its list comes from records read in a visible browser. The user types the status they see, so matching ignores case and spacing.
 
 ### Orange County (Fast Track)
 
@@ -94,3 +94,12 @@ iMS, by Intuitive Municipal Solutions, calls the status a milestone. Low confide
 - **None**: Issued, Finaled, Completed, Closed (the vendor's standard wording; Lakeland, another iMS city, documents "Issued").
 
 The city's public permit layer ([BuildingPermits](https://gis.palmbayfl.gov/arcgis/rest/services/GrowthManagement/BuildingPermits/FeatureServer/0)) has a `PermitStatus` field but timed out on every query.
+
+### Baker County (ADG CitizenLink)
+
+Field: `Permit Status` on the Permit Search record. 194 records sampled on September 28, 2026, spread across record IDs from 2008 to 2026: ACTIVE (45), COMPLT (137), VOID (1), and 11 with no status.
+
+- **AEC, to be safe**: ACTIVE, Expired. ACTIVE covers every open permit, from a new house awaiting its first inspection to one past its expiry date. Four of the 45 ACTIVE records carried a "This permit expired on" banner above the unchanged status, so the status alone can't say whose move it is. Expired is the banner's wording, in case it's typed instead.
+- **None**: COMPLT, VOID.
+
+No AHJ wording was seen. The record's Inspections Requested, Scheduled, and Completed tabs show progress in more detail.

@@ -128,6 +128,9 @@ describe("hand-checked portal links", () => {
     expect(parsePortalUrl("http://fasttrack.ocfl.net/OnlineServices/", "detail", "orange-county-building")).toBeNull();
     expect(parsePortalUrl("https://evil.example/fasttrack.ocfl.net", "detail", "orange-county-building")).toBeNull();
     expect(parsePortalUrl("https://ims.palmbayfl.gov/ims/", "detail", "orange-county-building")).toBeNull();
+    expect(parsePortalUrl("https://permits.bakercountyfl.org/permits?qr=13fafd9557bd7244d7fecbf073119784&t=0", "detail",
+      "baker-county-building")).not.toBeNull();
+    expect(parsePortalUrl("https://www.bakercountyfl.org/permits", "detail", "baker-county-building")).toBeNull();
   });
 });
 
