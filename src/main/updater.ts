@@ -128,15 +128,18 @@ function sameHex(left: string, right: string): boolean {
 }
 
 /**
- * Writes a download to `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure the
- * stream is cancelled, the file is closed and removed, and the error is rethrown. `onProgress` runs after each read.
+ * Writes a download to a new `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure
+ * the stream is cancelled, the file is closed, and the error is rethrown. The file is removed only if this call created
+ * it; an existing file at `file` fails the call and is left alone. `onProgress` runs after each read.
  */
 export async function saveDownload(body: ReadableStream<Uint8Array>, file: string, size: number, onProgress: () => void): Promise<string> {
   const reader = body.getReader();
   let handle: FileHandle | null = null;
+  let created = false;
 
   try {
     handle = await open(file, "wx", 0o600);
+    created = true;
     const hash = createHash("sha256");
     let bytes = 0;
 
@@ -167,7 +170,8 @@ export async function saveDownload(body: ReadableStream<Uint8Array>, file: strin
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     await handle?.close().catch(() => undefined);
-    await rm(file, { force: true });
+
+    if (created) await rm(file, { force: true });
     throw error;
   }
 }
