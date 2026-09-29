@@ -58,7 +58,7 @@ Anyone who has the code can read the list until sharing stops. Treat it like a l
 
 ## Deploying and developing
 
-The Worker was first deployed on September 28, 2026, and it runs on the free plan. The Worker imports `zod/mini` (`import * as z`), not `zod`, which keeps the bundle at about 27 KB instead of about 280 KB. Deploy with `npx wrangler deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
+The Worker was first deployed on September 28, 2026, and it runs on the free plan. The Worker imports `zod/mini` (`import * as z`), not `zod`, which keeps the bundle at about 27 KB instead of about 280 KB. The `Sync server` workflow deploys it when it changes on master (see [RELEASE.md](RELEASE.md#shared-list-service)). To deploy by hand, run `npx wrangler@4.143.0 deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
 
 To run it locally:
 

@@ -1,0 +1,62 @@
+name: Sync server
+
+# Deploys the shared-list Worker (infra/sync-server) whenever it or the protocol it shares with the app changes on
+# master, so it is always live before a release that relies on it is tagged. Pull requests only bundle it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - infra/sync-server/**
+      - src/shared/share-protocol.ts
+      - tests/sync-server.test.ts
+      - .github/workflows/sync-server.yml
+  pull_request:
+    paths:
+      - infra/sync-server/**
+      - src/shared/share-protocol.ts
+      - tests/sync-server.test.ts
+      - .github/workflows/sync-server.yml
+
+# Deploys run one at a time; a newer push to the same pull request replaces its run.
+concurrency:
+  group: sync-server-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Pinned so a new wrangler release can't change the deploy unannounced. Match the version used for manual deploys.
+      WRANGLER: wrangler@4.143.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+      # The Worker bundles zod from the root node_modules. Nothing here needs install scripts.
+      - run: npm ci --allow-git=all --ignore-scripts
+      - run: npx tsc --noEmit -p infra/sync-server
+      - run: npx vitest run tests/sync-server.test.ts
+      - name: Bundle without deploying
+        if: github.event_name == 'pull_request'
+        working-directory: infra/sync-server
+        run: npx --yes "$WRANGLER" deploy --dry-run --outdir "$RUNNER_TEMP/sync-server"
+      # Wrangler talks to api.cloudflare.com, which doesn't challenge runner IPs the way the workers.dev hosts do.
+      - name: Deploy
+        if: github.event_name != 'pull_request'
+        working-directory: infra/sync-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SYNC_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 838798e8498ddea23910e8e812f26c17
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_SYNC_DEPLOY_TOKEN is not set; deploy by hand with npx wrangler deploy (docs/RELEASE.md)."
+            exit 1
+          fi
+          npx --yes "$WRANGLER" deploy --message "$GITHUB_SHA"
