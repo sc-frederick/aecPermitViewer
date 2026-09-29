@@ -4,13 +4,13 @@ The long-term release target is a signed, per-user Squirrel.Windows installer fo
 
 ## Current unsigned releases
 
-No signing certificate is available, so releases are unsigned. Bump `version` in `package.json`, commit, then push a matching tag:
+No signing certificate is available, so releases are unsigned. Bump `version` in `package.json`, commit, then push a matching annotated tag whose message sums up the release:
 
 ```
-git tag v0.2.0 && git push origin v0.2.0
+git tag -a v0.2.0 -m "Permit Monitor v0.2.0: in-app updates" && git push origin v0.2.0
 ```
 
-The workflow checks that the tag matches `package.json`, runs type checks and tests, stages the browser, builds the Squirrel installer, and runs the packaged browser smoke check. The release job then signs the update manifest, uploads the installer and manifest to the update feed, and publishes a GitHub release with the installer, its SHA-256, and the manifest. **Pushing a tag ships the update to every installed copy**, so run the checks below first.
+The workflow checks that the tag matches `package.json` and is annotated (it stops on a lightweight tag; delete it with `git tag -d` and `git push origin :refs/tags/vX.Y.Z`, then push an annotated one), runs type checks and tests, stages the browser, builds the Squirrel installer, and runs the packaged browser smoke check. The release job then signs the update manifest, uploads the installer and manifest to the update feed, and publishes a GitHub release with the installer, its SHA-256, and the manifest. **Pushing a tag ships the update to every installed copy**, so run the checks below first.
 
 Unsigned installers trigger SmartScreen's "Windows protected your PC." on first install. Users click **More info**, then **Run anyway**; the release notes say this. After that, **Settings → Updates** downloads and installs new versions in the app. Updates downloaded by the app don't carry a download-origin mark, so SmartScreen doesn't prompt again. Data in `%LOCALAPPDATA%\PermitMonitorData` is kept. Builds before 0.2.0 have no update feed; those users must install 0.2.0 by hand once.
 
