@@ -9,7 +9,7 @@ import { installerPath, readLocalRelease } from "./release-feed.mjs";
 // Cloudflare doesn't challenge (GitHub's runners are challenged; CI writes to R2 directly with
 // publish-feed.mjs). The Worker refuses different bytes for a published installer and a manifest
 // that isn't newer than the live one; this script checks the manifest rule first so it doesn't
-// upload ~800 MB only to be refused.
+// upload ~280 MB only to be refused.
 const server = process.env.UPDATE_SERVER_URL;
 
 const token = process.env.UPDATE_UPLOAD_TOKEN;

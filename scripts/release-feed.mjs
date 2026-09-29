@@ -21,7 +21,7 @@ export function macZipKey(version) {
   return `PermitMonitor-${version}-mac-arm64.zip`;
 }
 
-/** Hex SHA-256 of a file, read as a stream so an ~800 MB installer isn't held in memory. */
+/** Hex SHA-256 of a file, read as a stream so a ~280 MB installer isn't held in memory. */
 export async function sha256File(file) {
   const hash = createHash("sha256");
 

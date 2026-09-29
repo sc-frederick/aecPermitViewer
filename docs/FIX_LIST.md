@@ -32,7 +32,8 @@ Implemented on `master` for release 0.6.0. "Verified" names the evidence gathere
 | F18 PR #6 cleanup | Done | Changes carried forward against current code, including removing the Hillsborough label aliases (the only caller sends profile IDs). |
 | F19 model metadata | Done | `NAVIGATION_MODEL` feeds both the request and the stored run. |
 | F20 test cleanup | Done | The query-plan check asserts no temporary sort, and the observation fixture is shared. |
-| F21–F23 | Not started | Measure first. |
+| F21 headless shell only | Done | Staging passes `--only-shell` on every platform; the worker and tests already launched only the headless shell. Tests pass with the full Chromium removed. The Windows installer went from 477 MB (0.9.0) to 277 MB, and the packaged browser smoke passed on Windows and macOS (CI run 36591749174). |
+| F22–F23 | Not started | Measure first. |
 | F24 CI | Partly done | Superseded PR runs are cancelled, and the browser is staged before tests (renderer and worker tests need it). Job boundaries unchanged. |
 
 Found while implementing: Hernando's not-found check looked for "Found 0 results", but the portal shows "No results were found", so a missing permit ended as "Portal page changed". The search-result wait picked a hidden label, and the start-page wait picked a hidden menu link; both always waited the full 12 seconds. All three are fixed and covered by fixtures. On September 28, St. Petersburg's portal returned a 503 maintenance page and SWFWMD's search page timed out, on unchanged `master` as well as this branch, so neither family was checked live.
