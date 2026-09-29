@@ -6,3 +6,4 @@ vendor/playwright-browsers/
 *.log
 *:Zone.Identifier
 .claude/worktrees/
+.wrangler/

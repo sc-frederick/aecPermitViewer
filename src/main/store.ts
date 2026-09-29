@@ -30,6 +30,8 @@ const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
 
+const changeCountSchema = z.object({ changes: z.number() });
+
 const storedReviewsSchema = z.string().transform((value) => JSON.parse(value)).pipe(reviewsSchema);
 
 const storedPermitSchema = z.object({
@@ -296,6 +298,11 @@ export class PermitStore {
     this.db.close();
   }
 
+  /** How many rows this connection has changed since it opened; a different count means something was written. */
+  changeCount(): number {
+    return changeCountSchema.parse(this.sql("SELECT total_changes() AS changes").get()).changes;
+  }
+
   /** Prepares each statement once; the snapshot and scheduler run the same few queries repeatedly. */
   private sql(source: string): StatementSync {
     let statement = this.statements.get(source);
@@ -554,6 +561,17 @@ export class PermitStore {
   setFlag(key: string, value: boolean): void {
     this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
       .run(key, value ? "1" : "0");
+  }
+
+  /** A text setting, or null when it has never been saved or was cleared. */
+  getText(key: string): string | null {
+    return this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key)?.value ?? null;
+  }
+
+  /** Saves a text setting; null clears it. */
+  setText(key: string, value: string | null): void {
+    if (value === null) this.sql("DELETE FROM settings WHERE key = ?").run(key);
+    else this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
   /**

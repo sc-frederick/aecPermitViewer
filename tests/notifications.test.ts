@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeCheckEvent } from "../src/main/notifications.js";
+import { describeCheckEvent, describeSharedUpdate } from "../src/main/notifications.js";
 import type { PermitRow } from "../src/shared/permit.js";
 
 const base: PermitRow = {
@@ -72,5 +72,25 @@ describe("check notifications", () => {
   it("ignores cancelled checks and groups key problems separately", () => {
     expect(describeCheckEvent(verified, verified, "cancelled")).toBeNull();
     expect(describeCheckEvent(verified, verified, "authentication_error")?.kind).toBe("key-needed");
+  });
+});
+
+describe("shared list notifications", () => {
+  const checked = { ...verified, latestAttemptAt: "2026-09-28T12:00:00.000Z" };
+
+  it("announces a check that finished since the list before, and stays quiet otherwise", () => {
+    const issued = { ...checked, lastStatus: "Issued", latestAttemptAt: "2026-09-28T16:00:00.000Z" };
+
+    expect(describeSharedUpdate([checked], [issued])).toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
+    expect(describeSharedUpdate([checked], [checked])).toEqual([]);
+    expect(describeSharedUpdate([], [issued])).toEqual([]);
+  });
+
+  it("announces a check the list before caught still running", () => {
+    const running = { ...checked, latestAttemptAt: "2026-09-28T16:00:00.000Z", latestOutcome: null };
+    const finished = { ...running, lastStatus: "Issued", latestOutcome: "success" as const };
+
+    expect(describeSharedUpdate([checked], [running])).toEqual([]);
+    expect(describeSharedUpdate([running], [finished])).toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
   });
 });

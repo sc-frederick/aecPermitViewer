@@ -19,6 +19,8 @@ jobs:
     env:
       UPDATE_FEED_URL: https://permitmon-updates.sc-frederick.workers.dev/release-manifest.json
       UPDATE_PUBLIC_KEY_SPKI_BASE64: MCowBQYDK2VwAyEApu+hz0nmtlIiFeBQQz4vtoqthXAi13VyC1EoXN7rtbc=
+      # Shared lists (infra/sync-server). Deploy that Worker before tagging a release built with this.
+      SHARE_SERVICE_URL: https://permitmon-sync.sc-frederick.workers.dev
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
