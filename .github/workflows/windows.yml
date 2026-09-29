@@ -27,12 +27,18 @@ jobs:
         with:
           node-version: 24.21.0
           cache: npm
-      - name: Check tag matches package version
+      # The checkout turns an annotated tag into a lightweight one, so the tag's type is read from GitHub.
+      - name: Check tag matches package version and is annotated
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match package version $version." }
+          $type = gh api "repos/${env:GITHUB_REPOSITORY}/git/ref/tags/${env:GITHUB_REF_NAME}" --jq .object.type
+          if ($LASTEXITCODE -ne 0) { throw "Could not read tag ${env:GITHUB_REF_NAME} from GitHub." }
+          if ($type -ne "tag") { throw "Tag ${env:GITHUB_REF_NAME} is lightweight. Delete it and push an annotated one (docs/RELEASE.md)." }
       - run: npm ci --allow-git=all
       - run: npm run typecheck
       - run: npm run lint
