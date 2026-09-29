@@ -8,11 +8,9 @@ const browserPath = path.resolve("vendor/playwright-browsers");
 
 mkdirSync(browserPath, { recursive: true });
 
-// The worker only launches the headless shell. On macOS the full Chromium is an app bundle full of symlinks, which the
-// payload check refuses, so a Mac build stages the shell alone.
-const shellOnly = process.platform === "darwin" ? ["--only-shell"] : [];
-
-const result = spawnSync(process.execPath, [path.resolve("node_modules/playwright/cli.js"), "install", "chromium", ...shellOnly], {
+// The worker and tests only launch the headless shell, so the full Chromium (about 400 MB) stays out of the installer.
+// On macOS it is also an app bundle full of symlinks, which the payload check refuses.
+const result = spawnSync(process.execPath, [path.resolve("node_modules/playwright/cli.js"), "install", "chromium", "--only-shell"], {
   stdio: "inherit",
   env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browserPath },
 });

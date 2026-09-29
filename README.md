@@ -35,7 +35,7 @@ The renderer and worker tests run in the staged browser, so stage it before `npm
 
 `npm run lint` runs Oxlint with the vendored [anti-slop](https://github.com/dmmulroy/anti-slop) rules in `tools/oxlint/anti-slop/` (provenance in its `UPSTREAM.md`). They reject unchecked type assertions and `unknown` inputs, so values from IPC, the worker, SQLite, and the network are parsed with zod where they enter. Fix a finding rather than suppressing it.
 
-`npm run browser:stage` installs Playwright's pinned Chromium and headless shell under `vendor/playwright-browsers`, then writes a SHA-256 manifest for the complete payload. On Windows, `npm run make:win` creates the Squirrel installer. On a Mac, `npm run package:mac` builds the app; staging there installs only the headless shell. See [Mac builds](docs/RELEASE.md#mac-builds) for signing and installing. Key storage uses Windows encryption or the macOS Keychain, so saving a key works only on those two. Elsewhere, use the development key variable described below.
+`npm run browser:stage` installs Playwright's pinned Chromium headless shell under `vendor/playwright-browsers`, then writes a SHA-256 manifest for the complete payload. The app and tests launch only the headless shell, so the full Chromium isn't staged. On Windows, `npm run make:win` creates the Squirrel installer. On a Mac, `npm run package:mac` builds the app. See [Mac builds](docs/RELEASE.md#mac-builds) for signing and installing. Key storage uses Windows encryption or the macOS Keychain, so saving a key works only on those two. Elsewhere, use the development key variable described below.
 
 On Linux, the same commands run the tests, a build, and `npm run smoke:portal`.
 
