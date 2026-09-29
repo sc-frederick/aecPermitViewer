@@ -50,7 +50,7 @@ jobs:
       - name: Test packaged browser HTTPS path
         shell: pwsh
         run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
-      # The installer is ~800 MB and artifact storage is billed. Keep it only for tag releases (the release job
+      # The installer is ~280 MB and artifact storage is billed. Keep it only for tag releases (the release job
       # downloads it) and manual runs. Setup.exe embeds the full .nupkg, so upload the installer alone.
       - uses: actions/upload-artifact@v7
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
