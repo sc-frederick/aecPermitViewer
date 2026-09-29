@@ -13,6 +13,14 @@ export const installerPath = path.resolve("out/make/squirrel.windows/x64/PermitM
 /** The signed manifest describing `installerPath`. */
 export const manifestPath = path.resolve("out/make/squirrel.windows/x64/release-manifest.json");
 
+/** The zipped Mac app from the macOS package job. The signed manifest doesn't cover it; the app never downloads it. */
+export const macZipPath = path.resolve("out/make/PermitMonitor-mac-arm64.zip");
+
+/** The feed key for a version's Mac zip. The Worker's `/mac` link redirects to it. */
+export function macZipKey(version) {
+  return `PermitMonitor-${version}-mac-arm64.zip`;
+}
+
 /** Hex SHA-256 of a file, read as a stream so an ~800 MB installer isn't held in memory. */
 export async function sha256File(file) {
   const hash = createHash("sha256");

@@ -56,6 +56,10 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
         writeFileSync(path.join(out, "release-manifest.json"), manifest(version, installer));
       },
+      /** Adds the zipped Mac app the macOS job builds. */
+      buildMac(zip: string): void {
+        writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), zip);
+      },
       /** Swaps the built installer after signing, leaving the manifest describing the original bytes. */
       replaceInstaller(installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
@@ -106,6 +110,24 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(feed.recordedSha256("PermitMonitorSetup-0.8.0.exe")).toBe(sha256("eight"));
     expect(feed.stored("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
     expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/release-manifest.json`]);
+  });
+
+  it("uploads the Mac zip before the manifest and never replaces it with other bytes", () => {
+    const feed = workspace();
+    feed.build("0.8.0", "eight");
+    feed.buildMac("mac eight");
+    const result = feed.publish();
+    expect(result.status, result.output).toBe(0);
+    expect(feed.stored("PermitMonitor-0.8.0-mac-arm64.zip")).toBe("mac eight");
+    expect(feed.recordedSha256("PermitMonitor-0.8.0-mac-arm64.zip")).toBe(sha256("mac eight"));
+    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
+      `${BUCKET}/release-manifest.json`]);
+
+    feed.buildMac("MAC EIGHT");
+    const rebuilt = feed.publish();
+    expect(rebuilt.status).not.toBe(0);
+    expect(rebuilt.output).toContain("already published with different bytes");
+    expect(feed.stored("PermitMonitor-0.8.0-mac-arm64.zip")).toBe("mac eight");
   });
 
   it("skips both writes when an identical release is rerun", () => {

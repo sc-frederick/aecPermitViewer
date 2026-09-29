@@ -76,6 +76,8 @@ export interface PermitBridge {
   checkForUpdate(): Promise<BridgeResult<UpdateCheck>>;
   downloadUpdate(): Promise<BridgeResult<string>>;
   installUpdate(): Promise<BridgeResult<null>>;
+  /** macOS: opens the page with the newest Mac download in the browser. */
+  openUpdateDownload(): Promise<BridgeResult<null>>;
   deleteLocalData(confirmation: string): Promise<BridgeResult<null>>;
   /** Starts sharing this app's list and returns the code others follow it with. */
   startSharing(): Promise<BridgeResult<null>>;

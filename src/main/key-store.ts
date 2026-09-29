@@ -5,7 +5,7 @@ import type { StoredKeyState } from "../shared/bridge.js";
 
 /**
  * Development runs (never a packaged build) may supply the key through TYPESAFE_API_KEY so the
- * app can be driven on machines without Windows key storage. It is read once here in main and is
+ * app can be driven on machines without Windows or macOS key storage. It is read once here in main and is
  * never written to disk, logs, the renderer, or the worker.
  */
 function developmentKey(): string | null {
@@ -36,7 +36,10 @@ export class KeyWriteFailed extends Error {
 /** The result of saving a key. */
 export type KeySave = { _tag: "saved" } | { _tag: "failed"; error: KeyStorageUnavailable | KeyWriteFailed };
 
-/** The TypeSafe key, encrypted for the current Windows user in the app's data folder. */
+/**
+ * The TypeSafe key, encrypted for the current user in the app's data folder. Windows encrypts it with DPAPI; macOS with
+ * a key kept in the login Keychain.
+ */
 export class KeyStore {
   private readonly secretPath: string;
   private readonly devKey = developmentKey();
@@ -68,7 +71,7 @@ export class KeyStore {
     }
   }
 
-  /** Encrypts the key for this Windows user. The plaintext is never returned or persisted. */
+  /** Encrypts the key for this user. The plaintext is never returned or persisted. */
   async save(key: string): Promise<KeySave> {
     if (!(await this.encryptionAvailable())) return { _tag: "failed", error: new KeyStorageUnavailable() };
 
@@ -128,7 +131,8 @@ export class KeyStore {
   }
 
   private async encryptionAvailable(): Promise<boolean> {
-    return process.platform === "win32" && await safeStorage.isAsyncEncryptionAvailable();
+    // Linux falls back to a hard-coded password when no keyring is running, so only these two count.
+    return (process.platform === "win32" || process.platform === "darwin") && await safeStorage.isAsyncEncryptionAvailable();
   }
 
   private async writeEncrypted(encrypted: Buffer): Promise<void> {

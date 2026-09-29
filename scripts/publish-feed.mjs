@@ -3,13 +3,16 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { jsonText, parseManifest, sha256Hex } from "../infra/update-server/src/manifest.ts";
 import { decideInstallerUpload, decideManifestReplacement } from "../infra/update-server/src/release-policy.ts";
-import { installerPath, manifestPath, readLocalRelease } from "./release-feed.mjs";
+import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { installerPath, macZipKey, macZipPath, manifestPath, readLocalRelease, sha256File } from "./release-feed.mjs";
 
 // CI publishing path (.github/workflows/windows.yml). Cloudflare challenges GitHub's runners on the Worker
 // hosts, so this writes to R2's S3 endpoint with the AWS CLI. It applies the Worker's upload rules: a
 // versioned installer is written once (an identical rerun is skipped, different bytes fail the job), and the
 // manifest only moves to a newer version. The workflow serializes CI releases, and the manifest's final
-// conditional write refuses a concurrent change through the manual publisher.
+// conditional write refuses a concurrent change through the manual publisher. The Mac zip, when the job has one,
+// follows the same write-once rule and goes up before the manifest, so the feed's /mac link never names a missing file.
 
 const endpoint = process.env.R2_ENDPOINT;
 
@@ -20,6 +23,8 @@ if (!endpoint) throw new Error("R2_ENDPOINT is not set.");
 const MANIFEST = "release-manifest.json";
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
+
+const ZIP_TYPE = "application/zip";
 
 const NOT_FOUND = /\(404\)|NoSuchKey|Not Found/;
 
@@ -118,29 +123,39 @@ async function upload(file, key, contentType, extra) {
   if (result.code !== 0) throw failure(`Upload ${key}`, result);
 }
 
+/** Writes `file` under `key` once: an identical stored copy is skipped and different bytes fail the job. */
+async function publishOnce(file, key, contentType, claim) {
+  let decision = decideInstallerUpload(await headInstaller(key), claim);
+
+  if (decision._tag === "unverified") {
+    process.stdout.write(`${key} is stored without a recorded hash; hashing the stored copy.\n`);
+    decision = decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
+  }
+
+  if (decision._tag === "conflict") {
+    throw new Error(`${key} is already published with different bytes (${decision.reason}). Release a new version instead.`);
+  }
+
+  if (decision._tag === "already_published") {
+    process.stdout.write(`${key} is already published with these bytes; skipped.\n`);
+
+    return;
+  }
+
+  await upload(file, key, contentType, ["--metadata", `sha256=${claim.sha256}`]);
+  const stored = await headInstaller(key);
+
+  if (!stored || stored.size !== claim.size || stored.sha256 !== claim.sha256) throw new Error(`Uploaded ${key} does not match the local file.`);
+  process.stdout.write(`Uploaded ${key}.\n`);
+}
+
 const release = await readLocalRelease();
 
-const claim = { size: release.payload.size, sha256: release.payload.sha256 };
+await publishOnce(installerPath, release.key, INSTALLER_TYPE, { size: release.payload.size, sha256: release.payload.sha256 });
 
-let installer = decideInstallerUpload(await headInstaller(release.key), claim);
-
-if (installer._tag === "unverified") {
-  process.stdout.write(`${release.key} is stored without a recorded hash; hashing the stored copy.\n`);
-  installer = decideInstallerUpload({ size: claim.size, sha256: await hashStored(release.key) }, claim);
-}
-
-if (installer._tag === "conflict") {
-  throw new Error(`${release.key} is already published with different bytes (${installer.reason}). Release a new version instead.`);
-}
-
-if (installer._tag === "upload") {
-  await upload(installerPath, release.key, INSTALLER_TYPE, ["--metadata", `sha256=${claim.sha256}`]);
-  const stored = await headInstaller(release.key);
-
-  if (!stored || stored.size !== claim.size || stored.sha256 !== claim.sha256) throw new Error(`Uploaded ${release.key} does not match the local installer.`);
-  process.stdout.write(`Uploaded ${release.key}.\n`);
-} else {
-  process.stdout.write(`${release.key} is already published with these bytes; skipped.\n`);
+if (existsSync(macZipPath)) {
+  await publishOnce(macZipPath, macZipKey(release.payload.version.text), ZIP_TYPE,
+    { size: (await stat(macZipPath)).size, sha256: await sha256File(macZipPath) });
 }
 
 const published = await publishedManifest();

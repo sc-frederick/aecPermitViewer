@@ -531,12 +531,21 @@ function renderKey(state: KeyState): void {
   element("key-remove", HTMLButtonElement).hidden = !saved;
 }
 
-function renderPreferences(preferences: AppPreferences): void {
+function renderPreferences(preferences: AppPreferences, platform: AppSnapshot["platform"]): void {
+  element("tray-place").textContent = platform === "mac" ? "menu bar" : "tray";
+
   for (const input of document.querySelectorAll<HTMLInputElement>("input[data-pref]")) {
     const key = preferenceKey(input.dataset.pref);
 
     if (!key) continue;
     input.checked = preferences[key];
+
+    // Sign-in and desktop shortcuts come from the Windows installer; a Mac copy has neither.
+    if (key === "openAtLogin" || key === "desktopShortcut") {
+      const label = input.closest("label");
+
+      if (label) label.hidden = platform === "mac";
+    }
 
     if (key === "runInBackground") input.disabled = !preferences.backgroundAvailable;
 
@@ -549,7 +558,7 @@ function renderPreferences(preferences: AppPreferences): void {
     if (label) label.title = available ? "" : text;
   };
 
-  hint("runInBackground", preferences.backgroundAvailable, "Available on Windows.");
+  hint("runInBackground", preferences.backgroundAvailable, "Available on Windows and macOS.");
   hint("openAtLogin", preferences.installedApp, "Available in the installed app.");
   hint("desktopShortcut", preferences.installedApp, "Available in the installed app.");
 }
@@ -700,7 +709,7 @@ function render(snapshot: AppSnapshot): void {
   document.body.toggleAttribute("data-following", following);
   renderShare(snapshot.share);
   renderKey(snapshot.keyState);
-  renderPreferences(snapshot.preferences);
+  renderPreferences(snapshot.preferences, snapshot.platform);
 
   if (snapshot.preferences.offerDesktopShortcut && !desktopShortcutAsked) void askDesktopShortcut();
   element("monitoring-mode", HTMLSelectElement).value = snapshot.monitoring;
@@ -1512,7 +1521,11 @@ checkUpdate.addEventListener("click", async () => {
 
   if (result.value.state === "unavailable") status.textContent = "No update feed in this build.";
   else if (result.value.state === "current") status.textContent = "You're up to date.";
-  else {
+  // The size is the Windows installer's, so a Mac copy leaves it out.
+  else if (currentSnapshot?.platform === "mac") {
+    status.textContent = `Version ${result.value.version} available. Download it, quit Permit Monitor, and replace the copy in Applications.`;
+    element("download-update", HTMLButtonElement).hidden = false;
+  } else {
     status.textContent = `Version ${result.value.version} available (${Math.ceil(result.value.size / 1_000_000)} MB).`;
     element("download-update", HTMLButtonElement).hidden = false;
   }
@@ -1520,6 +1533,15 @@ checkUpdate.addEventListener("click", async () => {
 
 element("download-update", HTMLButtonElement).addEventListener("click", async () => {
   const control = element("download-update", HTMLButtonElement);
+
+  if (currentSnapshot?.platform === "mac") {
+    const result = await busy(control, () => api.openUpdateDownload());
+
+    if (!result.ok) element("update-status").textContent = result.error;
+
+    return;
+  }
+
   element("update-status").textContent = "Downloading… This can take a few minutes.";
   // A check during the download could replace the update being downloaded.
   checkUpdate.disabled = true;

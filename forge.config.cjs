@@ -74,7 +74,11 @@ module.exports = {
     asar: true,
     ignore: excludedFromApp,
     executableName: "PermitMonitor",
+    // Packager adds .ico for Windows and .icns for macOS.
     icon: path.resolve(__dirname, "assets/icon"),
+    // macOS names the Keychain entry for the saved key and the notification settings after this.
+    appBundleId: "io.aeccloud.permitmonitor",
+    appCategoryType: "public.app-category.business",
     extraResource: [
       path.resolve(__dirname, "vendor/playwright-browsers"),
       path.resolve(__dirname, "dist/authenticode.ps1"),

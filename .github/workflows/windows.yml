@@ -1,4 +1,4 @@
-name: Windows package
+name: Package
 
 on:
   workflow_dispatch:
@@ -60,9 +60,51 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  # The Mac app is signed ad hoc (no Apple Developer ID), so Gatekeeper blocks it until the user allows it once; see
+  # docs/RELEASE.md. macOS runners use ten times the minutes of Linux ones, so this runs for releases and manual runs only.
+  package-mac:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      UPDATE_FEED_URL: https://permitmon-updates.sc-frederick.workers.dev/release-manifest.json
+      UPDATE_PUBLIC_KEY_SPKI_BASE64: MCowBQYDK2VwAyEApu+hz0nmtlIiFeBQQz4vtoqthXAi13VyC1EoXN7rtbc=
+      SHARE_SERVICE_URL: https://permitmon-sync.sc-frederick.workers.dev
+      APP: out/Permit Monitor-darwin-arm64/Permit Monitor.app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - run: npm ci --allow-git=all
+      # Renderer and worker tests run in the staged browser, which is the Mac headless shell here.
+      - run: npm run browser:stage
+      - run: npm test
+      - run: npm run package:mac
+      # Packaging edits Electron's Info.plist, which breaks the bundle's seal, and Gatekeeper calls an app with a broken
+      # seal "damaged" with no way to open it. An ad hoc signature reseals it. The browser payload stays as it was.
+      - name: Sign ad hoc
+        run: |
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+      - name: Test packaged browser HTTPS path
+        run: '"$APP/Contents/MacOS/PermitMonitor" --smoke-browser'
+      # ditto keeps the framework symlinks and permissions that a plain zip would lose.
+      - name: Zip the app
+        run: |
+          mkdir -p out/make
+          ditto -c -k --sequesterRsrc --keepParent "$APP" out/make/PermitMonitor-mac-arm64.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-app
+          path: out/make/PermitMonitor-mac-arm64.zip
+          retention-days: 1
+          compression-level: 0
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [package, package-mac]
     # Pinned so ubuntu-latest's move to 26.04 doesn't change the release image unannounced.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -88,6 +130,10 @@ jobs:
         with:
           name: windows-installer
           path: out/make/squirrel.windows/x64
+      - uses: actions/download-artifact@v8
+        with:
+          name: mac-app
+          path: out/make
       - name: Sign update manifest
         env:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
@@ -120,8 +166,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          mac_zip="PermitMonitor-$version-mac-arm64.zip"
+          cp out/make/PermitMonitor-mac-arm64.zip "out/make/squirrel.windows/x64/$mac_zip"
           cd out/make/squirrel.windows/x64
           sha256sum PermitMonitorSetup.exe > PermitMonitorSetup.exe.sha256
+          sha256sum "$mac_zip" > "$mac_zip.sha256"
           cat > notes.md <<'EOF'
           ## Install
 
@@ -131,9 +181,17 @@ jobs:
 
           To confirm the download, compare `Get-FileHash PermitMonitorSetup-*.exe` in PowerShell with the `.sha256` file.
 
+          ## Mac (Apple silicon)
+
+          Download https://permitmon-updates.aeccloud.io/mac, open the zip, and drag **Permit Monitor** to Applications. The app isn't signed by Apple, so macOS blocks it the first time. In Terminal, run:
+
+              xattr -dr com.apple.quarantine "/Applications/Permit Monitor.app"
+
+          Then open it as usual. (**Open Anyway** in Privacy & Security lets the app start but not the browser inside it, so use the command.) The first time the app saves your TypeSafe key, macOS asks to use the Keychain; enter your Mac password and click **Always Allow**. Mac updates are downloaded by hand: **Settings → Updates** says when one is out, and the steps above apply again.
+
           ## Updating
 
           From 0.2.0 on, open **Settings → Updates → Check for updates** to download and install new versions in the app. Your permits and history are kept.
           EOF
-          gh release create "$GITHUB_REF_NAME" PermitMonitorSetup.exe PermitMonitorSetup.exe.sha256 release-manifest.json \
+          gh release create "$GITHUB_REF_NAME" PermitMonitorSetup.exe PermitMonitorSetup.exe.sha256 "$mac_zip" "$mac_zip.sha256" release-manifest.json \
             --title "Permit Monitor $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
