@@ -74,9 +74,10 @@ export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome:
 }
 
 /**
- * What a follower hears when a newer shared list arrives: for each permit the publisher checked since the list before,
- * the notice the publisher's own app would have given. Permits new to the list stay quiet, so following a list doesn't
- * announce every permit in it, and key notices are left out because they are about the publisher's key.
+ * What a follower hears when a newer shared list arrives: for each permit whose check finished since the list before,
+ * the notice the publisher's own app would have given. A check still running when the earlier list went out has the
+ * same start time but no outcome yet, so its finish counts. Permits new to the list stay quiet, so following a list
+ * doesn't announce every permit in it, and key notices are left out because they are about the publisher's key.
  */
 export function describeSharedUpdate(before: readonly PermitRow[], after: readonly PermitRow[]): CheckEvent[] {
   const previous = new Map(before.map((permit) => [permit.id, permit]));
@@ -84,7 +85,9 @@ export function describeSharedUpdate(before: readonly PermitRow[], after: readon
   return after.flatMap((permit) => {
     const earlier = previous.get(permit.id);
 
-    if (!earlier || !permit.latestOutcome || earlier.latestAttemptAt === permit.latestAttemptAt) return [];
+    if (!earlier || !permit.latestOutcome) return [];
+
+    if (earlier.latestAttemptAt === permit.latestAttemptAt && earlier.latestOutcome === permit.latestOutcome) return [];
     const event = describeCheckEvent(earlier, permit, permit.latestOutcome);
 
     return event && event.kind !== "key-needed" ? [event] : [];

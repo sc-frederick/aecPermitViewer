@@ -1,0 +1,10 @@
+{
+  // The Worker type-checks against Cloudflare's runtime types, which clash with the DOM types the app uses, so it has
+  // its own project. The root project still checks room.ts and router.ts, which the tests run under Node.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,5 +1,5 @@
 // One shared list: the latest encrypted copy its publisher sent, with a revision number that grows by one per
-// publication. The room never sees the list's contents or any key; it stores and returns opaque bytes.
+// publication from a random start. The room never sees the list's contents or any key; it stores and returns opaque bytes.
 // zod/mini keeps the Worker bundle small; the full zod build is most of an otherwise ~10 KB Worker.
 import * as z from "zod/mini";
 
@@ -43,6 +43,17 @@ const storedRevisionSchema = z.object({
 
 const storedListSchema = z.extend(storedRevisionSchema, { body: z.instanceof(ArrayBuffer) });
 
+/**
+ * A list's first revision: random below 2^48, so a list deleted and published again doesn't reuse a revision a
+ * follower still holds, which would get that follower a 304 for different contents. Revisions stay within the 15
+ * digits the router's ETags allow.
+ */
+function firstRevision(): number {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
+
+  return (high & 0xffff) * 2 ** 32 + low + 1;
+}
+
 const tableCountSchema = z.object({ tables: z.number() });
 
 /**
@@ -79,7 +90,7 @@ export class ShareRoom {
       if (wait > 0) return { _tag: "too_soon", retryAfterSeconds: Math.ceil(wait / 1000) };
     }
 
-    const revision = (latest?.revision ?? 0) + 1;
+    const revision = latest ? latest.revision + 1 : firstRevision();
     const publishedAt = new Date(now).toISOString();
     // One row: only the latest publication is kept.
     this.storage.sql.exec(`CREATE TABLE IF NOT EXISTS list (

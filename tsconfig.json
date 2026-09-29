@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "infra/update-server/src/**/*.ts", "infra/sync-server/src/**/*.ts", "forge.config.cjs"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "infra/update-server/src/**/*.ts", "infra/sync-server/src/room.ts", "infra/sync-server/src/router.ts", "forge.config.cjs"]
 }

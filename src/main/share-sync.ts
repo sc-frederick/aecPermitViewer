@@ -58,16 +58,21 @@ export class SharePublisher {
     private readonly report: Report,
   ) {}
 
-  /** Something in the list may have changed: send it once it has settled and no checks are left. */
+  /** The list changed: send it once it has gone PUBLISH_SETTLE_MS without another change and no checks are left. */
   notify(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.schedule(PUBLISH_SETTLE_MS);
   }
 
-  /** Sends the list now, even when it hasn't changed, and says why that failed, if it did. */
+  /** Sends the list now, even when it hasn't changed, and says why that failed, if it did. Does nothing once stopped. */
   async syncNow(): Promise<SyncProblem> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     await this.running;
+
+    // Stopping comes before deleting the shared copy, so a publication now would bring back a list being removed.
+    if (this.stopped) return null;
     const attempt = this.publish(true);
     this.running = attempt.then(() => undefined).finally(() => { this.running = null; });
 
@@ -121,7 +126,7 @@ export class SharePublisher {
       return this.problem;
     }
 
-    if (json === this.lastJson && !force) return null;
+    if ((json === this.lastJson && !force) || this.stopped) return null;
 
     try {
       const reply = await this.service.publish(this.writeKey, sealList(json, this.contentKey));
@@ -163,12 +168,12 @@ export type Probe =
   | { _tag: "unreadable" };
 
 /** Why a fetched list can't be shown, as Settings says it. */
-const FOLLOW_PROBLEMS = {
+const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   absent: "The shared list was removed. Ask for a new code.",
   undecryptable: "This code no longer opens the shared list. Ask for a new code.",
   unreadable: "This shared list needs a newer version of Permit Monitor.",
   unreachable: "Couldn't reach the sharing service. Retrying.",
-} as const;
+};
 
 /** Opens and parses a fetched list. */
 function readList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; json: string; list: SharedList } | { _tag: "undecryptable" } | { _tag: "unreadable" } {
@@ -182,6 +187,9 @@ function readList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; jso
     return { _tag: "unreadable" };
   }
 }
+
+/** Why the latest fetch didn't bring a list. */
+type FollowFailure = "absent" | "undecryptable" | "unreadable" | "unreachable";
 
 /** Fetches the list a share code opens, without following it. Rejects when the service can't be reached. */
 export async function probeShare(service: ShareService, readToken: string, contentKey: Uint8Array): Promise<Probe> {
@@ -203,9 +211,7 @@ export class ShareFollower {
   publishedAt: string | null = null;
   /** When this app last heard from the service about the list. */
   checkedAt: string | null = null;
-  /** Why the latest fetch didn't bring a list, until one does. */
-  problem: string | null = null;
-
+  private failure: FollowFailure | null = null;
   private revision: number | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
@@ -239,9 +245,20 @@ export class ShareFollower {
     }
   }
 
+  /** Why the latest fetch didn't bring a list, until one does. */
+  get problem(): string | null {
+    return this.failure ? FOLLOW_PROBLEMS[this.failure] : null;
+  }
+
   /** Fetches now, then after each of the publisher's check times (see nextFetchAt). */
   start(): void {
     void this.refresh();
+  }
+
+  /** Fetches after the publisher's next check time, for a list that was fetched at `checkedAt`. */
+  startFetched(checkedAt: string): void {
+    this.checkedAt = checkedAt;
+    this.planNext();
   }
 
   async stop(): Promise<void> {
@@ -272,7 +289,7 @@ export class ShareFollower {
     const now = new Date();
 
     // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
-    const next = this.problem === FOLLOW_PROBLEMS.unreachable
+    const next = this.failure === "unreachable"
       ? new Date(now.getTime() + RETRY_MS) : nextFetchAt(this.list?.schedule ?? null, now);
 
     this.timer = setTimeout(() => {
@@ -290,9 +307,9 @@ export class ShareFollower {
       this.checkedAt = new Date().toISOString();
 
       if (reply._tag === "absent") {
-        this.problem = FOLLOW_PROBLEMS.absent;
+        this.failure = "absent";
       } else if (reply._tag === "unchanged") {
-        this.problem = null;
+        this.failure = null;
       } else {
         const read = readList(reply.sealed, this.contentKey);
 
@@ -301,17 +318,17 @@ export class ShareFollower {
           this.list = read.list;
           this.revision = reply.revision;
           this.publishedAt = reply.publishedAt;
-          this.problem = null;
+          this.failure = null;
           this.save({ revision: reply.revision, publishedAt: reply.publishedAt, json: read.json });
           this.updated(before, read.list);
         } else {
-          this.problem = FOLLOW_PROBLEMS[read._tag];
+          this.failure = read._tag;
         }
       }
     } catch (cause) {
       if (this.stopped) return;
       this.report("share:fetch", cause);
-      this.problem = FOLLOW_PROBLEMS.unreachable;
+      this.failure = "unreachable";
     }
 
     this.changed();

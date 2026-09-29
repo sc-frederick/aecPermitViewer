@@ -783,8 +783,16 @@ async function startApp(): Promise<void> {
 
     // An update download writes inside the data folder, so it has to stop and let go of its files first.
     await updates.cancel();
-    // The shared copy goes with the local data, so the code others hold stops working.
-    await sharing.removeSharedCopy();
+    // The shared copy goes with the local data, so the code others hold stops working. The write key is the only way to
+    // delete it, so local data stays until the deletion goes through.
+    const unshared = await sharing.stopSharing();
+
+    if (!unshared.ok) {
+      resumeAfterFailedShutdown();
+
+      return { ok: false, error: "Couldn't remove the shared copy, so nothing was deleted. Try again." };
+    }
+
     await sharing.stop();
     store.close();
     // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.

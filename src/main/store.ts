@@ -30,6 +30,8 @@ const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
 
+const changeCountSchema = z.object({ changes: z.number() });
+
 const storedReviewsSchema = z.string().transform((value) => JSON.parse(value)).pipe(reviewsSchema);
 
 const storedPermitSchema = z.object({
@@ -294,6 +296,11 @@ export class PermitStore {
   close(): void {
     this.statements.clear();
     this.db.close();
+  }
+
+  /** How many rows this connection has changed since it opened; a different count means something was written. */
+  changeCount(): number {
+    return changeCountSchema.parse(this.sql("SELECT total_changes() AS changes").get()).changes;
   }
 
   /** Prepares each statement once; the snapshot and scheduler run the same few queries repeatedly. */

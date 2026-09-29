@@ -7,11 +7,12 @@ import { z } from "zod";
 import { route } from "../infra/sync-server/src/router.js";
 import { describeSharedUpdate } from "../src/main/notifications.js";
 import { buildSharedList, parseSharedList, SHARED_HISTORY_DAYS, type SharedList } from "../src/main/share-list.js";
-import { openList, parseServiceUrl, sealList, ShareService } from "../src/main/share-service.js";
-import { FOLLOW_DELAY_MS, nextFetchAt, PUBLISH_SETTLE_MS, UNSCHEDULED_FOLLOW_MS } from "../src/main/share-sync.js";
+import { openList, parseServiceUrl, sealList, ShareService, type PublishReply } from "../src/main/share-service.js";
+import { FOLLOW_DELAY_MS, nextFetchAt, PUBLISH_SETTLE_MS, SharePublisher, UNSCHEDULED_FOLLOW_MS } from "../src/main/share-sync.js";
 import { Sharing, type SharingHost } from "../src/main/sharing.js";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID, type PermitHistory, type PermitRow } from "../src/shared/permit.js";
+import { parseShareCode } from "../src/shared/share-protocol.js";
 import { normalizeCheckTimes } from "../src/shared/schedule.js";
 import { MemoryRooms } from "./fixtures/memory-rooms.js";
 import { defined } from "./support/defined.js";
@@ -34,8 +35,32 @@ function observe(store: PermitStore, permitId: string, status: string): void {
       observedAt: new Date().toISOString(), recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?id=1" } });
 }
 
+/** Holds back the service's answers to one kind of request until released. */
+class Hold {
+  /** Resolves when the first held request has been answered by the Worker, before its answer is sent. */
+  readonly reached: Promise<void>;
+  private readonly released: Promise<void>;
+  private arrive = (): void => undefined;
+  private open = (): void => undefined;
+
+  constructor(readonly method: string) {
+    this.reached = new Promise((resolve) => { this.arrive = resolve; });
+    this.released = new Promise((resolve) => { this.open = resolve; });
+  }
+
+  wait(): Promise<void> {
+    this.arrive();
+
+    return this.released;
+  }
+
+  release(): void {
+    this.open();
+  }
+}
+
 /** The sync Worker's router behind a local HTTP server, as `wrangler dev` would serve it. */
-async function serve(rooms: MemoryRooms): Promise<Server> {
+async function serve(rooms: MemoryRooms, held: () => Hold | null = () => null): Promise<Server> {
   const server = createServer((incoming, outgoing) => {
     void (async () => {
       const chunks: Buffer[] = [];
@@ -52,6 +77,9 @@ async function serve(rooms: MemoryRooms): Promise<Server> {
 
       if (body.length > 0) init.body = body;
       const response = await route(new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init), rooms.directory);
+      const hold = held();
+
+      if (hold && hold.method === init.method) await hold.wait();
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       outgoing.end(Buffer.from(await response.arrayBuffer()));
     })();
@@ -174,15 +202,64 @@ describe("follower timing", () => {
   });
 });
 
+describe("publisher timing", () => {
+  /** A service that records when lists are published, and never fails. */
+  class RecordingService extends ShareService {
+    readonly publications: number[] = [];
+
+    override async publish(): Promise<PublishReply> {
+      this.publications.push(Date.now());
+
+      return { _tag: "published", publishedAt: new Date().toISOString() };
+    }
+  }
+
+  let target: RecordingService;
+  let json: string;
+  let publisher: SharePublisher;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    target = new RecordingService(new URL("http://localhost"));
+    json = "first";
+    publisher = new SharePublisher(target, "key", new Uint8Array(32), () => json, () => false, () => undefined, () => undefined);
+  });
+
+  afterEach(async () => {
+    await publisher.stop();
+  });
+
+  it("waits PUBLISH_SETTLE_MS after the latest change", async () => {
+    publisher.notify();
+    await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS - 1000);
+    json = "second";
+    publisher.notify();
+    await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS - 1);
+    expect(target.publications).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(target.publications).toHaveLength(1);
+  });
+
+  it("publishes nothing once stopped, even when asked to sync now", async () => {
+    publisher.notify();
+    await publisher.stop();
+    expect(await publisher.syncNow()).toBeNull();
+    await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS);
+    expect(target.publications).toHaveLength(0);
+  });
+});
+
 describe("sharing between two apps", () => {
   let rooms: MemoryRooms;
   let server: Server;
   let service: ShareService;
+  let hold: Hold | null;
 
   beforeEach(async () => {
     rooms = new MemoryRooms();
     rooms.now = Date.now();
-    server = await serve(rooms);
+    hold = null;
+    server = await serve(rooms, () => hold);
     service = new ShareService(defined(parseServiceUrl(`http://127.0.0.1:${z.object({ port: z.number() }).parse(server.address()).port}`), "service URL"));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   });
@@ -277,6 +354,48 @@ describe("sharing between two apps", () => {
     theirs.close();
   }, 30_000);
 
+  it("runs share, follow, and sync one at a time, so none undoes another", async () => {
+    const own = tempStore();
+    own.addPermit("HC-BLD-26-0087599", HILLSBOROUGH_ID);
+    const publisher = new Sharing(own, service, new RecordingHost());
+    await publisher.startSharing();
+    await published(publisher);
+    const code = defined(publisher.code(), "share code");
+    const readToken = defined(parseShareCode(code), "parsed code").readToken;
+
+    // Share clicked while Follow's first fetch is under way: it waits for Follow, then refuses.
+    const theirs = tempStore();
+    const follower = new Sharing(theirs, service, new RecordingHost());
+    const probe = new Hold("GET");
+    hold = probe;
+    const following = follower.follow(code);
+    await probe.reached;
+    const sharing = follower.startSharing();
+    probe.release();
+    expect(await following).toEqual({ ok: true, value: null });
+    expect(await sharing).toEqual({ ok: false, error: "Stop following the shared list first." });
+    expect(follower.state().mode).toBe("following");
+    expect(theirs.getText("share_write_key")).toBeNull();
+
+    // Sync now clicked while Stop sharing waits on the deletion: it can't bring the deleted list back.
+    const deletion = new Hold("DELETE");
+    hold = deletion;
+    rooms.now += 60_000;
+    const stopping = publisher.stopSharing();
+    await deletion.reached;
+    const syncing = publisher.sync();
+    deletion.release();
+    expect(await stopping).toEqual({ ok: true, value: null });
+    expect(await syncing).toEqual({ ok: true, value: null });
+    hold = null;
+    expect(await service.fetch(readToken, null)).toEqual({ _tag: "absent" });
+    expect(own.getText("share_write_key")).toBeNull();
+
+    await Promise.all([publisher.stop(), follower.stop()]);
+    own.close();
+    theirs.close();
+  }, 30_000);
+
   it("keeps sharing when the shared copy can't be deleted, and turns sharing off in a build without a service", async () => {
     const own = tempStore();
     const publisher = new Sharing(own, service, new RecordingHost());
@@ -286,6 +405,11 @@ describe("sharing between two apps", () => {
 
     expect(await publisher.stopSharing()).toEqual({ ok: false, error: "Couldn't remove the shared copy, so it's still shared. Try again." });
     expect(publisher.state().mode).toBe("sharing");
+    // The write key is the only way to delete the copy, so it stays until a deletion goes through.
+    expect(own.getText("share_write_key")).not.toBeNull();
+    rooms.failing = false;
+    expect(await publisher.stopSharing()).toEqual({ ok: true, value: null });
+    expect(own.getText("share_write_key")).toBeNull();
     await publisher.stop();
 
     const offline = new Sharing(own, null, new RecordingHost());

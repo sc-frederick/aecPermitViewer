@@ -42,29 +42,53 @@ function problem(error: string): BridgeResult<null> {
 /**
  * Sharing this app's list, or following another's. The two are exclusive: a follower's window shows the followed list
  * in place of its own, and its own permits aren't checked meanwhile, so there would be nothing current to share.
+ *
+ * Starting, stopping, and syncing each wait on the network, so they run one at a time: otherwise a Share click during a
+ * Follow's first fetch would do both, and a Sync now during Stop sharing would publish the list being deleted.
  */
 export class Sharing {
   private publishing: Publishing | null = null;
   private follower: ShareFollower | null = null;
+  /** The last of the operations queued by `serially`. */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** Set by `stop`; operations queued after it do nothing. */
+  private stopped = false;
+  /** The store's change count when the publisher last heard of a change, so snapshots that change nothing are skipped. */
+  private listVersion: number | null = null;
 
   /** @param service - The sharing service, or null when this build has none. */
   constructor(private readonly store: PermitStore, private readonly service: ShareService | null, private readonly host: SharingHost) {}
 
+  /** Runs `work` after every operation queued before it has finished. */
+  private serially<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(work);
+    this.queue = result.catch(() => undefined);
+
+    return result;
+  }
+
   /** Resumes sharing or following as it was when the app last closed. */
-  async start(): Promise<void> {
-    if (!this.service) return;
+  start(): Promise<void> {
+    return this.serially(() => this.resume());
+  }
+
+  private async resume(): Promise<void> {
+    if (!this.service || this.stopped) return;
     const writeKey = this.store.getText(SETTINGS.writeKey);
     const contentKey = fromBase64Url(this.store.getText(SETTINGS.contentKey) ?? "", CONTENT_KEY_BYTES);
 
     if (writeKey && contentKey) await this.startPublishing(this.service, writeKey, contentKey);
     const code = parseShareCode(this.store.getText(SETTINGS.followCode) ?? "");
 
-    if (code && !this.publishing) this.startFollowing(this.service, code, this.cachedList());
+    if (code && !this.publishing) this.startFollowing(this.service, code, this.cachedList()).start();
   }
 
-  /** Stops publishing and fetching. A publication or fetch under way finishes first. */
-  async stop(): Promise<void> {
-    await Promise.all([this.publishing?.publisher.stop(), this.follower?.stop()]);
+  /** Stops publishing and fetching for good. A publication or fetch under way finishes first. */
+  stop(): Promise<void> {
+    return this.serially(async () => {
+      this.stopped = true;
+      await Promise.all([this.publishing?.publisher.stop(), this.follower?.stop()]);
+    });
   }
 
   get following(): boolean {
@@ -89,7 +113,13 @@ export class Sharing {
 
   /** This app's list may have changed; a shared list is sent again if it did. */
   listChanged(): void {
-    this.publishing?.publisher.notify();
+    // After `stop`, the store may already be closed.
+    if (!this.publishing || this.stopped) return;
+    const version = this.store.changeCount();
+
+    if (version === this.listVersion) return;
+    this.listVersion = version;
+    this.publishing.publisher.notify();
   }
 
   /** The share code, while sharing. */
@@ -121,8 +151,14 @@ export class Sharing {
     return null;
   }
 
-  async startSharing(): Promise<BridgeResult<null>> {
+  startSharing(): Promise<BridgeResult<null>> {
+    return this.serially(() => this.share());
+  }
+
+  private async share(): Promise<BridgeResult<null>> {
     if (!this.service) return problem("Sharing isn't available in this build.");
+
+    if (this.stopped) return problem("Permit Monitor is closing.");
 
     if (this.follower) return problem("Stop following the shared list first.");
 
@@ -139,8 +175,15 @@ export class Sharing {
     return ok;
   }
 
-  /** Deletes the shared copy first, so the code stops working; sharing carries on if that fails. */
-  async stopSharing(): Promise<BridgeResult<null>> {
+  /**
+   * Deletes the shared copy first, so the code stops working; sharing carries on if that fails, keeping the write key
+   * that can still delete it. Deleting local data comes through here too, so it never throws that key away.
+   */
+  stopSharing(): Promise<BridgeResult<null>> {
+    return this.serially(() => this.unshare());
+  }
+
+  private async unshare(): Promise<BridgeResult<null>> {
     const publishing = this.publishing;
 
     if (!publishing || !this.service) return ok;
@@ -166,8 +209,14 @@ export class Sharing {
   }
 
   /** Follows the list a code opens, once a first fetch shows it does. */
-  async follow(input: string): Promise<BridgeResult<null>> {
+  follow(input: string): Promise<BridgeResult<null>> {
+    return this.serially(() => this.startFollow(input));
+  }
+
+  private async startFollow(input: string): Promise<BridgeResult<null>> {
     if (!this.service) return problem("Sharing isn't available in this build.");
+
+    if (this.stopped) return problem("Permit Monitor is closing.");
 
     if (this.publishing) return problem("Stop sharing your list first.");
     const code = parseShareCode(input);
@@ -193,36 +242,32 @@ export class Sharing {
     await this.follower?.stop();
     this.store.setText(SETTINGS.followCode, input.trim());
     this.store.setText(SETTINGS.followCache, JSON.stringify(probe.cache));
-    this.startFollowing(this.service, code, probe.cache);
+    // The probe was this code's first fetch, so the next one waits for the publisher's next run.
+    this.startFollowing(this.service, code, probe.cache).startFetched(new Date().toISOString());
     this.host.changed();
 
     return ok;
   }
 
-  async stopFollowing(): Promise<BridgeResult<null>> {
-    await this.follower?.stop();
-    this.follower = null;
-    this.store.setText(SETTINGS.followCode, null);
-    this.store.setText(SETTINGS.followCache, null);
-    this.host.changed();
+  stopFollowing(): Promise<BridgeResult<null>> {
+    return this.serially(async () => {
+      await this.follower?.stop();
+      this.follower = null;
+      this.store.setText(SETTINGS.followCode, null);
+      this.store.setText(SETTINGS.followCache, null);
+      this.host.changed();
 
-    return ok;
+      return ok;
+    });
   }
 
   /** Sends the shared list now, or fetches the followed one now. */
-  async sync(): Promise<BridgeResult<null>> {
-    const failed = this.publishing ? await this.publishing.publisher.syncNow() : this.follower ? await this.follower.refresh() : null;
+  sync(): Promise<BridgeResult<null>> {
+    return this.serially(async () => {
+      const failed = this.publishing ? await this.publishing.publisher.syncNow() : this.follower ? await this.follower.refresh() : null;
 
-    return failed ? problem(failed) : ok;
-  }
-
-  /** Deletes the shared copy as part of deleting local data. Failures are reported and otherwise ignored. */
-  async removeSharedCopy(): Promise<void> {
-    const publishing = this.publishing;
-
-    if (!publishing || !this.service) return;
-    await publishing.publisher.stop();
-    await this.service.remove(publishing.writeKey).catch((cause: unknown) => this.host.report("share:remove", cause));
+      return failed ? problem(failed) : ok;
+    });
   }
 
   /** Starts the publisher for saved keys, or returns null when they don't make a share code. */
@@ -238,17 +283,22 @@ export class Sharing {
       () => this.host.checking(), () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
 
     this.publishing = { writeKey, code, publisher };
+    this.listVersion = this.store.changeCount();
     publisher.notify();
 
     return publisher;
   }
 
-  private startFollowing(service: ShareService, code: ShareCode, cached: CachedList | null): void {
-    this.follower = new ShareFollower(service, code.readToken, code.contentKey, cached,
+  /** Follows a code, showing `cached` until a fetch brings a newer list. The caller starts its fetches. */
+  private startFollowing(service: ShareService, code: ShareCode, cached: CachedList | null): ShareFollower {
+    const follower = new ShareFollower(service, code.readToken, code.contentKey, cached,
       (cache) => this.store.setText(SETTINGS.followCache, JSON.stringify(cache)),
       (before, after) => this.host.listUpdated(before, after),
       () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
-    this.follower.start();
+
+    this.follower = follower;
+
+    return follower;
   }
 
   private cachedList(): CachedList | null {

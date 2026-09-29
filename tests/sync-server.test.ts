@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { LIST_PATH, route } from "../infra/sync-server/src/router.js";
 import { MIN_PUBLISH_INTERVAL_MS, RETENTION_MS } from "../infra/sync-server/src/room.js";
 import {
   formatShareCode, fromBase64Url, parseShareCode, readTokenFor, roomNameFor, SHARE_BODY_MAX_BYTES, toBase64Url,
 } from "../src/shared/share-protocol.js";
 import { MemoryRooms } from "./fixtures/memory-rooms.js";
+
+const publishedSchema = z.object({ revision: z.number().int().positive(), publishedAt: z.string() });
 
 const ORIGIN = "https://permitmon-sync.example.test";
 
@@ -61,6 +64,15 @@ describe("share protocol", () => {
     expect(await roomNameFor(WRITE_KEY)).toBeNull();
   });
 
+  it("keeps deriving the tokens, rooms, and codes that existing shares were made with", async () => {
+    // Fixed values: a change here strands every share code already handed out.
+    expect(WRITE_KEY).toBe("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc");
+    expect(await readToken()).toBe("jZ2FJRJRqUu7lUZXPxvNgw");
+    expect(await roomNameFor("jZ2FJRJRqUu7lUZXPxvNgw")).toBe("03c71fe557e67a0d646e38a500e5a0388ccb96dad6f25b67d6314d147fce5f54");
+    expect(formatShareCode("jZ2FJRJRqUu7lUZXPxvNgw", new Uint8Array(32).fill(9)))
+      .toBe("PMS1-jZ2FJRJRqUu7lUZXPxvNgwkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ");
+  });
+
   it("formats and parses share codes, ignoring surrounding whitespace", async () => {
     const token = await readToken();
     const key = new Uint8Array(32).fill(9);
@@ -83,20 +95,21 @@ describe("sync Worker", () => {
     expect(rooms.storages.get(await roomNameFor(token) ?? "")?.sql.exec("SELECT count(*) AS n FROM sqlite_master").toArray()).toEqual([{ n: 0 }]);
     const published = await call(rooms, "PUT", WRITE_KEY, { body: body("first") });
     expect(published.status).toBe(200);
-    expect(await published.json()).toEqual({ revision: 1, publishedAt: "2026-09-28T12:00:00.000Z" });
+    const { revision, publishedAt } = publishedSchema.parse(await published.json());
+    expect(publishedAt).toBe("2026-09-28T12:00:00.000Z");
 
     const fetched = await call(rooms, "GET", token);
     expect(fetched.status).toBe(200);
-    expect(fetched.headers.get("etag")).toBe('"r1"');
+    expect(fetched.headers.get("etag")).toBe(`"r${revision}"`);
     expect(fetched.headers.get("x-published-at")).toBe("2026-09-28T12:00:00.000Z");
     expect(new TextDecoder().decode(await fetched.arrayBuffer())).toBe(new TextDecoder().decode(body("first")));
 
-    expect((await call(rooms, "GET", token, { ifNoneMatch: '"r1"' })).status).toBe(304);
+    expect((await call(rooms, "GET", token, { ifNoneMatch: `"r${revision}"` })).status).toBe(304);
     rooms.now += MIN_PUBLISH_INTERVAL_MS;
     await call(rooms, "PUT", WRITE_KEY, { body: body("second") });
-    const newer = await call(rooms, "GET", token, { ifNoneMatch: '"r1"' });
+    const newer = await call(rooms, "GET", token, { ifNoneMatch: `"r${revision}"` });
     expect(newer.status).toBe(200);
-    expect(newer.headers.get("etag")).toBe('"r2"');
+    expect(newer.headers.get("etag")).toBe(`"r${revision + 1}"`);
   });
 
   it("keeps readers from publishing or deleting, and needs well-formed credentials", async () => {
@@ -132,16 +145,18 @@ describe("sync Worker", () => {
     const rooms = new MemoryRooms();
     const token = await readToken();
     await call(rooms, "PUT", WRITE_KEY, { body: body("list") });
+    const etag = (await call(rooms, "GET", token)).headers.get("etag");
     const room = rooms.storages.get(await roomNameFor(token) ?? "");
 
     expect(room?.alarm).toBe(rooms.now + RETENTION_MS);
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect(room?.alarm).toBeNull();
     expect((await call(rooms, "GET", token)).status).toBe(404);
-    // Deleting again, or a list that never existed, still succeeds, and the same room takes a new publication.
+    // Deleting again, or a list that never existed, still succeeds, and the same room takes a new publication. That
+    // one's revision is new, so a follower holding the deleted list's revision gets the new contents, not a 304.
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect((await call(rooms, "PUT", WRITE_KEY, { body: body("again") })).status).toBe(200);
-    expect((await call(rooms, "GET", token)).headers.get("etag")).toBe('"r1"');
+    expect((await call(rooms, "GET", token, { ifNoneMatch: etag ?? "" })).status).toBe(200);
   });
 
   it("answers 503 when the Durable Object fails, and 404 or 405 off the list route", async () => {

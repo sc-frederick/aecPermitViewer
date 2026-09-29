@@ -2,19 +2,19 @@
 // encrypted copy. The rules live in room.ts and router.ts, which run without the Workers runtime in tests; this file
 // binds them to it.
 import { DurableObject } from "cloudflare:workers";
-import { ShareRoom, type PublishResult, type ReadResult, type RoomStorage } from "./room.js";
-import { route, type RoomApi } from "./router.js";
+import { ShareRoom, type PublishResult, type ReadResult } from "./room.js";
+import { route } from "./router.js";
 
 /** Bindings from wrangler.jsonc. */
 export interface SyncEnv {
-  readonly ROOMS: { getByName(name: string): RoomApi };
+  readonly ROOMS: DurableObjectNamespace<ShareRoomObject>;
 }
 
 /** One shared list. The Worker names it from a hash of the list's read token. */
 export class ShareRoomObject extends DurableObject<SyncEnv> {
   private readonly room: ShareRoom;
 
-  constructor(ctx: { readonly storage: RoomStorage }, env: SyncEnv) {
+  constructor(ctx: DurableObjectState, env: SyncEnv) {
     super(ctx, env);
     this.room = new ShareRoom(ctx.storage);
   }
@@ -32,7 +32,7 @@ export class ShareRoomObject extends DurableObject<SyncEnv> {
   }
 
   /** The retention alarm: nobody has published for RETENTION_MS, so the list goes. */
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
     await this.room.remove();
   }
 }
