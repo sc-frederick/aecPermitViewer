@@ -23,6 +23,12 @@ const bridge: PermitBridge = {
   downloadUpdate: () => ipcRenderer.invoke("permit:download-update"),
   installUpdate: () => ipcRenderer.invoke("permit:install-update"),
   deleteLocalData: (confirmation) => ipcRenderer.invoke("permit:delete-local-data", confirmation),
+  startSharing: () => ipcRenderer.invoke("permit:share-start"),
+  stopSharing: () => ipcRenderer.invoke("permit:share-stop"),
+  copyShareCode: () => ipcRenderer.invoke("permit:share-copy"),
+  follow: (code) => ipcRenderer.invoke("permit:follow", code),
+  stopFollowing: () => ipcRenderer.invoke("permit:follow-stop"),
+  syncShared: () => ipcRenderer.invoke("permit:share-sync"),
   onSnapshot: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on("permit:snapshot-changed", listener);

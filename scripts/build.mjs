@@ -16,6 +16,9 @@ if (process.env.RELEASE_BUILD === "1" && (!updateConfig.feedUrl || !updateConfig
 
 await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 
+// Shared lists (infra/sync-server). Empty turns sharing off; `wrangler dev` URLs on localhost work in development.
+await writeFile("dist/sync-config.json", JSON.stringify({ serviceUrl: process.env.SHARE_SERVICE_URL ?? "" }));
+
 const shared = {
   bundle: true,
   sourcemap: false,

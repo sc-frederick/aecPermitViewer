@@ -1,4 +1,4 @@
-import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type PermitBridge } from "../shared/bridge.js";
+import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type PermitBridge, type ShareState } from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
 import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
@@ -264,6 +264,13 @@ function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
 }
 
 function nextCheckSummary(snapshot: AppSnapshot): string {
+  // A followed list is checked by the app that shares it; the header says how current this copy is instead.
+  if (snapshot.share.mode === "following") {
+    if (snapshot.share.problem) return "Shared list · couldn't update";
+
+    return snapshot.share.publishedAt ? `Shared list · updated ${stamp(snapshot.share.publishedAt)}` : "Shared list";
+  }
+
   if (snapshot.monitoring !== "scheduled") return "";
 
   // Without a working key no scheduled check will start, so no time is promised; the key banner says why.
@@ -639,8 +646,46 @@ function applySnapshot(snapshot: AppSnapshot): boolean {
   return true;
 }
 
+/** Settings' shared-list section: start sharing or follow, the code while sharing, or the followed list's state. */
+function renderShare(share: ShareState): void {
+  const status = element("share-status");
+  element("share-off").hidden = share.mode !== "off" || !share.available;
+  element("share-on").hidden = share.mode !== "sharing";
+  element("follow-on").hidden = share.mode !== "following";
+  const sync = element("share-sync", HTMLButtonElement);
+  sync.hidden = share.mode === "off";
+  sync.title = share.mode === "sharing" ? "Send the shared list now" : "Get the newest copy of the shared list now";
+
+  switch (share.mode) {
+    case "off":
+      status.textContent = share.available
+        ? "Share a read-only copy of this list, or follow a list someone shares with you." : "Sharing isn't available in this build.";
+      break;
+    case "sharing": {
+      const code = element("share-code", HTMLInputElement);
+
+      if (code.value !== share.code) code.value = share.code;
+      status.textContent = share.problem
+        ?? (share.publishedAt
+          ? `Anyone with this code can view this list. It's sent after each round of checks; last sent ${stamp(share.publishedAt)}.`
+          : "Anyone with this code can view this list. It's sent after each round of checks.");
+      break;
+    }
+
+    case "following":
+      status.textContent = share.problem
+        ?? (share.publishedAt
+          ? `Viewing a shared list, sent ${stamp(share.publishedAt)}. A newer copy is fetched after each of the owner's check times.`
+          : "Viewing a shared list.");
+      break;
+  }
+}
+
 function render(snapshot: AppSnapshot): void {
   currentSnapshot = snapshot;
+  const following = snapshot.share.mode === "following";
+  document.body.toggleAttribute("data-following", following);
+  renderShare(snapshot.share);
   renderKey(snapshot.keyState);
   renderPreferences(snapshot.preferences);
   element("monitoring-mode", HTMLSelectElement).value = snapshot.monitoring;
@@ -663,13 +708,14 @@ function render(snapshot: AppSnapshot): void {
   }
 
   const visible = snapshot.permits.filter((permit) => matchesFilter(permit, filter, classified.get(permit.id) ?? null));
-  renderTable(visible, classified, snapshot.monitoring);
+  // "Not scheduled" is about this app's own schedule, which a followed list isn't on.
+  renderTable(visible, classified, following ? "manual" : snapshot.monitoring);
 
   element("permit-table", HTMLTableElement).hidden = visible.length === 0;
   const empty = element("empty-state");
   empty.hidden = visible.length > 0;
   // A filter that matches nothing says only that; it never reads as an all-clear.
-  empty.textContent = total === 0 ? "No permits yet." : "No matches.";
+  empty.textContent = total > 0 ? "No matches." : following ? "The shared list has no permits." : "No permits yet.";
 
   knownPermitIds = new Set(snapshot.permits.map((permit) => permit.id));
   firstRender = false;
@@ -744,6 +790,7 @@ function renderDetailsSummary(permit: PermitRow): void {
   element("details-remove", HTMLButtonElement).disabled = permit.checking;
   // Don't overwrite what someone is typing, or a value that failed to save.
   const project = element("details-project", HTMLInputElement);
+  project.readOnly = currentSnapshot?.share.mode === "following";
 
   if (document.activeElement !== project && project.getAttribute("aria-invalid") !== "true") project.value = permit.projectNumber ?? "";
 }
@@ -1484,6 +1531,76 @@ element("install-update", HTMLButtonElement).addEventListener("click", async () 
 element("delete-local-data", HTMLButtonElement).addEventListener("click", async () => {
   if (!(await confirmAction("Delete all data?", "Permits, history, and your key will be deleted and the app will close. This can't be undone.", "Delete"))) return;
   const result = await api.deleteLocalData("DELETE LOCAL DATA");
+
+  if (!result.ok) notice(result.error);
+});
+
+// Shared list
+element("share-start", HTMLButtonElement).addEventListener("click", async () => {
+  const result = await busy(element("share-start", HTMLButtonElement), () => api.startSharing());
+
+  if (!result.ok) notice(result.error);
+});
+
+element("share-copy", HTMLButtonElement).addEventListener("click", async () => {
+  const result = await api.copyShareCode();
+
+  if (result.ok) notice("Share code copied.", "info"); else notice(result.error);
+});
+
+element("share-stop", HTMLButtonElement).addEventListener("click", async () => {
+  if (!(await confirmAction("Stop sharing this list?", "The code stops working, and people following it keep only the copy they last received.", "Stop sharing"))) return;
+  const result = await busy(element("share-stop", HTMLButtonElement), () => api.stopSharing());
+
+  if (!result.ok) notice(result.error);
+});
+
+element("follow-input", HTMLInputElement).addEventListener("input", () => setInlineError("follow-input", "follow-error", null));
+
+element("follow-form", HTMLFormElement).addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = element("follow-input", HTMLInputElement);
+  const code = input.value.trim();
+
+  if (!code) {
+    setInlineError("follow-input", "follow-error", "Paste the code someone shared with you.");
+    input.focus();
+
+    return;
+  }
+
+  const own = currentSnapshot?.share.mode === "off" ? currentSnapshot.permits.length : 0;
+
+  if (own > 0 && !(await confirmAction("Follow this shared list?",
+    `Your own ${permitCount(own)} stay on this computer but aren't shown or checked until you stop following.`, "Follow"))) return;
+  const result = await busy(element("follow-save", HTMLButtonElement), () => api.follow(code));
+
+  if (!result.ok) {
+    setInlineError("follow-input", "follow-error", result.error);
+    input.focus();
+
+    return;
+  }
+
+  input.value = "";
+  setInlineError("follow-input", "follow-error", null);
+
+  if (filter !== "all") setFilter("all");
+  notice("Following the shared list.", "info");
+});
+
+const shareSync = element("share-sync", HTMLButtonElement);
+
+shareSync.addEventListener("click", async () => {
+  const sharing = currentSnapshot?.share.mode === "sharing";
+  const result = await busy(shareSync, () => api.syncShared());
+
+  if (result.ok) notice(sharing ? "Shared list sent." : "Shared list is up to date.", "info"); else notice(result.error);
+});
+
+element("follow-stop", HTMLButtonElement).addEventListener("click", async () => {
+  if (!(await confirmAction("Stop following?", "Your own list comes back. You'll need the code to follow this list again.", "Stop following"))) return;
+  const result = await api.stopFollowing();
 
   if (!result.ok) notice(result.error);
 });
