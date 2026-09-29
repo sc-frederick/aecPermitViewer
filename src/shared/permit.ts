@@ -99,6 +99,8 @@ export interface AppSnapshot {
   preferences: AppPreferences;
   keyState: KeyState;
   appVersion: string;
+  /** Which settings and update steps the window offers. `other` is a development run on Linux. */
+  platform: "windows" | "mac" | "other";
   monitoring: "manual" | "scheduled";
   /** Daily scheduled check times as sorted "HH:MM" strings. */
   checkTimes: string[];

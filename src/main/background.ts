@@ -9,6 +9,14 @@ export const APP_USER_MODEL_ID = "com.squirrel.PermitMonitor.PermitMonitor";
 
 export const HIDDEN_LAUNCH_ARG = "--hidden";
 
+/** Windows and macOS: the platforms with a tray or menu bar icon and desktop notifications. */
+export function desktopPlatform(): boolean {
+  return process.platform === "win32" || process.platform === "darwin";
+}
+
+/** Where the icon lives, in the words each platform uses. */
+export const TRAY_PLACE = process.platform === "darwin" ? "menu bar" : "tray";
+
 export interface BackgroundHooks {
   showWindow(): void;
   openPermit(permitId: string): void;
@@ -34,9 +42,9 @@ export class Background {
 
   constructor(private readonly assetDir: string, private readonly hooks: BackgroundHooks) {}
 
-  /** The packaged product is Windows-only; other platforms keep ordinary close-to-quit behavior. */
+  /** Windows gets a tray icon and macOS a menu bar icon; other platforms keep ordinary close-to-quit behavior. */
   start(): boolean {
-    if (process.platform !== "win32") return false;
+    if (!desktopPlatform()) return false;
 
     try {
       this.tray = new Tray(this.image("tray"));
@@ -92,14 +100,14 @@ export class Background {
       let cleanup = () => {};
 
       try {
-        if (process.platform !== "win32" || !Notification.isSupported()) {
+        if (!desktopPlatform() || !Notification.isSupported()) {
           fail("unsupported");
 
           return;
         }
 
         const notification = new Notification({ title: input.title, body: input.body, icon: this.image("icon") });
-        // Keep timed-out banners alive too: they can still be clicked in Windows Notification Center.
+        // Keep timed-out banners alive too: they can still be clicked in Notification Center.
         this.live.add(notification);
         const release = () => this.live.delete(notification);
         const timeout = setTimeout(() => { release(); fail("not_shown"); }, 10_000);

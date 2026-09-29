@@ -221,6 +221,20 @@ describe("update feed downloads", () => {
     expect((await call(env, "/PermitMonitorSetup.exe")).status).toBe(503);
   });
 
+  it("redirects the Mac link to the published version's zip and serves it", async () => {
+    const { bucket, env } = withInstaller();
+    const response = await call(env, "/mac");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
+
+    bucket.seed("PermitMonitor-0.7.0-mac-arm64.zip", "zipped", "application/zip", sha256("zipped"));
+    const zip = await call(env, "/PermitMonitor-0.7.0-mac-arm64.zip");
+    expect(zip.status).toBe(200);
+    expect(await zip.text()).toBe("zipped");
+    expect(zip.headers.get("content-disposition")).toBe('attachment; filename="PermitMonitor-0.7.0-mac-arm64.zip"');
+    expect((await uploadCall(env, "PermitMonitor-0.8.0-mac-arm64.zip", "POST", "{}")).status).toBe(404);
+  });
+
   it("does not redirect to an unreadable manifest", async () => {
     const { bucket, env } = feed();
     bucket.seed("release-manifest.json", "{not json", "application/json");

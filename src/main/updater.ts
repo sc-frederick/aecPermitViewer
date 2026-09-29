@@ -278,6 +278,13 @@ export class UpdateManager {
     return { state: "available", version: payload.version, size: payload.size };
   }
 
+  /** The feed's link to the newest macOS build, which the Mac app sends people to instead of installing; null with no feed. */
+  macDownloadUrl(): string | null {
+    const feed = safeHttpsUrl(this.config.feedUrl);
+
+    return feed ? new URL("/mac", feed).toString() : null;
+  }
+
   /**
    * Downloads and verifies the offered installer and resolves with its version. A download already running for the
    * offer is joined, and a finished one resolves at once. Rejects with `UpdateNotReady` when nothing is offered and with

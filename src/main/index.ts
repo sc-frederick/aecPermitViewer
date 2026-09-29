@@ -16,7 +16,7 @@ import { NAVIGATION_MODEL } from "./jev.js";
 import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
 import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
-import { APP_USER_MODEL_ID, Background, getOpenAtLogin, HIDDEN_LAUNCH_ARG, setOpenAtLogin } from "./background.js";
+import { APP_USER_MODEL_ID, Background, desktopPlatform, getOpenAtLogin, HIDDEN_LAUNCH_ARG, setOpenAtLogin, TRAY_PLACE } from "./background.js";
 import { FIRST_RUN_ARG, handleSquirrelEvent, hasDesktopShortcut, installedApp, setDesktopShortcut } from "./squirrel.js";
 import { describeCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
@@ -40,6 +40,8 @@ if (squirrelEvent || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => showWindow());
+  // macOS: clicking the Dock icon brings back a window closed to the menu bar.
+  app.on("activate", () => showWindow());
   void app.whenReady().then(startApp).catch(failStartup);
 }
 
@@ -188,6 +190,7 @@ async function snapshot(): Promise<AppSnapshot> {
     permits: sharing.following ? [...sharing.permits()] : store.listPermits(checks.checkingIds()),
     keyState: effectiveKeyState(stored),
     appVersion: app.getVersion(),
+    platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "mac" : "other",
     monitoring: store.getMonitoring(),
     checkTimes: store.getCheckTimes().map(formatCheckTime),
     preferences: {
@@ -442,7 +445,7 @@ async function startApp(): Promise<void> {
     state: () => ({
       statusChanges: store.getFlag(PREF_FLAGS.notifyStatusChanges, true),
       failures: store.getFlag(PREF_FLAGS.notifyFailures, true),
-      windows: process.platform === "win32",
+      desktop: desktopPlatform(),
       windowInFront: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
     }),
     inApp: (notice) => {
@@ -477,7 +480,11 @@ async function startApp(): Promise<void> {
     quit: () => app.quit(),
   });
   background.start();
-  Menu.setApplicationMenu(null);
+  // macOS takes Copy, Paste, and Quit from the application menu, so without one the key and share code fields can't be
+  // pasted into. Windows shows no menu bar.
+  Menu.setApplicationMenu(process.platform === "darwin"
+    ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
+    : null);
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -505,7 +512,8 @@ async function startApp(): Promise<void> {
 
     if (!store.getFlag(BACKGROUND_HINT_SHOWN, false)) {
       store.setFlag(BACKGROUND_HINT_SHOWN, true);
-      void background?.notify({ title: "Still running in the tray", body: "Right-click the icon to quit." });
+      void background?.notify({ title: `Still running in the ${TRAY_PLACE}`,
+        body: process.platform === "darwin" ? "Quit from its menu bar icon or with Command-Q." : "Right-click the icon to quit." });
     }
   });
 
@@ -740,6 +748,9 @@ async function startApp(): Promise<void> {
     }
   });
   handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
+    // The feed's installer is for Windows. A Mac copy is replaced by hand from the download page.
+    if (process.platform === "darwin") return { ok: false, error: "Download the new version from the download page." };
+
     try {
       return { ok: true, value: await updates.download() };
     } catch (cause) {
@@ -747,6 +758,14 @@ async function startApp(): Promise<void> {
 
       return { ok: false, error: "Download failed. Nothing was changed." };
     }
+  });
+  handle("permit:open-update-download", NO_INPUT, "Invalid request.", async () => {
+    const page = updates.macDownloadUrl();
+
+    if (process.platform !== "darwin" || !page) return { ok: false, error: "No download page in this build." };
+    await shell.openExternal(page);
+
+    return { ok: true, value: null };
   });
   handle("permit:install-update", NO_INPUT, "Invalid request.", async () => {
     let installer: string;

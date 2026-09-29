@@ -37,5 +37,5 @@ await Promise.all([
   copyFile("src/renderer/styles.css", "dist/styles.css"),
   copyFile("src/main/authenticode.ps1", "dist/authenticode.ps1"),
   // The icon file and the install animation are for Windows and the installer, not the window.
-  cp("assets", "dist/assets", { recursive: true, filter: (source) => !source.endsWith(".ico") && !source.endsWith("install-splash.gif") }),
+  cp("assets", "dist/assets", { recursive: true, filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif") }),
 ]);

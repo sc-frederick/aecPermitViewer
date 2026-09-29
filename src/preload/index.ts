@@ -22,6 +22,7 @@ const bridge: PermitBridge = {
   checkForUpdate: () => ipcRenderer.invoke("permit:check-update"),
   downloadUpdate: () => ipcRenderer.invoke("permit:download-update"),
   installUpdate: () => ipcRenderer.invoke("permit:install-update"),
+  openUpdateDownload: () => ipcRenderer.invoke("permit:open-update-download"),
   deleteLocalData: (confirmation) => ipcRenderer.invoke("permit:delete-local-data", confirmation),
   startSharing: () => ipcRenderer.invoke("permit:share-start"),
   stopSharing: () => ipcRenderer.invoke("permit:share-stop"),

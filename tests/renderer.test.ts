@@ -92,6 +92,7 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "re
     permits,
     keyState: "configured",
     appVersion: "0.0.0",
+    platform: "windows",
     monitoring: "manual",
     checkTimes: ["08:30"],
     preferences: {
@@ -158,7 +159,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
 
     const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
       "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
-      "checkForUpdate", "downloadUpdate", "installUpdate", "deleteLocalData", "startSharing", "stopSharing", "copyShareCode",
+      "checkForUpdate", "downloadUpdate", "installUpdate", "openUpdateDownload", "deleteLocalData", "startSharing", "stopSharing", "copyShareCode",
       "follow", "stopFollowing", "syncShared"];
 
     Object.assign(window, {
@@ -470,6 +471,31 @@ describe("update controls", () => {
     await page.evaluate(() => document.dispatchEvent(new Event("test-download-finished")));
     await expect.poll(() => page.locator("#update-status").innerText()).toBe("Version 1.1.0 is ready to install.");
     expect(await page.locator("#check-update").isDisabled()).toBe(false);
+  });
+
+  it("sends a Mac copy to the download page instead of installing", async () => {
+    await open(snapshot([permit(1)], { platform: "mac" }));
+    await page.evaluate(() => {
+      Object.assign(window.permitMonitor, {
+        checkForUpdate: async () => ({ ok: true, value: { state: "available", version: "1.1.0", size: 5_000_000 } }),
+        downloadUpdate: async () => { throw new Error("downloadUpdate called on a Mac"); },
+        openUpdateDownload: async () => {
+          document.body.dataset.downloadOpened = "yes";
+
+          return { ok: true, value: null };
+        },
+      });
+    });
+    await page.locator("#open-settings").click();
+    expect(await page.locator("#tray-place").innerText()).toBe("menu bar");
+    expect(await page.locator("input[data-pref='openAtLogin']").isVisible()).toBe(false);
+    expect(await page.locator("input[data-pref='desktopShortcut']").isVisible()).toBe(false);
+
+    await page.locator("#check-update").click();
+    await expect.poll(() => page.locator("#update-status").innerText()).toContain("replace the copy in Applications");
+    await page.locator("#download-update").click();
+    await expect.poll(() => page.evaluate(() => document.body.dataset.downloadOpened)).toBe("yes");
+    expect(await page.locator("#install-update").isVisible()).toBe(false);
   });
 });
 
