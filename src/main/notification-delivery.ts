@@ -17,7 +17,8 @@ export type DesktopDelivery = { _tag: "shown" } | { _tag: "failed"; error: Deskt
 export interface NotificationState {
   statusChanges: boolean;
   failures: boolean;
-  windows: boolean;
+  /** False where the app doesn't post desktop notifications, so every notice is shown in the window. */
+  desktop: boolean;
   windowInFront: boolean;
 }
 
@@ -58,7 +59,7 @@ export class CheckNotifier {
     if (event.permitId) notice.permitId = event.permitId;
     const key = event.permitId ?? event.kind;
 
-    if (state.windowInFront || !state.windows) {
+    if (state.windowInFront || !state.desktop) {
       this.pending.delete(key);
       this.delivery.inApp(notice);
 
@@ -91,7 +92,7 @@ export class CheckNotifier {
     if (!first) return;
     this.delivery.inApp(notices.length === 1 ? first : {
       tone: "error", title: "Desktop notifications could not be shown",
-      body: `${notices.length} permits or checks have updates. Review the permit list; check Windows notification settings.`,
+      body: `${notices.length} permits or checks have updates. Review the permit list; check the system notification settings.`,
     });
   }
 }

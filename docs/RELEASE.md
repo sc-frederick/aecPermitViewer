@@ -12,7 +12,21 @@ git tag -a v0.2.0 -m "Permit Monitor v0.2.0: in-app updates" && git push origin 
 
 The workflow checks that the tag matches `package.json` and is annotated (it stops on a lightweight tag; delete it with `git tag -d` and `git push origin :refs/tags/vX.Y.Z`, then push an annotated one), runs type checks and tests, stages the browser, builds the Squirrel installer, and runs the packaged browser smoke check. The release job then signs the update manifest, uploads the installer and manifest to the update feed, and publishes a GitHub release with the installer, its SHA-256, and the manifest. **Pushing a tag ships the update to every installed copy**, so run the checks below first.
 
+The same tag builds a Mac app for Apple silicon on a macOS runner (the `package-mac` job): it stages the Mac headless shell, packages with `npm run package:mac`, signs the bundle ad hoc, runs the packaged browser smoke check, and zips the app. The release job needs both builds, so a Mac failure holds the Windows release too. Run the workflow from the Actions tab on a branch to try the Mac build without releasing; macOS runners use ten times the minutes of Linux ones, so pull requests skip it.
+
 Unsigned installers trigger SmartScreen's "Windows protected your PC." on first install. Users click **More info**, then **Run anyway**; the release notes say this. After that, **Settings → Updates** downloads and installs new versions in the app. Updates downloaded by the app don't carry a download-origin mark, so SmartScreen doesn't prompt again. Data in `%LOCALAPPDATA%\PermitMonitorData` is kept. Builds before 0.2.0 have no update feed; those users must install 0.2.0 by hand once.
+
+### Mac builds
+
+There is no Apple Developer ID, so the Mac app is signed ad hoc and not notarized. Packaging changes Electron's `Info.plist`, which breaks the bundle's seal, and Gatekeeper calls an app with a broken seal "damaged" and offers no way to open it; the ad hoc signature (`codesign --force --deep --sign -`) reseals it. Gatekeeper still blocks the downloaded app as unverified. The release notes tell users to drag it to Applications and run `xattr -dr com.apple.quarantine "/Applications/Permit Monitor.app"`. **Open Anyway** in Privacy & Security isn't enough, because it clears the app but not the headless shell inside it.
+
+- Only the headless shell is staged on macOS (`--only-shell`). The full Chromium is an app bundle full of symlinks, which the payload check refuses, and the worker never launches it.
+- The TypeSafe key is encrypted with a key macOS keeps in the login Keychain. The Keychain ties that entry to the app's signature, and an ad hoc signature changes with every build, so after each update macOS asks for the Mac password once more; users click **Always Allow**.
+- The app doesn't install its own updates. **Settings → Updates** reads the same signed manifest and, when a newer version is out, opens the feed's `/mac` link in the browser. Users replace the app and repeat the `xattr` step.
+- Start at sign-in and the desktop shortcut are Windows-only and hidden on the Mac. Closing the window keeps the app in the menu bar.
+- Data lives in `~/Library/Application Support/Permit Monitor/PermitMonitorData`.
+
+An Apple Developer account ($99 a year) would remove the Gatekeeper step and the repeated Keychain prompt: sign with a Developer ID certificate and notarize in the `package-mac` job. No Mac is needed for that. The runner does the signing.
 
 ## Update feed
 
@@ -21,6 +35,7 @@ The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by th
 - `/` and `/PermitMonitorSetup.exe` redirect to the current installer. This is the link to send to new users.
 - `/release-manifest.json` is the signed manifest the app checks.
 - `/PermitMonitorSetup-X.Y.Z.exe` are the versioned installers. Old ones stay so cached manifests keep working.
+- `/mac` redirects to `/PermitMonitor-X.Y.Z-mac-arm64.zip`, the zipped Mac app for the version the manifest names. CI writes the zip before the manifest under the same write-once rule. The manual path below doesn't publish a zip, so after a manual release `/mac` answers 404 until CI publishes that version.
 - `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size and hash.
 
 Both publication paths follow the same rules (`infra/update-server/src/release-policy.ts`):

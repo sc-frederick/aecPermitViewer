@@ -10,7 +10,7 @@ interface DeliveryResult { value: DesktopDelivery }
 
 /** Real routing policy with observable in-memory notification destinations. */
 function delivery(overrides: Partial<NotificationState> = {}) {
-  const state: NotificationState = { statusChanges: true, failures: true, windows: true, windowInFront: false, ...overrides };
+  const state: NotificationState = { statusChanges: true, failures: true, desktop: true, windowInFront: false, ...overrides };
   const inApp: AppEvent[] = [];
   const desktop: AppEvent[] = [];
   const failures: DesktopNotificationFailed[] = [];
@@ -38,7 +38,7 @@ describe("notification delivery", () => {
     expect(app.inApp).toEqual([]);
   });
 
-  it.each([{ windowInFront: true }, { windows: false }])("surfaces the notice in-app when appropriate: %j", async (state) => {
+  it.each([{ windowInFront: true }, { desktop: false }])("surfaces the notice in-app when appropriate: %j", async (state) => {
     const app = delivery(state);
     await app.notifier.announce(review);
     expect(app.inApp).toHaveLength(1);

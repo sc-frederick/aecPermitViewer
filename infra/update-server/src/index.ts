@@ -18,6 +18,9 @@ const INSTALLER = /^PermitMonitorSetup-\d+\.\d+\.\d+\.exe$/;
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
 
+// The zipped Mac app. CI writes these straight to R2 (scripts/publish-feed.mjs); the upload path doesn't take them.
+const MAC_ZIP = /^PermitMonitor-\d+\.\d+\.\d+-mac-arm64\.zip$/;
+
 const MANIFEST_MAX_BYTES = 32_768;
 
 // A completion lists at most 10,000 parts of about 60 JSON bytes each.
@@ -69,11 +72,13 @@ export default {
 
     if (request.method !== "GET" && request.method !== "HEAD") return text("Method not allowed", 405);
 
-    if (name === "" || name === "PermitMonitorSetup.exe") return latest(env, url);
+    if (name === "" || name === "PermitMonitorSetup.exe") return latest(env, url, (version) => `PermitMonitorSetup-${version}.exe`);
+
+    if (name === "mac") return latest(env, url, (version) => `PermitMonitor-${version}-mac-arm64.zip`);
 
     if (name === MANIFEST) return serve(request, env, name, "no-cache");
 
-    if (INSTALLER.test(name)) return serve(request, env, name, "public, max-age=31536000, immutable");
+    if (INSTALLER.test(name) || MAC_ZIP.test(name)) return serve(request, env, name, "public, max-age=31536000, immutable");
 
     return text("Not found", 404);
   },
@@ -163,8 +168,8 @@ function recordedSha256(object: FeedObject): string | null {
   return recorded !== undefined && sha256Hex.safeParse(recorded).success ? recorded : null;
 }
 
-// Stable link for handing the current installer to someone new.
-async function latest(env: FeedEnv, url: URL): Promise<Response> {
+// Stable links for handing the current Windows installer or Mac zip to someone new. `file` names a version's download.
+async function latest(env: FeedEnv, url: URL, file: (version: string) => string): Promise<Response> {
   const manifest = await stored("get", MANIFEST, () => env.BUCKET.get(MANIFEST));
 
   if (manifest._tag !== "ok") return unavailable(manifest);
@@ -178,7 +183,7 @@ async function latest(env: FeedEnv, url: URL): Promise<Response> {
 
   if (!payload) return text("Published manifest is unreadable", 500);
 
-  return Response.redirect(new URL(`/PermitMonitorSetup-${payload.version.text}.exe`, url).toString(), 302);
+  return Response.redirect(new URL(`/${file(payload.version.text)}`, url).toString(), 302);
 }
 
 /**
