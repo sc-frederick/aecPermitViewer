@@ -26,7 +26,7 @@ interface TestBridge {
   /** Answers the renderer's first direct snapshot request, when the page was opened with it held. */
   answerSnapshot(): void;
   /** Answers the index-th history request with one observation showing `status`. */
-  answerHistory(index: number, status: string): void;
+  answerHistory(index: number, status: string, nextBefore?: string, startedAt?: string): void;
   /** Answers the index-th history request with a failure main reported. */
   failHistory(index: number, error: string): void;
   /** Rejects the index-th history request, as a broken IPC channel would. */
@@ -144,12 +144,12 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
       failHistory: (index, error) => { pending[index]?.resolve({ ok: false, error }); },
       rejectHistory: (index) => { pending[index]?.reject(new Error("IPC channel closed")); },
       fail: (method, error) => { failures.set(method, error); },
-      answerHistory: (index: number, status: string) => {
+      answerHistory: (index: number, status: string, nextBefore?: string, startedAt = "2026-09-24T12:00:00.000Z") => {
         const request = pending[index];
 
-        request?.resolve({ ok: true, value: { runs: [{ id: "r1", permitId: request.permitId, startedAt: "2026-09-24T12:00:00.000Z",
+        request?.resolve({ ok: true, value: { nextBefore: nextBefore ?? null, runs: [{ id: `r${index}`, permitId: request.permitId, startedAt,
           finishedAt: "2026-09-24T12:01:00.000Z", outcome: "success", actionCount: 0, requestCount: 0 }],
-        observations: [{ id: "o1", runId: "r1", permitId: request.permitId,
+        observations: [{ id: `o${index}`, runId: `r${index}`, permitId: request.permitId,
           verifiedPermitNumber: "x", statusLabel: "Record Status:", statusValue: status, reviews: null, observedAt: "2026-09-24T12:00:00.000Z",
           recordUrl: "https://example.test" }] } });
       },
@@ -408,6 +408,32 @@ describe("AEC filter", () => {
 });
 
 describe("details history", () => {
+  it("appends older daily pages, retains loaded entries after a failed page, and drops stale replies", async () => {
+    const first = defined(fifty[0], "first permit");
+    const second = defined(fifty[1], "second permit");
+    await page.locator(`button[data-action="details"][data-permit-id="${first.id}"]`).click();
+    await page.evaluate(() => window.testBridge.answerHistory(0, "Newest", "2026-09-24T00:00:00.000Z"));
+    const more = page.locator("button[data-history-more]");
+    await more.click();
+    await page.evaluate(() => window.testBridge.failHistory(1, "Temporary local failure"));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newest");
+    await expect.poll(() => more.isEnabled()).toBe(true);
+    await more.click();
+    await page.evaluate(() => window.testBridge.answerHistory(2, "Previous day", "2026-09-23T00:00:00.000Z", "2026-09-23T12:00:00.000Z"));
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Previous day");
+    expect(await page.locator("#history-list").innerText()).toContain("Newest");
+    await more.click();
+    await page.locator("#details-sheet [data-close]").click();
+    await page.locator(`button[data-action="details"][data-permit-id="${second.id}"]`).click();
+    await page.evaluate(() => {
+      window.testBridge.answerHistory(4, "Second permit");
+      window.testBridge.answerHistory(3, "Stale older day", undefined, "2026-09-22T12:00:00.000Z");
+    });
+    await expect.poll(() => page.locator("#history-list").innerText()).toContain("Second permit");
+    expect(await page.locator("#history-list").innerText()).not.toContain("Stale older day");
+    expect(await more.count()).toBe(0);
+  });
+
   it("requests history once while snapshots about other permits arrive, then again when this permit changes", async () => {
     const first = defined(fifty[0], "a first permit");
     await page.locator(`button[data-action="details"][data-permit-id="${first.id}"]`).click();

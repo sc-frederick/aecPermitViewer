@@ -4,13 +4,15 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import { KeyStore } from "./key-store.js";
+import type { KeyStore } from "./key-store.js";
+import { createKeyStore } from "./electron-key-store.js";
 import { DiagnosticLog } from "./diagnostics.js";
 import { serialBroadcast } from "./serial-broadcast.js";
 import { startUtilityWorker } from "./utility-worker.js";
 import { keyProblem } from "../shared/key-format.js";
 import { PermitStore } from "./store.js";
 import { runCheck, type ActiveCheck } from "./check-runner.js";
+import { addAndCheck } from "./permit-commands.js";
 import { CheckQueue, type StartedCheck } from "./check-queue.js";
 import { NAVIGATION_MODEL } from "./jev.js";
 import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
@@ -18,7 +20,7 @@ import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
 import { APP_USER_MODEL_ID, Background, desktopPlatform, getOpenAtLogin, HIDDEN_LAUNCH_ARG, setOpenAtLogin, TRAY_PLACE } from "./background.js";
 import { FIRST_RUN_ARG, handleSquirrelEvent, hasDesktopShortcut, installedApp, setDesktopShortcut } from "./squirrel.js";
-import { describeCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
+import { recordCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
@@ -135,16 +137,11 @@ function announce(event: CheckEvent): void {
 
 /** Records the result and, when it changes what the user knows, tells them. */
 function finishAndAnnounce(input: Parameters<PermitStore["finishRun"]>[0]): void {
-  const before = store.getPermit(input.permitId);
-  store.finishRun(input);
-  const after = store.getPermit(input.permitId);
+  const event = recordCheckEvent(store, input);
 
-  if (before && after) {
-    const event = describeCheckEvent(before, after, input.outcome);
-
-    // A notification problem must never stop the result from reaching the window.
-    if (event) try { announce(event); } catch { /* the saved result and window update still proceed */ }
-  }
+  // A notification problem must never stop the result from reaching the window.
+  // The queue announces current-key rejection after checking its generation; obsolete checks stay quiet.
+  if (event && input.outcome !== "authentication_error") try { announce(event); } catch { /* the saved result and window update still proceed */ }
 }
 
 function dataRoot(): string {
@@ -457,7 +454,7 @@ async function startApp(): Promise<void> {
   store.alignSchedule(new Date());
   checks = createQueue();
   // Sharing can send a snapshot as soon as it starts, and a snapshot reads the key state.
-  keys = new KeyStore(dataRoot());
+  keys = createKeyStore(dataRoot());
   shareService = loadShareService(path.join(__dirname, "sync-config.json"));
   sharing = createSharing();
   await sharing.start();
@@ -538,10 +535,9 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    const added = store.addPermit(input.permitNumber, jurisdictionId);
+    const added = addAndCheck(store, checks, () => { void broadcast(); }, input.permitNumber, jurisdictionId);
 
     if (added._tag === "err") return { ok: false, error: "That permit is already in the list." };
-    checks.enqueue(added.value, "manual");
 
     return { ok: true, value: added.value };
   });
@@ -596,7 +592,7 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:history", permitIdSchema, "Permit not found.", (id) => {
+  handle("permit:history", z.object({ permitId: permitIdSchema, before: z.iso.datetime().nullable() }), "Permit not found.", ({ permitId: id, before }) => {
     if (sharing.following) {
       const history = sharing.history(id);
 
@@ -605,7 +601,7 @@ async function startApp(): Promise<void> {
 
     if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
 
-    return { ok: true, value: store.history(id) };
+    return { ok: true, value: store.dailyHistory(id, 120, before) };
   });
   // The key arrives once from the settings field and is encrypted immediately. It is never
   // echoed back to the window, logged, stored in the database, or given to the browser worker.

@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     // Agent worktrees live under .claude/worktrees with their own copies of the suite; only this checkout's tests run.
     exclude: [...configDefaults.exclude, ".claude/**"],
+    // Real SQLite and file integration tests need room for Windows CI disk stalls. Performance budgets are explicit.
+    testTimeout: process.platform === "win32" ? 15_000 : 5_000,
     // Renderer and worker tests launch the staged browser. Playwright reads this when it loads, so it is set before any
     // test file imports it, and a copy in the user's Playwright cache is never used instead.
     env: { PLAYWRIGHT_BROWSERS_PATH: path.resolve("vendor/playwright-browsers") },

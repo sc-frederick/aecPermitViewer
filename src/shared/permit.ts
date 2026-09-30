@@ -68,6 +68,8 @@ export interface ObservationRow {
 }
 
 export interface PermitHistory {
+  /** Exclusive UTC cursor for an older daily page; absent on raw or shared histories. */
+  nextBefore?: string | null;
   runs: CheckRunRow[];
   observations: ObservationRow[];
 }

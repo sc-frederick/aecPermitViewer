@@ -1,5 +1,5 @@
 import type { Browser, Frame, Locator, Page } from "playwright";
-import { parseRegPermittingNumber, regPermittingRecordUrl, statusLabels } from "../shared/permit.js";
+import { parseRegPermittingNumber, regPermittingRecordUrl, sameJurisdictionPermitNumber, statusLabels } from "../shared/permit.js";
 import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
@@ -213,10 +213,7 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
 
   if (only === null) return;
   await links.nth(only).click();
-  const record = await waitForFrameShowing(page, RECORD_HEADING, 30_000);
-  // The heading appears before the fields fill in.
-  await record?.locator("span.field-caption.dataLabelForRead").filter({ hasText: /Status$/ }).first()
-    .waitFor({ state: "visible", timeout: 20_000 }).catch(() => undefined);
+  await waitForFrameShowing(page, RECORD_HEADING, 30_000);
 }
 
 /** Wait up to 20 seconds for the Search Records link to attach. Returns either way; the next observation decides. */
@@ -224,7 +221,7 @@ export async function waitForSearchRecordsLink(page: Page): Promise<void> {
   await page.locator(SEARCH_RECORDS_LINK).first().waitFor({ state: "attached", timeout: 20_000 }).catch(() => undefined);
 }
 
-/** True when a record view is showing, as after opening a saved record link. */
+/** True when a record view's heading is showing; the adapter's read waits separately for its identity and status. */
 export async function regPermittingRecordShown(page: Page, timeout: number): Promise<boolean> {
   return Boolean(await waitForFrameShowing(page, RECORD_HEADING, timeout));
 }
@@ -260,14 +257,33 @@ async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile
   };
 }
 
+/** Both saved links and search results can show their heading before the requested record's fields finish loading. */
+async function readReadyRegPermittingRecord(page: Page, profile: RegPermittingProfile, requested: string,
+  openedRecordUrl: string | null, timeout: number): Promise<DisplayedRecord> {
+  const until = Date.now() + timeout;
+  let record = await readRegPermittingRecord(page, profile, requested, openedRecordUrl);
+
+  while (!(record.displayedNumber && sameJurisdictionPermitNumber(requested, record.displayedNumber, profile.id) &&
+    record.statusLabel && record.statusValue)) {
+    const remaining = until - Date.now();
+
+    if (remaining <= 0 || page.isClosed()) return record;
+    await page.waitForTimeout(Math.min(250, remaining));
+    record = await readRegPermittingRecord(page, profile, requested, openedRecordUrl);
+  }
+
+  return record;
+}
+
 /**
  * Drive SFWMD RegPermitting's Search Records for one requested application or permit number.
  *
  * @param openedRecordUrl - The saved record link this run opened, if any; it is reported as the record link when the
  *   record view's frame carries no key.
+ * @param readinessTimeout - The bounded time to wait for the requested number and its kind-specific status.
  */
 export function regPermittingAdapter(page: Page, profile: RegPermittingProfile, requested: string,
-  openedRecordUrl: string | null): PortalAdapter {
+  openedRecordUrl: string | null, readinessTimeout = 20_000): PortalAdapter {
   return {
     observe: () => observeRegPermitting(page, requested),
     foundNothing: () => regPermittingFoundNothing(page, requested),
@@ -275,6 +291,6 @@ export function regPermittingAdapter(page: Page, profile: RegPermittingProfile, 
     fill: () => fillRegPermittingSearch(page, requested),
     submit: () => submitRegPermittingSearch(page, requested),
     openResult: () => openRegPermittingResult(page, requested),
-    read: () => readRegPermittingRecord(page, profile, requested, openedRecordUrl),
+    read: () => readReadyRegPermittingRecord(page, profile, requested, openedRecordUrl, readinessTimeout),
   };
 }

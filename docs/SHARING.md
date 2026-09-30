@@ -31,7 +31,7 @@ The publishing app makes three secrets:
 | Content key | 32 random bytes | Publisher and followers (in the code) | Never |
 
 - The list is gzipped and sealed with AES-256-GCM under the content key before it leaves the app, so the Worker and Cloudflare only ever store ciphertext.
-- The Worker names a list's Durable Object `SHA-256("permitmon-share-room\0" ‖ read token)`. Given a write key, it derives the read token first, so both sides reach the same object. A follower holds the read token but can't work out the write key, so it can't publish or delete. The Worker stores no key or token.
+- The Worker names a list's Durable Object `SHA-256("permitmon-share-room\0" ‖ read token)`. Given a write key, it derives the read token first, so both sides reach the same object. A follower holds the read token but can't work out the write key, so it can't publish or delete. The Worker stores no key or token. Its admission database stores room hashes and source hashes, never IP addresses, bearer credentials or ciphertext.
 - Tokens travel in the `Authorization` header, never the URL, so they stay out of request logs.
 - An unknown code and a deleted list both answer 404. A read never writes storage.
 - The keys sit in the app's local SQLite settings, next to the permit data they protect. That data is already stored there in the clear, and unlike the TypeSafe key they need no Windows-only encryption, so sharing also works in development on Linux.
@@ -41,8 +41,25 @@ Anyone who has the code can read the list until sharing stops. Treat it like a l
 ## Limits
 
 - 1.5 MB of ciphertext per list (Durable Object rows hold 2 MB); the app reports "The list is too large to share." past it.
-- One publication per list every 10 seconds (the Worker answers 429 with `Retry-After`, and Sync now says to try again shortly). The app itself sends only after a round of checks, on request, or 2 minutes after an edit.
-- There is no per-IP rate limit. Anyone can create lists by making up write keys, bounded by the size limit and the 180-day expiry. If that becomes a problem, add a Workers rate-limiting binding in front of `PUT`.
+- One publication per list every 10 seconds. The app itself sends only after a round of checks, on request, or 2 minutes after an edit.
+- 60 publication attempts per source per UTC minute, including malformed requests and existing-list updates. The source is Cloudflare's trusted `CF-Connecting-IP`; IPv6 addresses share a /64 quota. Client-supplied forwarding headers are ignored. A missing or invalid source address uses one shared bucket, including local development. Multiple users behind one public IPv4 address share its quota.
+- 5 new room names per source per UTC day and 100 new room names across the deployment per UTC day. Changing write keys cannot evade these limits. Existing admitted lists consume no new-room quota and continue updating when creation quotas are full.
+- 1,024 permanently reserved room names across the deployment, so ciphertext admitted by this policy cannot exceed 1,536,000,000 bytes, plus SQLite metadata and the pre-upgrade baseline described below. Deleted and expired names keep their slots, and republishing the same key reuses its slot. This deliberately limits lifetime admissions rather than recycling slots across asynchronous objects: a delayed deletion, failed expiry alarm or publication whose RPC answer was lost cannot accidentally free capacity while its ciphertext is still stored. Increasing the cap requires reviewing the storage budget. Renaming/resetting the admission object or reverting to a Worker without admission invalidates the budget and must not be used to clear capacity.
+- At most 4,096 source-counter rows. Counters from earlier UTC days are pruned when no request in the current minute uses them. When the table is full, a new source gets 429 before any room access or body read. Room-name rows are bounded by the permanent capacity limit; no Durable Object is created per source.
+
+The limits live in `infra/sync-server/wrangler.jsonc` as `SHARE_SOURCE_WRITES_PER_MINUTE`, `SHARE_SOURCE_CREATIONS_PER_DAY`, `SHARE_DEPLOYMENT_CREATIONS_PER_DAY`, `SHARE_REGISTERED_ROOMS` and `SHARE_TRACKED_SOURCES`. The admission object validates them at startup. Source-request admission happens before any room access or body read; creation quotas and capacity are checked before reading ciphertext and checked again atomically after body validation, before its first storage write. Concurrent candidates can consume their allowed source-request budget while reading bodies, but cannot overbook room slots. Rejected requests retain no list table, ciphertext or alarm; only bounded admission counters remain. Malformed bodies reserve no slot. A failed or uncertain first publication keeps its reservation, conservatively accounting for bytes the room may already have accepted.
+
+Admission uses one fixed SQLite-backed Durable Object, `deployment-budget-v1`, as the coordination unit for the shared budget. GET and DELETE continue reaching each list directly. A Workers rate-limit binding alone cannot enforce this storage budget because its counters are [eventually consistent](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/#accuracy). The admission object uses synchronous SQL without intervening I/O; Cloudflare's [storage gates](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#transaction) serialize its checks and writes. Its failure answers 503 rather than bypassing the policy.
+
+Every quota rejection answers 429 with a `Retry-After` between 1 and 3,600 seconds. The publisher retains the pending change and automatically retries after that interval; Sync now also reports the delay. Daily quota/capacity exhaustion can require several retries, and capacity requires an operator decision to increase it. Source quotas reduce abuse while keeping sharing accountless; a distributed attacker can still exhaust the finite new-share budget. Reads, deletes and writes to previously admitted shares keep their capability separation.
+
+### Existing shares and operational monitoring
+
+Lists stored before the admission policy form a retained baseline outside the new 1,024-room budget. A read-only existence probe lets those lists update even when the new budget or creation quota is full. The probe creates no list table or alarm and reads no ciphertext. Newly stored lists always reserve capacity first, so they cannot become unaccounted legacy lists. Once a legacy list is deleted or expires, sharing again must pass current admission. Existing share codes and room derivations do not change.
+
+Before rollout, record the namespace's retained room count and storage baseline from Cloudflare's Durable Object analytics. Each legacy room can still grow to the 1.5 MB list limit, so budget `legacy room count × 1,500,000` bytes plus the configured new-room ciphertext budget and SQLite overhead. This change does not claim that unknown pre-upgrade data fits inside 1.536 GB. Review retained storage, SQLite row/operation usage, Worker errors, and 429 counts after rollout. No live namespace inventory or deployment is performed by the tests.
+
+Worker observability samples all requests. Structured `share_admitted` events report `registeredRooms`, `roomCapacity` and `maximumCiphertextBytes`; alert before 80% of room capacity. `share_admission_denied` reports `source_writes`, `source_creations`, `deployment_creations`, `room_capacity` or `tracked_sources` with the retry delay. Sustained creation/capacity rejections require reviewing abuse and the storage budget; source-write rejections can also indicate many users behind one NAT. `room_failure` events include the failed operation. Logs omit credentials, raw source addresses and list contents. Track the legacy baseline separately because it is not included in `registeredRooms`.
 
 ## Protocol
 
@@ -51,14 +68,16 @@ Anyone who has the code can read the list until sharing stops. Treat it like a l
 | Method | Bearer | Body | Answers |
 | --- | --- | --- | --- |
 | `GET` | read token | — | `200` ciphertext with `ETag: "r<revision>"` and `X-Published-At`; `304` when `If-None-Match` names the current revision; `404` when absent |
-| `PUT` | write key | ciphertext | `200 {"revision","publishedAt"}`; `413` too large; `429` too soon |
+| `PUT` | write key | ciphertext | `200 {"revision","publishedAt"}`; `413` too large; `429` rate, admission or capacity limit, with bounded `Retry-After` |
 | `DELETE` | write key | — | `204`, also when nothing was stored |
 
 `401` means a missing or malformed credential, and `503` means the Durable Object failed. `src/shared/share-protocol.ts` holds the token formats and derivations, and both the app and the Worker import it.
 
 ## Deploying and developing
 
-The Worker was first deployed on September 28, 2026, and it runs on the free plan. The Worker imports `zod/mini` (`import * as z`), not `zod`, which keeps the bundle at about 27 KB instead of about 280 KB. The `Sync server` workflow deploys it when it changes on master (see [RELEASE.md](RELEASE.md#shared-list-service)). To deploy by hand, run `npx wrangler@4.143.0 deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
+The Worker was first deployed on September 28, 2026, and it runs on the free plan. The Worker imports `zod/mini` (`import * as z`), not `zod`; the admission-enabled dry-run bundle measures about 35 KB. The `Sync server` workflow deploys it when it changes on master (see [RELEASE.md](RELEASE.md#shared-list-service)). To deploy by hand, run `npx wrangler@4.143.0 deploy` from `infra/sync-server` after `npm ci --allow-git=all` (the Worker bundles `zod` and `src/shared/share-protocol.ts` from the repository). The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.yml` builds in as `SHARE_SERVICE_URL`, because `aeccloud.io`'s Bot Fight Mode challenges non-browser clients. A build without `SHARE_SERVICE_URL` hides sharing.
+
+The `v2` migration adds the admission object while preserving existing room storage. After changing its bindings or limit variables, regenerate the committed binding types from `infra/sync-server` with `npx wrangler@4.143.0 types src/worker-configuration.d.ts --env-interface SyncWorkerEnv --include-runtime=false --strict-vars=false`. A dry-run bundle validates configuration without deploying: `npx wrangler@4.143.0 deploy --dry-run`.
 
 To run it locally:
 
@@ -67,4 +86,4 @@ npx wrangler dev --config infra/sync-server/wrangler.jsonc --port 8787
 SHARE_SERVICE_URL=http://127.0.0.1:8787 npm run dev
 ```
 
-The app accepts plain HTTP only for `localhost`, `127.0.0.1`, and `[::1]`. To try both sides on one machine, start a second instance with `--user-data-dir=<another folder>`. `npm test` covers the Worker's routes and room with node:sqlite standing in for Durable Object storage, and covers both apps end to end against it over HTTP.
+The app accepts plain HTTP only for `localhost`, `127.0.0.1`, and `[::1]`. To try both sides on one machine, start a second instance with `--user-data-dir=<another folder>`. `npm test` covers the Worker's routes, admission budget and room with node:sqlite standing in for Durable Object storage, and covers both apps end to end against it over HTTP. `tests/share-admission.test.ts` also exercises the real client receiving 429 and automatically delivering its pending publication after `Retry-After`.

@@ -7,6 +7,9 @@ import {
   compareReleaseVersions, decideInstallerUpload, decideManifestReplacement, type VersionedManifest,
 } from "../infra/update-server/src/release-policy.js";
 import { MemoryBucket } from "./fixtures/memory-bucket.js";
+import { LocalFixedLengthStream } from "./fixtures/fixed-length-stream.js";
+
+Object.defineProperty(globalThis, "FixedLengthStream", { value: LocalFixedLengthStream, configurable: true });
 
 const ORIGIN = "https://permitmon-updates.example.test";
 
@@ -69,11 +72,11 @@ async function uploadInstaller(env: FeedEnv, version: string, installer: string,
   const bytes = new TextEncoder().encode(installer);
 
   for (let offset = 0, partNumber = 1; offset < bytes.length; offset += partBytes, partNumber += 1) {
-    const response = await uploadCall(env, `${key}?uploadId=${start.uploadId}&partNumber=${partNumber}`, "PUT", bytes.slice(offset, offset + partBytes));
+    const response = await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(start.stagingKey)}&uploadId=${start.uploadId}&partNumber=${partNumber}`, "PUT", bytes.slice(offset, offset + partBytes));
     parts.push(await response.json());
   }
 
-  return uploadCall(env, `${key}?uploadId=${start.uploadId}`, "POST", JSON.stringify({ ...claim, parts }));
+  return uploadCall(env, `${key}?stagingKey=${encodeURIComponent(start.stagingKey)}&uploadId=${start.uploadId}`, "POST", JSON.stringify({ ...claim, parts }));
 }
 
 function version(text: string): VersionedManifest["version"] {
@@ -232,7 +235,7 @@ describe("update feed downloads", () => {
     expect(zip.status).toBe(200);
     expect(await zip.text()).toBe("zipped");
     expect(zip.headers.get("content-disposition")).toBe('attachment; filename="PermitMonitor-0.7.0-mac-arm64.zip"');
-    expect((await uploadCall(env, "PermitMonitor-0.8.0-mac-arm64.zip", "POST", "{}")).status).toBe(404);
+    expect((await uploadCall(env, "PermitMonitor-0.8.0-mac-arm64.zip", "POST", "{}")).status).toBe(400);
   });
 
   it("does not redirect to an unreadable manifest", async () => {
@@ -261,6 +264,106 @@ describe("manual installer upload", () => {
     expect(await response.json()).toEqual({ status: "published", size: 19 });
     expect(bucket.storedText("PermitMonitorSetup-0.8.0.exe")).toBe("new installer bytes");
     expect((await bucket.head("PermitMonitorSetup-0.8.0.exe"))?.customMetadata?.sha256).toBe(sha256("new installer bytes"));
+  });
+
+  it.each([false, true])("atomically publishes competing manual uploads (identical=%s)", async (identical) => {
+    let arrived = 0;
+    let release = () => {};
+
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+
+    class CompetingBucket extends MemoryBucket {
+      override async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
+        if (key === "PermitMonitorSetup-0.8.0.exe") {
+          arrived += 1;
+
+          if (arrived === 2) release();
+          await barrier;
+        }
+
+        return super.put(key, value, options);
+      }
+    }
+
+    const { bucket, env } = feed(new CompetingBucket());
+
+    const responses = await Promise.all([
+      uploadInstaller(env, "0.8.0", "AAAA"),
+      uploadInstaller(env, "0.8.0", identical ? "AAAA" : "BBBB"),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual(identical ? [200, 200] : [200, 409]);
+    const winner = bucket.storedText("PermitMonitorSetup-0.8.0.exe");
+    expect(winner).toBe(identical ? "AAAA" : ["AAAA", "BBBB"][responses[0]?.status === 200 ? 0 : 1]);
+    expect(bucket.openUploads).toBe(0);
+    bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
+
+    if (!winner) throw new Error("Winning artifact is absent");
+    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", winner))).status).toBe(200);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", winner === "AAAA" ? "BBBB" : "AAAA"))).status).toBe(409);
+    expect(await (await call(env, "/PermitMonitorSetup-0.8.0.exe")).text()).toBe(winner);
+  });
+
+  it("does not delete a CI winner when staged completion validation fails", async () => {
+    const key = "PermitMonitorSetup-0.8.0.exe";
+
+    class CiPublishesDuringCompletion extends MemoryBucket {
+      override resumeMultipartUpload(stagingKey: string, uploadId: string) {
+        const multipart = super.resumeMultipartUpload(stagingKey, uploadId);
+
+        return {
+          ...multipart,
+          complete: async (parts: Parameters<typeof multipart.complete>[0]) => {
+            const staged = await multipart.complete(parts);
+            this.seed(key, "CI!!", INSTALLER_TYPE, sha256("CI!!"));
+
+            return staged;
+          },
+        };
+      }
+    }
+
+    const { bucket, env } = feed(new CiPublishesDuringCompletion());
+    const claim = { sha256: sha256("manual"), size: 6 };
+    const start = await (await uploadCall(env, key, "POST", JSON.stringify(claim))).json();
+    const session = new URLSearchParams({ uploadId: start.uploadId, stagingKey: start.stagingKey });
+    const part = await (await uploadCall(env, `${key}?${session}&partNumber=1`, "PUT", "bad")).json();
+    const completed = await uploadCall(env, `${key}?${session}`, "POST", JSON.stringify({ ...claim, parts: [part] }));
+    expect(completed.status).toBe(409);
+    expect(bucket.storedText(key)).toBe("CI!!");
+    expect(bucket.storedText(start.stagingKey)).toBeNull();
+  });
+
+  it("rejects same-size corrupt bytes before any public artifact is created", async () => {
+    const { bucket, env } = feed();
+    const key = "PermitMonitorSetup-0.8.0.exe";
+    const claim = { sha256: sha256("AAAA"), size: 4 };
+    const start = await (await uploadCall(env, key, "POST", JSON.stringify(claim))).json();
+    const session = new URLSearchParams({ uploadId: start.uploadId, stagingKey: start.stagingKey });
+    const part = await (await uploadCall(env, `${key}?${session}&partNumber=1`, "PUT", "BBBB")).json();
+    expect((await uploadCall(env, `${key}?${session}`, "POST", JSON.stringify({ ...claim, parts: [part] }))).status).toBe(409);
+    expect(bucket.storedText(key)).toBeNull();
+    expect(bucket.storedText(start.stagingKey)).toBeNull();
+  });
+
+  it("finishes when storage rejects a conditional write without consuming its stream", async () => {
+    const key = "PermitMonitorSetup-0.8.0.exe";
+
+    class EarlyPreconditionRejection extends MemoryBucket {
+      override async put(name: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
+        if (name === key) {
+          this.seed(key, "BBBB", INSTALLER_TYPE, sha256("BBBB"));
+
+          return null;
+        }
+
+        return super.put(name, value, options);
+      }
+    }
+
+    const { bucket, env } = feed(new EarlyPreconditionRejection());
+    expect((await uploadInstaller(env, "0.8.0", "AAAA")).status).toBe(409);
+    expect(bucket.storedText(key)).toBe("BBBB");
   });
 
   it("reports an identical retry as published without starting another upload", async () => {
@@ -293,10 +396,10 @@ describe("manual installer upload", () => {
     const late = { sha256: sha256("second"), size: 6 };
     // Both uploads start while the key is empty; the first one completes before the second.
     const started = await (await uploadCall(env, key, "POST", JSON.stringify(late))).json();
-    const part = await (await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "second")).json();
+    const part = await (await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}&partNumber=1`, "PUT", "second")).json();
     expect((await uploadInstaller(env, "0.8.0", "first!")).status).toBe(200);
 
-    const completed = await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...late, parts: [part] }));
+    const completed = await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...late, parts: [part] }));
     expect(completed.status).toBe(409);
     expect(bucket.storedText(key)).toBe("first!");
     expect(bucket.openUploads).toBe(0);
@@ -307,10 +410,10 @@ describe("manual installer upload", () => {
     const key = "PermitMonitorSetup-0.8.0.exe";
     const claim = { sha256: sha256("same!!"), size: 6 };
     const started = await (await uploadCall(env, key, "POST", JSON.stringify(claim))).json();
-    const part = await (await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "same!!")).json();
+    const part = await (await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}&partNumber=1`, "PUT", "same!!")).json();
     await uploadInstaller(env, "0.8.0", "same!!");
 
-    const completed = await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...claim, parts: [part] }));
+    const completed = await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...claim, parts: [part] }));
     expect(await completed.json()).toEqual({ status: "published" });
     expect(bucket.openUploads).toBe(0);
   });
@@ -320,8 +423,8 @@ describe("manual installer upload", () => {
     const key = "PermitMonitorSetup-0.8.0.exe";
     const claim = { sha256: sha256("declared"), size: 8 };
     const started = await (await uploadCall(env, key, "POST", JSON.stringify(claim))).json();
-    const part = await (await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "short")).json();
-    const completed = await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...claim, parts: [part] }));
+    const part = await (await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}&partNumber=1`, "PUT", "short")).json();
+    const completed = await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", JSON.stringify({ ...claim, parts: [part] }));
     expect(completed.status).toBe(409);
     expect(bucket.storedText(key)).toBeNull();
   });
@@ -330,9 +433,9 @@ describe("manual installer upload", () => {
     const { bucket, env } = feed();
     const key = "PermitMonitorSetup-0.8.0.exe";
     const started = await (await uploadCall(env, key, "POST", JSON.stringify({ sha256: sha256("abc"), size: 3 }))).json();
-    const part = await (await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "abd")).json();
+    const part = await (await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}&partNumber=1`, "PUT", "abd")).json();
     const completion = { sha256: sha256("abd"), size: 3, parts: [part] };
-    expect((await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", JSON.stringify(completion))).status).toBe(409);
+    expect((await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", JSON.stringify(completion))).status).toBe(409);
     expect(bucket.storedText(key)).toBeNull();
   });
 
@@ -346,11 +449,11 @@ describe("manual installer upload", () => {
 
     for (const body of ["not json", "{}", JSON.stringify({ sha256: sha256("abc"), size: 3, parts: "all" }),
       JSON.stringify({ sha256: sha256("abc"), size: 3, parts: [{ partNumber: 0, etag: "x" }] })]) {
-      expect((await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", body)).status, body).toBe(400);
+      expect((await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", body)).status, body).toBe(400);
     }
 
     expect(bucket.openUploads).toBe(1);
-    expect((await uploadCall(env, `${key}?uploadId=${started.uploadId}`, "POST", "x".repeat(1_048_577))).status).toBe(413);
+    expect((await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}`, "POST", "x".repeat(1_048_577))).status).toBe(413);
   });
 
   it("answers storage failures during an upload with a retryable 503", async () => {
@@ -365,7 +468,7 @@ describe("manual installer upload", () => {
     bucket.failing.clear();
     const started = await (await uploadCall(env, key, "POST", JSON.stringify({ sha256: sha256("abc"), size: 3 }))).json();
     bucket.failing.add("uploadPart");
-    expect((await uploadCall(env, `${key}?uploadId=${started.uploadId}&partNumber=1`, "PUT", "abc")).status).toBe(503);
+    expect((await uploadCall(env, `${key}?stagingKey=${encodeURIComponent(started.stagingKey)}&uploadId=${started.uploadId}&partNumber=1`, "PUT", "abc")).status).toBe(503);
   });
 });
 
@@ -378,6 +481,8 @@ describe("manual manifest upload", () => {
   function published(): TestFeed {
     const setup = feed();
     setup.bucket.seed("PermitMonitorSetup-0.7.0.exe", "seven", INSTALLER_TYPE, sha256("seven"));
+    setup.bucket.seed("PermitMonitor-0.7.0-mac-arm64.zip", "mac seven", "application/zip", sha256("mac seven"));
+    setup.bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
     setup.bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE, sha256("eight"));
     setup.bucket.seed("release-manifest.json", manifest("0.7.0", "seven"), "application/json");
 
@@ -392,6 +497,17 @@ describe("manual manifest upload", () => {
     expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
   });
 
+  it("keeps the known-good Mac download when the new release has no Mac archive", async () => {
+    const { bucket, env } = published();
+    await bucket.delete("PermitMonitor-0.8.0-mac-arm64.zip");
+    const refused = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    expect(refused.status).toBe(409);
+    const redirect = await call(env, "/mac");
+    expect(redirect.headers.get("location")).toBe(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
+    expect((await call(env, "/PermitMonitor-0.7.0-mac-arm64.zip")).status).toBe(200);
+    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.7.0", "seven"));
+  });
+
   it("never moves the feed back to an older version", async () => {
     const { bucket, env } = published();
     await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
@@ -404,7 +520,7 @@ describe("manual manifest upload", () => {
     const newer = manifest("0.9.0", "nine");
 
     class ManifestAppearsOnPut extends MemoryBucket {
-      override async put(key: string, value: string, options: FeedPutOptions) {
+      override async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
         if (key === "release-manifest.json") this.seed(key, newer, "application/json");
 
         return super.put(key, value, options);
@@ -413,6 +529,7 @@ describe("manual manifest upload", () => {
 
     const bucket = new ManifestAppearsOnPut();
     bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE, sha256("eight"));
+    bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
     const { env } = feed(bucket);
     const response = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
     expect(response.status).toBe(409);

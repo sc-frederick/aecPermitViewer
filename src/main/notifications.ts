@@ -2,6 +2,7 @@ import { actionLabel, permitAction } from "../shared/action.js";
 import { describeReview, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
 import { isFailure, outcomeText } from "../shared/outcomes.js";
 import type { PermitRow, RunOutcome } from "../shared/permit.js";
+import type { PermitStore } from "./store.js";
 import type { KeyProblem } from "./check-queue.js";
 
 export type CheckEventKind = "first-status" | "status-changed" | "review-action" | "check-failed" | "key-needed";
@@ -92,4 +93,14 @@ export function describeSharedUpdate(before: readonly PermitRow[], after: readon
 
     return event && event.kind !== "key-needed" ? [event] : [];
   });
+}
+
+/** Records a completed check before describing it, using the previous completed outcome rather than its unfinished run. */
+export function recordCheckEvent(store: Pick<PermitStore, "getPermitBeforeRun" | "finishRun" | "getPermit">,
+  input: Parameters<PermitStore["finishRun"]>[0]): CheckEvent | null {
+  const before = store.getPermitBeforeRun(input.permitId, input.runId);
+  store.finishRun(input);
+  const after = store.getPermit(input.permitId);
+
+  return before && after ? describeCheckEvent(before, after, input.outcome) : null;
 }

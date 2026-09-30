@@ -6,9 +6,22 @@
   // The app uses workers.dev: aeccloud.io has Bot Fight Mode on, which challenges non-browser clients.
   "workers_dev": true,
   "preview_urls": false,
-  "observability": { "enabled": true },
-  "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "ShareRoomObject" }]
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "SHARE_SOURCE_WRITES_PER_MINUTE": "60",
+    "SHARE_SOURCE_CREATIONS_PER_DAY": "5",
+    "SHARE_DEPLOYMENT_CREATIONS_PER_DAY": "100",
+    "SHARE_REGISTERED_ROOMS": "1024",
+    "SHARE_TRACKED_SOURCES": "4096"
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ShareRoomObject"] }]
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "ShareRoomObject" },
+      { "name": "ADMISSION", "class_name": "ShareAdmissionObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ShareRoomObject"] },
+    { "tag": "v2", "new_sqlite_classes": ["ShareAdmissionObject"] }
+  ]
 }
