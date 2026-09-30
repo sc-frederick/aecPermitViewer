@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   FeedBucket, FeedMultipartOptions, FeedMultipartUpload, FeedObject, FeedObjectBody, FeedPutOptions, FeedRange, FeedUploadedPart,
 } from "../../infra/update-server/src/bucket.js";
@@ -78,13 +79,19 @@ export class MemoryBucket implements FeedBucket {
     };
   }
 
-  async put(key: string, value: string, options: FeedPutOptions): Promise<FeedObject | null> {
+  async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions): Promise<FeedObject | null> {
     this.check("put");
+    const bytes = value instanceof ReadableStream ? new Uint8Array(await new Response(value).arrayBuffer()) : new TextEncoder().encode(value);
 
+    if (options.sha256 && createHash("sha256").update(bytes).digest("hex") !== options.sha256) {
+      throw new Error("put: SHA-256 checksum mismatch");
+    }
+
+    // No awaits between checking the destination and committing it: conditions apply at commit time.
     if (options.onlyIf instanceof Headers) {
       if (options.onlyIf.get("if-none-match") === "*" && this.objects.has(key)) return null;
     } else if (options.onlyIf && this.objects.get(key)?.etag !== options.onlyIf.etagMatches) return null;
-    this.seed(key, value, options.httpMetadata.contentType);
+    this.seed(key, bytes, options.httpMetadata.contentType, options.customMetadata?.sha256);
     const stored = this.objects.get(key);
 
     return stored ? this.describe(stored) : null;

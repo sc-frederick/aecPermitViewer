@@ -55,6 +55,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
       build(version: string, installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
         writeFileSync(path.join(out, "release-manifest.json"), manifest(version, installer));
+        writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), `mac ${version}`);
       },
       /** Adds the zipped Mac app the macOS job builds. */
       buildMac(zip: string): void {
@@ -109,7 +110,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
     expect(feed.recordedSha256("PermitMonitorSetup-0.8.0.exe")).toBe(sha256("eight"));
     expect(feed.stored("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
-    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/release-manifest.json`]);
+    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`, `${BUCKET}/release-manifest.json`]);
   });
 
   it("uploads the Mac zip before the manifest and never replaces it with other bytes", () => {
@@ -137,7 +138,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     const rerun = feed.publish();
     expect(rerun.status, rerun.output).toBe(0);
     expect(rerun.output).toContain("skipped");
-    expect(feed.writes()).toHaveLength(2);
+    expect(feed.writes()).toHaveLength(3);
   });
 
   it("fails without writing when a rebuilt installer differs from the published one", () => {
@@ -200,7 +201,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     feed.build("0.7.0", "seven");
     const identical = feed.publish();
     expect(identical.status, identical.output).toBe(0);
-    expect(feed.writes()).toEqual([`${BUCKET}/release-manifest.json`]);
+    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitor-0.7.0-mac-arm64.zip`, `${BUCKET}/release-manifest.json`]);
 
     const other = workspace();
     other.seed("PermitMonitorSetup-0.7.0.exe", "SEVEN");

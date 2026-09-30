@@ -76,7 +76,7 @@ async function serve(rooms: MemoryRooms, held: () => Hold | null = () => null): 
       const body = Buffer.concat(chunks);
 
       if (body.length > 0) init.body = body;
-      const response = await route(new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init), rooms.directory);
+      const response = await route(new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init), rooms.directory, rooms.admission);
       const hold = held();
 
       if (hold && hold.method === init.method) await hold.wait();
@@ -237,7 +237,7 @@ describe("publisher timing", () => {
     await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS - 1);
     expect(target.publications).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
-    expect(target.publications).toHaveLength(1);
+    await vi.waitFor(() => expect(target.publications).toHaveLength(1));
   });
 
   it("publishes nothing once stopped, even when asked to sync now", async () => {
@@ -418,4 +418,54 @@ describe("sharing between two apps", () => {
     expect(await offline.startSharing()).toEqual({ ok: false, error: "Sharing isn't available in this build." });
     own.close();
   }, 30_000);
+});
+
+describe("sharing snapshot consistency", () => {
+  class CapturingService extends ShareService {
+    readonly lists: SharedList[] = [];
+
+    override async publish(_writeKey: string, sealed: Uint8Array): Promise<PublishReply> {
+      const opened = openList(sealed, new Uint8Array(32).fill(9));
+
+      if (opened._tag !== "ok") throw new Error("synthetic content key mismatch");
+      this.lists.push(parseSharedList(opened.json));
+
+      return { _tag: "published", publishedAt: new Date().toISOString() };
+    }
+  }
+
+  it("rebuilds a list if a history mutation occurs between yielded permit reads", async () => {
+    const store = tempStore();
+    const added = store.addPermit("HC-BLD-26-0087599");
+
+    if (added._tag !== "ok") throw added.error;
+    observe(store, added.value, "In Process");
+    const other = store.addPermit("HC-BLD-26-0087600");
+
+    if (other._tag !== "ok") throw other.error;
+    observe(store, other.value, "In Process");
+    // Restore a known synthetic sharing key through the normal startup path.
+    store.setText("share_write_key", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE");
+    store.setText("share_content_key", "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk");
+    const service = new CapturingService(new URL("http://localhost"));
+    const sharing = new Sharing(store, service, new RecordingHost());
+
+    try {
+      await sharing.start();
+      const publishing = sharing.sync();
+      // syncNow first yields to its prior attempt, then captures the store revision and yields its first read.
+
+      const edited = new Promise<void>((resolve) => {
+        queueMicrotask(() => setImmediate(() => { observe(store, added.value, "Issued"); resolve(); }));
+      });
+
+      await edited;
+      expect(await publishing).toEqual({ ok: true, value: null });
+      expect(service.lists).toHaveLength(1);
+      const list = defined(service.lists[0], "published list");
+      const permit = defined(list.permits.find((entry) => entry.id === added.value), "updated permit");
+      expect(permit.lastStatus).toBe("Issued");
+      expect(list.histories.get(permit.id)?.observations[0]?.statusValue).toBe("Issued");
+    } finally { await sharing.stop(); store.close(); }
+  });
 });

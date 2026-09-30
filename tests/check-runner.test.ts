@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCheck, type CheckOperation, type CheckWorker, type WorkerStart } from "../src/main/check-runner.js";
 import { classifyCause } from "../src/main/diagnostics.js";
 import { HILLSBOROUGH_ID, type PermitRow } from "../src/shared/permit.js";
@@ -20,6 +20,8 @@ const RECORD_URL = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=B
 const directories: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
+
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -95,7 +97,161 @@ function scripted(script: WorkerScript): (environment: NodeJS.ProcessEnv) => Wor
 const verified: WorkerToMain = { kind: "verified", runId: RUN_ID, displayedNumber: PERMIT.permitNumber, statusLabel: "Record Status:",
   statusValue: "In Process", reviews: null, observedAt: "2026-09-28T12:00:00.000Z", recordUrl: RECORD_URL, browserVersion: "140.0" };
 
+function observation(fingerprint = "unchanged"): WorkerToMain {
+  return { kind: "observation", runId: RUN_ID, observation: { phase: "search", location: "permit-search", fingerprint,
+    headings: [], formLabels: [], visibleControls: [], resultNumbers: [], recentActions: [],
+    candidates: [{ id: "next_results_page", established: true, description: "Next results page" }] } };
+}
+
 describe("running a check", () => {
+  it("accepts verification from action 20 without issuing another choice", async () => {
+    const choices: string[] = [];
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit(observation("0"));
+
+      if (message.kind === "choose") {
+        choices.push(message.fingerprint);
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: choices.length });
+        worker.emit(choices.length === 20 ? verified : observation(String(choices.length)));
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "success", actionCount: 20, requestCount: 0 });
+    expect(choices).toHaveLength(20);
+    await active.closed;
+  });
+
+  it("refuses an action 21 when action 20 still needs navigation", async () => {
+    const choices: string[] = [];
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit(observation("0"));
+
+      if (message.kind === "choose") {
+        choices.push(message.fingerprint);
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: choices.length });
+        worker.emit(observation(String(choices.length)));
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "timeout", actionCount: 20, requestCount: 0 });
+    expect(choices).toHaveLength(20);
+    await active.closed;
+  });
+
+  it("rejects a reported action count above the budget even if followed by verification", async () => {
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") {
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: 21 });
+        worker.emit(verified);
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "timeout", actionCount: 21 });
+    await active.closed;
+  });
+
+  it("reobserves an unchanged established step locally until a delayed update progresses", async () => {
+    const choices: string[] = [];
+    let observations = 0;
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit(observation());
+
+      if (message.kind === "choose") {
+        choices.push(message.fingerprint);
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: choices.length });
+        worker.emit(choices.length === 2 ? verified : observation());
+      }
+
+      if (message.kind === "reobserve") {
+        observations += 1;
+        worker.emit(observation(observations === 2 ? "changed" : "unchanged"));
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "success", requestCount: 0, actualModel: null, actionCount: 2 });
+    expect(choices).toEqual(["unchanged", "changed"]);
+    expect(observations).toBe(2);
+    await active.closed;
+  });
+
+  it("ends permanently unchanged established steps within four local observations without an SDK request", async () => {
+    let observations = 0;
+    const choices: string[] = [];
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") worker.emit(observation());
+
+      if (message.kind === "choose") {
+        choices.push(message.fingerprint);
+        worker.emit(observation());
+      }
+
+      if (message.kind === "reobserve") {
+        observations += 1;
+        worker.emit(observation());
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "unsupported_page", requestCount: 0, actualModel: null });
+    expect(choices).toEqual(["unchanged"]);
+    expect(observations).toBe(4);
+    await active.closed;
+  });
+
+  it("cancels local settling and never sends a later reobservation", async () => {
+    const messages: string[] = [];
+
+    const { active } = check(scripted((message, worker) => {
+      messages.push(message.kind);
+
+      if (message.kind === "start") worker.emit(observation());
+
+      if (message.kind === "choose") {
+        worker.emit(observation());
+        setImmediate(() => active.cancel());
+      }
+    }));
+
+    expect((await active.result).outcome).toBe("cancelled");
+    await active.closed;
+    await new Promise((resolve) => setTimeout(resolve, 850));
+    expect(messages).toEqual(["start", "choose"]);
+  });
+
+  it("keeps the overall deadline effective while the last allowed action settles", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Date.now();
+
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") {
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: 20 });
+        setImmediate(() => {
+          vi.setSystemTime(now + 180_000);
+          worker.emit(verified);
+        });
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "timeout", actionCount: 20 });
+    await active.closed;
+  });
+
+  it("still cancels while awaiting verification from action 20", async () => {
+    const { active } = check(scripted((message, worker) => {
+      if (message.kind === "start") {
+        worker.emit({ kind: "action_count", runId: RUN_ID, count: 20 });
+        setImmediate(() => active.cancel());
+        worker.emit(verified);
+      }
+    }));
+
+    expect(await active.result).toMatchObject({ outcome: "cancelled", actionCount: 20 });
+    await active.closed;
+  });
+
   it("carries per-review evidence through main's verification", async () => {
     const reviews = [{ process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" }];
 

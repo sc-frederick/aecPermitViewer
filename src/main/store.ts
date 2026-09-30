@@ -26,6 +26,10 @@ const jurisdictionRefSchema = z.object({ jurisdictionId: z.string() });
 
 const dueSchema = z.object({ id: z.string(), jurisdictionId: z.string() });
 
+const previousAttemptSchema = z.object({ latestAttemptAt: z.string(), latestOutcome: runOutcomeSchema });
+
+const scheduleDeadlineSchema = z.object({ id: z.string(), nextDueAt: z.string(), finishedAt: z.string().nullable(), outcome: runOutcomeSchema.nullable() });
+
 const startedSchema = z.object({ startedAt: z.string() });
 
 const settingSchema = z.object({ value: z.string() });
@@ -259,6 +263,7 @@ export class PermitStore {
     // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
     // kept rather than dropped by a migration of its own. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_success_permit_started ON check_runs(permit_id, started_at DESC) WHERE outcome = 'success'");
   }
 
   /**
@@ -389,6 +394,19 @@ export class PermitStore {
     return row ? mapPermit(row, false) : null;
   }
 
+  /** The prior completed attempt with the current verified evidence, excluding the run being finished. */
+  getPermitBeforeRun(permitId: string, runId: string): PermitRow | null {
+    const permit = this.getPermit(permitId);
+
+    if (!permit) return null;
+
+    const previous = this.row(previousAttemptSchema, `SELECT started_at AS latestAttemptAt, outcome AS latestOutcome
+      FROM check_runs WHERE permit_id = ? AND id <> ? AND outcome IS NOT NULL
+      ORDER BY started_at DESC, rowid DESC LIMIT 1`, permitId, runId);
+
+    return { ...permit, latestAttemptAt: previous?.latestAttemptAt ?? null, latestOutcome: previous?.latestOutcome ?? null };
+  }
+
   /** Records a started check with the versions and model configuration it runs under. */
   startRun(input: {
     permitId: string;
@@ -499,6 +517,48 @@ export class PermitStore {
     return { runs, observations };
   }
 
+  /**
+   * At most `days` daily entries before the exclusive UTC cursor. Calendar boundaries use this computer's time zone,
+   * including DST. Indexed per-day seeks skip older raw checks; only the chosen observations' review JSON is parsed.
+   */
+  dailyHistory(permitId: string, days = 120, before: string | null = null): PermitHistory {
+    if (!Number.isInteger(days) || days < 1 || days > 120) throw new Error("Invalid history page size");
+    const runs: CheckRunRow[] = [];
+    const observations: ObservationRow[] = [];
+    let cursor = before ?? "9999-12-31T23:59:59.999Z";
+
+    const runSelect = `SELECT r.id, r.permit_id AS permitId, r.started_at AS startedAt, r.finished_at AS finishedAt,
+      r.outcome, r.action_count AS actionCount, r.request_count AS requestCount FROM check_runs r`;
+
+    for (let index = 0; index < days; index += 1) {
+      const latest = this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at < ?
+        ORDER BY r.started_at DESC LIMIT 1`, permitId, cursor);
+
+      if (!latest) break;
+      const date = new Date(latest.startedAt);
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
+
+      const chosen = this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at >= ?
+        AND r.started_at < ? AND r.outcome = 'success'
+        AND EXISTS (SELECT 1 FROM status_observations o WHERE o.run_id = r.id)
+        ORDER BY r.started_at DESC LIMIT 1`, permitId, start, cursor) ?? latest;
+
+      runs.push(chosen);
+
+      const observation = this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
+        verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel, status_value AS statusValue,
+        observed_at AS observedAt, record_url AS recordUrl, reviews FROM status_observations WHERE run_id = ?`, chosen.id);
+
+      if (observation) observations.push(observation);
+      cursor = start;
+    }
+
+    const older = this.row(startedSchema, `SELECT started_at AS startedAt FROM check_runs
+      WHERE permit_id = ? AND started_at < ? ORDER BY started_at DESC LIMIT 1`, permitId, cursor);
+
+    return { runs, observations, nextBefore: older ? cursor : null };
+  }
+
   getObservation(id: string): ObservationRow | null {
     return this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
@@ -544,11 +604,28 @@ export class PermitStore {
     return stored ?? DEFAULT_CHECK_TIMES;
   }
 
-  /** Saves the times and pulls any due time later than the new next slot forward to it. */
+  /** Saves schedule edits and future deadlines atomically; overdue checks keep their one catch-up. */
   setCheckTimes(times: CheckTimes, now: Date): void {
-    this.sql("INSERT INTO settings(key, value) VALUES ('check_times', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-      .run(times.map(formatCheckTime).join(","));
-    this.alignSchedule(now);
+    this.transaction(() => {
+      const previousTimes = this.getCheckTimes();
+      this.sql("INSERT INTO settings(key, value) VALUES ('check_times', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(times.map(formatCheckTime).join(","));
+
+      const future = this.rows(scheduleDeadlineSchema, `SELECT p.id, p.next_due_at AS nextDueAt, r.finished_at AS finishedAt, r.outcome
+        FROM permits p LEFT JOIN check_runs r ON r.id = p.last_attempt_id WHERE p.next_due_at > ?`, now.toISOString());
+
+      const next = nextSlotAfter(now, times);
+
+      for (const permit of future) {
+        // Transient retries retain their original one-hour deadline, capped by the next newly selected slot.
+        const retry = permit.outcome === "api_unavailable" && permit.finishedAt
+          && permit.nextDueAt === nextDueAfter(new Date(permit.finishedAt), "api_unavailable", previousTimes).toISOString()
+          ? new Date(Date.parse(permit.finishedAt) + 3_600_000) : next;
+
+        const due = retry > now && retry < next ? retry : next;
+        this.sql("UPDATE permits SET next_due_at = ? WHERE id = ?").run(due.toISOString(), permit.id);
+      }
+    });
   }
 
   /** A boolean setting, or `fallback` when it has never been saved. */

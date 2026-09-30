@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { nextSlotAfter, type CheckTimes } from "../shared/schedule.js";
 import { parseSharedList, type SharedList } from "./share-list.js";
-import { ListTooLarge, openList, sealList, type ShareService } from "./share-service.js";
+import { ListTooLarge, openList, sealListAsync, type ShareService } from "./share-service.js";
 
 /** How long the list has to sit unchanged, with no checks queued or running, before it is sent. */
 export const PUBLISH_SETTLE_MS = 2 * 60_000;
@@ -52,7 +52,7 @@ export class SharePublisher {
     private readonly service: ShareService,
     private readonly writeKey: string,
     private readonly contentKey: Uint8Array,
-    private readonly buildList: () => string,
+    private readonly buildList: () => string | Promise<string>,
     private readonly checking: () => boolean,
     private readonly changed: () => void,
     private readonly report: Report,
@@ -117,7 +117,7 @@ export class SharePublisher {
     let json: string;
 
     try {
-      json = this.buildList();
+      json = await this.buildList();
     } catch (cause) {
       this.report("share:build", cause);
       this.setState(this.publishedAt, "Couldn't read the list to share. Retrying.");
@@ -129,7 +129,7 @@ export class SharePublisher {
     if ((json === this.lastJson && !force) || this.stopped) return null;
 
     try {
-      const reply = await this.service.publish(this.writeKey, sealList(json, this.contentKey));
+      const reply = await this.service.publish(this.writeKey, await sealListAsync(json, this.contentKey));
 
       if (this.stopped) return null;
 
@@ -173,6 +173,7 @@ const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   undecryptable: "This code no longer opens the shared list. Ask for a new code.",
   unreadable: "This shared list needs a newer version of Permit Monitor.",
   unreachable: "Couldn't reach the sharing service. Retrying.",
+  persistence: "Couldn't save the shared list locally. Retrying.",
 };
 
 /** Opens and parses a fetched list. */
@@ -189,7 +190,7 @@ function readList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; jso
 }
 
 /** Why the latest fetch didn't bring a list. */
-type FollowFailure = "absent" | "undecryptable" | "unreadable" | "unreachable";
+type FollowFailure = "absent" | "undecryptable" | "unreadable" | "unreachable" | "persistence";
 
 /** Fetches the list a share code opens, without following it. Rejects when the service can't be reached. */
 export async function probeShare(service: ShareService, readToken: string, contentKey: Uint8Array): Promise<Probe> {
@@ -289,7 +290,7 @@ export class ShareFollower {
     const now = new Date();
 
     // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
-    const next = this.failure === "unreachable"
+    const next = (this.failure === "unreachable" || this.failure === "persistence")
       ? new Date(now.getTime() + RETRY_MS) : nextFetchAt(this.list?.schedule ?? null, now);
 
     this.timer = setTimeout(() => {
@@ -314,12 +315,21 @@ export class ShareFollower {
         const read = readList(reply.sealed, this.contentKey);
 
         if (read._tag === "ok") {
+          try {
+            this.save({ revision: reply.revision, publishedAt: reply.publishedAt, json: read.json });
+          } catch (cause) {
+            this.report("share:save-cache", cause);
+            this.failure = "persistence";
+            this.changed();
+
+            return;
+          }
+
           const before = this.list;
           this.list = read.list;
           this.revision = reply.revision;
           this.publishedAt = reply.publishedAt;
           this.failure = null;
-          this.save({ revision: reply.revision, publishedAt: reply.publishedAt, json: read.json });
           this.updated(before, read.list);
         } else {
           this.failure = read._tag;

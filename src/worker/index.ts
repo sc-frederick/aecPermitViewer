@@ -9,6 +9,7 @@ import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitF
 import { wmisAdapter } from "./wmis.js";
 import { epermitAdapter, watchEpermitForm } from "./epermit.js";
 import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
+import { accelaGlobalResultsAdapter, waitForAccelaGlobalResults } from "./accela-global.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
 
@@ -19,13 +20,7 @@ const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 // Accela's Global Search box (Pasco replaces it with its own, injected after load) and the results page it opens.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
 
-const GLOBAL_RESULTS_LABEL = "#ctl00_PlaceHolderMain_lblSearchResults";
-
-const GLOBAL_NO_RESULTS = "#ctl00_PlaceHolderMain_pnlNoResults";
-
 const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
-
-const GLOBAL_NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
 
 const TYLER_SEARCH_BUTTON = "#button-Search";
 
@@ -125,23 +120,6 @@ function onGlobalResults(url: string): boolean {
   return globalSearch() && new URL(url).pathname.toLowerCase().endsWith("/cap/globalsearchresults.aspx");
 }
 
-/** Wait for a record, a results list, or the no-results notice after a Global Search or results postback. */
-async function waitForGlobalResults(previousRows: string): Promise<void> {
-  if (!page) return;
-  await page.waitForFunction(({ rows, link, detail, none }) => {
-    if (document.querySelector(detail) || document.querySelector(none)) return true;
-    const current = [...document.querySelectorAll<HTMLElement>(link)].map((anchor) => anchor.innerText.trim()).join("|");
-
-    return current !== "" && current !== rows;
-  }, { rows: previousRows, link: GLOBAL_RESULT_LINK, detail: DETAIL_NUMBER, none: GLOBAL_NO_RESULTS }, { timeout: 15_000 })
-    .catch(() => undefined);
-  await page.waitForLoadState("domcontentloaded").catch(() => undefined);
-}
-
-async function globalResultRows(): Promise<string> {
-  return page ? (await page.locator(GLOBAL_RESULT_LINK).allInnerTexts()).map((text) => text.trim()).join("|") : "";
-}
-
 async function exactResultLinks(): Promise<Array<{ text: string; href: string; id: string }>> {
   if (!page) return [];
 
@@ -182,6 +160,7 @@ async function observe(): Promise<Observed> {
   const visibleControls: string[] = [];
   const formLabels: string[] = [];
   let record: DisplayedRecord | null = null;
+  let resultPageIdentity = "";
 
   if (location === "permit-detail" && jurisdiction) {
     phase = "detail";
@@ -191,6 +170,7 @@ async function observe(): Promise<Observed> {
   } else if (location === "permit-search") {
     phase = "search";
     const adapter = portalAdapter();
+    const globalResults = jurisdiction && onGlobalResults(url) ? accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber) : null;
 
     if (adapter) {
       const search = await adapter.observe();
@@ -200,9 +180,13 @@ async function observe(): Promise<Observed> {
       visibleControls.push(...search.visibleControls);
       resultNumbers = search.resultNumbers;
       candidates.push(...search.candidates);
-    } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(url)) {
-      // The search already ran; the only way forward is the exact result row or the next page of results.
-      if (await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) visibleControls.push("Global Search results");
+    } else if (globalResults) {
+      const search = await globalResults.observe();
+      phase = search.phase;
+      resultNumbers = search.resultNumbers;
+      resultPageIdentity = search.pageIdentity;
+      visibleControls.push(...search.visibleControls);
+      candidates.push(...search.candidates);
     } else if (jurisdiction?.portalFamily === "accela") {
       const global = globalSearch();
       const input = global ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
@@ -257,9 +241,9 @@ async function observe(): Promise<Observed> {
     }
 
     // An adapter matches its own results above.
-    const links = adapter ? [] : await exactResultLinks();
+    const links = adapter || globalResults ? [] : await exactResultLinks();
 
-    if (!adapter) resultNumbers = links.map((link) => link.text);
+    if (!adapter && !globalResults) resultNumbers = links.map((link) => link.text);
 
     if (links.length > 1) phase = "results";
 
@@ -274,8 +258,6 @@ async function observe(): Promise<Observed> {
         candidates.length = 0;
         candidates.push({ id: "open_exact_result", established: true, description: `Open the result whose displayed permit number exactly equals ${requestedNumber}.` });
       }
-    } else if (links.length === 0 && onGlobalResults(url) && await page.locator(GLOBAL_NEXT_PAGE).count() === 1) {
-      candidates.push({ id: "next_results_page", established: true, description: "Show the next page of Global Search results to look for the exact permit number." });
     }
   }
 
@@ -288,7 +270,7 @@ async function observe(): Promise<Observed> {
   }
 
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ url, phase, inputValue, displayedNumber, displayedStatus, resultNumbers, headings }))
+    .update(JSON.stringify({ url, phase, inputValue, displayedNumber, displayedStatus, resultNumbers, resultPageIdentity, headings }))
     .digest("hex").slice(0, 20);
 
   const observation = {
@@ -334,7 +316,7 @@ async function sendObservationOrResult(): Promise<void> {
       }
     } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
       // Global Search matches whole record numbers, so a finished search without the exact row has no such record.
-      if (observation.candidates.length === 0 && await page.locator(GLOBAL_RESULTS_LABEL).isVisible().catch(() => false)) {
+      if (await accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber).foundNothing()) {
         fail("not_found_in_supported_search");
 
         return;
@@ -476,6 +458,13 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
 
 async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promise<void> {
   if (!page || !currentRun || currentRun !== message.runId || !lastObservation || stopped) return;
+
+  if (actionCount >= 20) {
+    fail("timeout");
+
+    return;
+  }
+
   const { observation: fresh } = await observe();
 
   if (fresh.fingerprint !== message.fingerprint || fresh.candidates.length > 30) {
@@ -548,7 +537,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         await input.press("Enter", { noWaitAfter: true });
         await page.waitForURL((target) => onGlobalResults(target.toString()) ||
           Boolean(jurisdiction && parsePortalUrl(target.toString(), "detail", jurisdiction.id)), { timeout: 15_000 }).catch(() => undefined);
-        await waitForGlobalResults("");
+        await waitForAccelaGlobalResults(page, "");
       } else if (jurisdiction?.portalFamily === "accela") {
         const input = page.locator(SEARCH_FIELD);
         const button = page.locator(SEARCH_BUTTON);
@@ -572,16 +561,14 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         break;
       }
 
+      if (jurisdiction && onGlobalResults(page.url())) {
+        await accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber).openResult();
+        break;
+      }
+
       const link = onlyElement(await exactResultLinks());
 
       if (!link) break;
-
-      if (globalSearch()) {
-        if (!onGlobalResults(page.url())) break;
-        await page.locator(`[id="${link.id}"]`).click({ noWaitAfter: true });
-        await page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
-        break;
-      }
 
       const target = new URL(link.href, page.url());
 
@@ -592,10 +579,8 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
     }
 
     case "next_results_page": {
-      if (!onGlobalResults(page.url())) break;
-      const rows = await globalResultRows();
-      await page.locator(GLOBAL_NEXT_PAGE).click({ noWaitAfter: true });
-      await waitForGlobalResults(rows);
+      if (!jurisdiction || !onGlobalResults(page.url())) break;
+      await accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber).next();
       break;
     }
 

@@ -2,8 +2,9 @@
 // ciphertext: lists are gzipped, then sealed with AES-256-GCM under the content key, which stays in the share code.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gunzipSync, gzip, gzipSync } from "node:zlib";
 import { z } from "zod";
+import { promisify } from "node:util";
 import { CONTENT_KEY_BYTES, SHARE_BODY_MAX_BYTES } from "../shared/share-protocol.js";
 
 const NONCE_BYTES = 12;
@@ -20,11 +21,22 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 /** Gzips and seals a list: nonce, then ciphertext, then the GCM tag. */
 export function sealList(json: string, contentKey: Uint8Array): Uint8Array<ArrayBuffer> {
+  return encryptList(gzipSync(json), contentKey);
+}
+
+const compressList = promisify(gzip);
+
+/** Compresses off the main thread before sealing, so large retained histories do not block scheduling or IPC. */
+export async function sealListAsync(json: string, contentKey: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  return encryptList(await compressList(json), contentKey);
+}
+
+function encryptList(compressed: Uint8Array, contentKey: Uint8Array): Uint8Array<ArrayBuffer> {
   if (contentKey.length !== CONTENT_KEY_BYTES) throw new Error("Content key has the wrong length");
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv("aes-256-gcm", contentKey, nonce);
   cipher.setAAD(ASSOCIATED_DATA);
-  const sealed = Buffer.concat([nonce, cipher.update(gzipSync(json)), cipher.final(), cipher.getAuthTag()]);
+  const sealed = Buffer.concat([nonce, cipher.update(compressed), cipher.final(), cipher.getAuthTag()]);
 
   if (sealed.length > SHARE_BODY_MAX_BYTES) throw new ListTooLarge(sealed.length);
 

@@ -1,6 +1,7 @@
 // The permit list as one app shares it with others: its permits with their latest statuses, and each permit's recent
 // daily history. The publisher builds it from its store; followers parse it at the boundary like any network input.
 import { z } from "zod";
+import { setImmediate } from "node:timers/promises";
 import { dailyHistory } from "../shared/history.js";
 import { getJurisdiction } from "../shared/jurisdictions.js";
 import { runOutcomeSchema, type CheckRunRow, type ObservationRow, type PermitHistory, type PermitRow } from "../shared/permit.js";
@@ -100,15 +101,7 @@ export function buildSharedList(permits: readonly PermitRow[], historyOf: (permi
   return JSON.stringify({
     format: 1,
     schedule: schedule ? [...schedule] : null,
-    permits: permits.map((permit) => ({
-      permit: {
-        id: permit.id, jurisdictionId: permit.jurisdictionId, permitNumber: permit.permitNumber, projectNumber: permit.projectNumber,
-        monitoringEnabled: permit.monitoringEnabled, lastStatus: permit.lastStatus, reviews: permit.reviews,
-        lastObservedAt: permit.lastObservedAt, lastRecordUrl: permit.lastRecordUrl, latestAttemptAt: permit.latestAttemptAt,
-        latestOutcome: permit.latestOutcome,
-      },
-      history: recentHistory(historyOf(permit.id), SHARED_HISTORY_DAYS),
-    })),
+    permits: permits.map((permit) => sharedEntry(permit, historyOf(permit.id))),
   } satisfies z.input<typeof sharedListSchema>);
 }
 
@@ -132,4 +125,32 @@ export function parseSharedList(json: string): SharedList {
   });
 
   return { schedule: list.schedule ? normalizeCheckTimes(list.schedule) : null, permits, histories };
+}
+
+/** One permit's public state and retained history, serialized together. */
+function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof sharedListSchema>["permits"][number] {
+  return {
+    permit: {
+      id: permit.id, jurisdictionId: permit.jurisdictionId, permitNumber: permit.permitNumber, projectNumber: permit.projectNumber,
+      monitoringEnabled: permit.monitoringEnabled, lastStatus: permit.lastStatus, reviews: permit.reviews,
+      lastObservedAt: permit.lastObservedAt, lastRecordUrl: permit.lastRecordUrl, latestAttemptAt: permit.latestAttemptAt,
+      latestOutcome: permit.latestOutcome,
+    },
+    history: recentHistory(history, SHARED_HISTORY_DAYS),
+  };
+}
+
+/** Builds the same wire format one permit per event-loop turn, so bounded history reads do not accumulate into a freeze. */
+export async function buildSharedListAsync(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory,
+  schedule: readonly string[] | null): Promise<string> {
+  const entries: string[] = [];
+
+  for (const permit of permits) {
+    await setImmediate();
+    entries.push(JSON.stringify(sharedEntry(permit, historyOf(permit.id))));
+  }
+
+  const prefix = JSON.stringify({ format: 1, schedule: schedule ? [...schedule] : null, permits: [] }).slice(0, -2);
+
+  return `${prefix}${entries.join(",")}]}`;
 }

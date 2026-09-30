@@ -63,6 +63,7 @@ export class CheckQueue {
   private stopped = false;
   private paused: KeyProblem | null = null;
   private again = false;
+  private keyGeneration = 0;
 
   constructor(private readonly ports: CheckQueuePorts) {}
 
@@ -132,6 +133,7 @@ export class CheckQueue {
 
   /** A key was saved, so paused checks may run again. */
   resume(): void {
+    this.keyGeneration += 1;
     this.paused = null;
     this.kick();
   }
@@ -244,7 +246,14 @@ export class CheckQueue {
     this.current = current;
 
     try {
-      const key = await this.ports.readKey().then((value) => value ?? "missing" as const, () => "unreadable" as const);
+      let generation = this.keyGeneration;
+      let key = await this.ports.readKey().then((value) => value ?? "missing" as const, () => "unreadable" as const);
+
+      // A replacement during a delayed read invalidates its answer, including missing/unreadable answers.
+      while (generation !== this.keyGeneration && !this.stopped && !current.cancelled) {
+        generation = this.keyGeneration;
+        key = await this.ports.readKey().then((value) => value ?? "missing" as const, () => "unreadable" as const);
+      }
 
       if (this.stopped || current.cancelled) {
         if (current.cancelled) this.ports.defer(entry.permitId);
@@ -264,10 +273,13 @@ export class CheckQueue {
       // A key that reads again ends a pause for a missing or unreadable one; a rejected key waits for a new one.
       if (this.paused !== "rejected") this.paused = null;
 
-      const check = this.ports.start(entry.permitId, key, () => !this.stopped && !current.cancelled && this.wanted(entry));
+      const check = this.ports.start(entry.permitId, key, () => !this.stopped && !current.cancelled && generation === this.keyGeneration && this.wanted(entry));
       current.cancel = check.cancel;
 
+      let saveFailed = false;
+
       const outcome = await check.finished.catch(() => {
+        saveFailed = true;
         this.ports.saveFailed();
 
         return null;
@@ -276,8 +288,11 @@ export class CheckQueue {
       if (outcome !== null) this.readyAt.set(scope, Date.now() + SCOPE_SPACING_MS);
       // A check cancelled before it recorded a run still waits for its next slot, like one cancelled in the queue.
       else if (current.cancelled) this.ports.defer(entry.permitId);
+      // The starter can still be waiting for the bundled browser when a key is replaced. Its stale generation
+      // must not launch, but the original request still belongs to the new key and needs another start.
+      else if (!saveFailed && generation !== this.keyGeneration && !this.stopped && this.wanted(entry)) this.entries.unshift(entry);
 
-      if (outcome === "authentication_error") this.pause("rejected", false);
+      if (outcome === "authentication_error" && generation === this.keyGeneration) this.pause("rejected", false);
     } finally {
       this.current = null;
       this.ports.changed();

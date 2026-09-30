@@ -59,7 +59,8 @@ export interface PermitBridge {
   openPortal(permitId: string): Promise<BridgeResult<null>>;
   /** Hand-checked permits: saves the status the user read, with an optional record link. */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string }): Promise<BridgeResult<null>>;
-  history(permitId: string): Promise<BridgeResult<PermitHistory>>;
+  /** Reads one daily page; the reply provides the cursor for older entries. */
+  history(permitId: string, before?: string): Promise<BridgeResult<PermitHistory>>;
   /** Sends the key to main once for encryption; it is never returned to the window. */
   saveKey(key: string): Promise<BridgeResult<null>>;
   removeKey(): Promise<BridgeResult<null>>;

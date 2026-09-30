@@ -1,5 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
+import { ShareAdmission, DEFAULT_ADMISSION_LIMITS, type AdmissionApi, type AdmissionLimits } from "../../infra/sync-server/src/admission.js";
 import { ShareRoom, type RoomStorage, type SqlRow, type SqlValue } from "../../infra/sync-server/src/room.js";
 import type { RoomApi, RoomDirectory } from "../../infra/sync-server/src/router.js";
 
@@ -56,6 +57,28 @@ export class MemoryRooms {
   now = Date.parse("2026-09-28T12:00:00.000Z");
   /** When true, every room call rejects, like an unavailable Durable Object. */
   failing = false;
+  /** The fixed deployment admission database; separate from room ciphertext storage. */
+  readonly admissionStorage = new MemoryRoomStorage();
+  private readonly budget: ShareAdmission;
+
+  /** Wires production admission policy to a separate SQLite budget database. */
+  constructor(limits: AdmissionLimits = DEFAULT_ADMISSION_LIMITS) {
+    this.budget = new ShareAdmission(this.admissionStorage, limits);
+  }
+
+  /** The production admission policy over SQLite, using the same controllable clock as the rooms. */
+  readonly admission: AdmissionApi = {
+    check: async (name, source) => {
+      this.check();
+
+      return this.budget.check(name, source, this.now);
+    },
+    register: async (name, source) => {
+      this.check();
+
+      return this.budget.register(name, source, this.now);
+    },
+  };
 
   readonly directory: RoomDirectory = (name) => {
     let room = this.rooms.get(name);
@@ -70,6 +93,11 @@ export class MemoryRooms {
     const current = room;
 
     const api: RoomApi = {
+      exists: async () => {
+        this.check();
+
+        return current.exists();
+      },
       publish: async (body) => {
         this.check();
 

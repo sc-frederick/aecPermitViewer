@@ -35,20 +35,20 @@ The feed is the `permitmon-updates` Worker (`infra/update-server`), backed by th
 - `/` and `/PermitMonitorSetup.exe` redirect to the current installer. This is the link to send to new users.
 - `/release-manifest.json` is the signed manifest the app checks.
 - `/PermitMonitorSetup-X.Y.Z.exe` are the versioned installers. Old ones stay so cached manifests keep working.
-- `/mac` redirects to `/PermitMonitor-X.Y.Z-mac-arm64.zip`, the zipped Mac app for the version the manifest names. CI writes the zip before the manifest under the same write-once rule. The manual path below doesn't publish a zip, so after a manual release `/mac` answers 404 until CI publishes that version.
-- `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It refuses a manifest unless the installer it names is already uploaded at the stated size and hash.
+- `/mac` redirects to `/PermitMonitor-X.Y.Z-mac-arm64.zip`, the zipped Mac app for the version the manifest names. Both publishers upload the zip before the manifest under the same write-once rule. Manifest promotion requires the matching Mac archive; a Windows-only upload leaves the previous release and its Mac link in place.
+- `/upload/...` takes manual uploads from `scripts/publish-update.mjs` and requires the `UPLOAD_TOKEN` Worker secret. It accepts Windows installers and Mac archives, and refuses a manifest unless the installer it names is already uploaded at the stated size and hash and the matching Mac archive is present with a recorded hash.
 
 Both publication paths follow the same rules (`infra/update-server/src/release-policy.ts`):
 
-- During serialized publication, a versioned installer is written once. Its SHA-256 is recorded as object metadata. Republishing identical bytes is skipped; different bytes under the same version are refused, so a rebuilt release needs a new version. Installers uploaded before hashes were recorded are hashed on a CI rerun and matched by size in the Worker.
+- A versioned installer or Mac archive is created atomically with a storage-enforced `If-None-Match: *` condition, shared across CI and manual publication. Its SHA-256 is recorded as object metadata. Republishing identical bytes is skipped; different bytes under the same version are refused, so a rebuilt release needs a new version. Installers uploaded before hashes were recorded are hashed on a CI rerun and matched by size in the Worker. New manual multipart uploads assemble under unique private `_uploads/` staging keys, validate their size and actual SHA-256, and stream through `FixedLengthStream` into the conditional final write. Validation failures and losing publishers can delete only their staging objects. CI sends `Content-MD5` on its conditional S3 `PutObject` for integrity.
 - The manifest only moves to a newer version. Re-sending the identical manifest is a no-op. A different manifest for the published version is refused. CI leaves a newer published manifest in place with a warning; the manual script stops before uploading.
 - If the published manifest can't be parsed, both paths stop and leave it for a person to replace.
 
-Deploy Worker changes with `npx wrangler deploy` from `infra/update-server`. The Worker is TypeScript and bundles `zod` from the repository's `node_modules`, so run `npm ci --allow-git=all` first. `npm test` covers it with an in-memory bucket.
+Deploy Worker changes with `npx wrangler deploy` from `infra/update-server` before using the updated manual publisher; its multipart sessions now include a private staging key. The Worker is TypeScript and bundles `zod` from the repository's `node_modules`, so run `npm ci --allow-git=all` first. `npm test` covers it with a local bucket. A Linux `publication-tests` job runs the Worker, CI publisher, and manual publisher regression suites on ordinary pull requests and master pushes with install scripts disabled, no staged browser, and no upload credentials. The release job waits for that check too. Configure a bucket lifecycle rule to expire objects and abandoned multipart uploads under `_uploads/` after one day; completed staging objects are deleted by the Worker, while interrupted uploads may remain for a retry or cleanup.
 
 Cloudflare challenges requests from GitHub's runner IPs on both Worker hosts, so the release job uploads straight to the bucket's S3 endpoint with `scripts/publish-feed.mjs` instead of through the Worker.
 
-Release jobs share one concurrency group, so only one publishes at a time. The manifest write also requires the ETag it read (or that no manifest exists), so it refuses a concurrent manual manifest change. Do not run a manual installer upload while a CI release is publishing: R2 multipart completion can still write the same installer key after CI checks it. GitHub cancels an older release job that is still waiting when a newer tag queues; rerun it after the newer one finishes.
+Release jobs share one concurrency group, so only one CI job publishes at a time. Atomic artifact creation also protects concurrent manual/manual and CI/manual publication: identical retries succeed, and different bytes cannot replace the winner. The manifest write requires the ETag it read (or that no manifest exists), so it refuses a concurrent manifest change. Retry a refused manifest publication after inspecting the current feed. GitHub cancels an older release job that is still waiting when a newer tag queues; rerun it after the newer one finishes.
 
 CI inputs:
 
@@ -56,7 +56,7 @@ CI inputs:
 - `UPDATE_SIGNING_PRIVATE_KEY` (Actions secret): Ed25519 PEM private key for release manifests.
 - `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (Actions secrets): an R2 API token with Object Read & Write on the `permitmon-updates` bucket only. Without them the release job skips the feed upload and warns.
 
-To publish by hand (for example, when the R2 secrets are missing), download the run's `windows-installer` artifact into `out/make/squirrel.windows/x64`, then from a network Cloudflare doesn't challenge:
+To publish by hand (for example, when the R2 secrets are missing), download the same run's `windows-installer` artifact into `out/make/squirrel.windows/x64` and its `mac-app` artifact into `out/make` as `PermitMonitor-mac-arm64.zip`, then from a network Cloudflare doesn't challenge. Both scripts refuse a missing or empty local Mac archive before uploading anything:
 
 ```
 UPDATE_INSTALLER_URL=https://permitmon-updates.sc-frederick.workers.dev/PermitMonitorSetup-X.Y.Z.exe \

@@ -13,6 +13,21 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  publication-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - run: npm ci --allow-git=all --ignore-scripts
+      # These tests use local buckets and executables, need no release credentials, and cannot publish.
+      - run: npm test -- tests/publish-feed.test.ts tests/publish-update.test.ts tests/update-server.test.ts
+
   package:
     runs-on: windows-latest
     timeout-minutes: 45
@@ -104,7 +119,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [package, package-mac]
+    needs: [package, package-mac, publication-tests]
     # Pinned so ubuntu-latest's move to 26.04 doesn't change the release image unannounced.
     runs-on: ubuntu-24.04
     timeout-minutes: 30

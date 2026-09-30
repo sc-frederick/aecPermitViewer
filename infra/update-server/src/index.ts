@@ -1,10 +1,14 @@
 // Serves Permit Monitor installers and the signed update manifest from R2, and accepts manual release
 // uploads. The app trusts only the Ed25519 signature on the manifest, so this Worker is a delivery path,
 // not a trust anchor.
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { FeedBucket, FeedObject, FeedRange } from "./bucket.js";
 import { decodeUtf8, jsonText, parseManifest, sha256Hex } from "./manifest.js";
 import { decideInstallerUpload, decideManifestReplacement, type VersionedManifest } from "./release-policy.js";
+
+// Workers provides this global. Keep its runtime surface narrow so the same router can run with a local bucket.
+declare const FixedLengthStream: { new(length: number): TransformStream<Uint8Array, Uint8Array> };
 
 /** Bindings from wrangler.jsonc. `UPLOAD_TOKEN` is a secret; without it every upload is refused. */
 export interface FeedEnv {
@@ -18,7 +22,7 @@ const INSTALLER = /^PermitMonitorSetup-\d+\.\d+\.\d+\.exe$/;
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
 
-// The zipped Mac app. CI writes these straight to R2 (scripts/publish-feed.mjs); the upload path doesn't take them.
+// Both publishers store the Mac build before advancing the common manifest.
 const MAC_ZIP = /^PermitMonitor-\d+\.\d+\.\d+-mac-arm64\.zip$/;
 
 const MANIFEST_MAX_BYTES = 32_768;
@@ -288,22 +292,24 @@ async function authorized(request: Request, env: FeedEnv): Promise<boolean> {
   return difference === 0;
 }
 
-// Manual protocol (scripts/publish-update.mjs): installer parts through an R2 multipart upload (Worker
-// request bodies are capped at 100 MB), then the manifest last. Versioned installers are immutable: an
-// identical retry is reported as already published and different bytes are refused, both when the upload
-// starts and again when it completes.
+// Multipart uploads assemble at unique private staging keys. Only a conditional put may create a public
+// versioned key: R2 multipart completion has no destination precondition and must never publish directly.
 async function upload(request: Request, env: FeedEnv, url: URL, key: string): Promise<Response> {
   if (!(await authorized(request, env))) return text("Unauthorized", 401);
 
   if (key === MANIFEST && request.method === "PUT") return putManifest(request, env);
 
-  if (!INSTALLER.test(key)) return text("Not found", 404);
+  if (!INSTALLER.test(key) && !MAC_ZIP.test(key)) return text("Not found", 404);
   const uploadId = url.searchParams.get("uploadId");
 
   if (request.method === "POST" && !uploadId) return startInstaller(request, env, key);
 
   if (!uploadId) return text("Missing uploadId", 400);
-  const multipart = env.BUCKET.resumeMultipartUpload(key, uploadId);
+  const stagingKey = url.searchParams.get("stagingKey");
+
+  if (!stagingKey || !stagingKey.startsWith(`_uploads/${key}/`) ||
+    !z.uuid().safeParse(stagingKey.slice(`_uploads/${key}/`.length)).success) return text("Bad staging key", 400);
+  const multipart = env.BUCKET.resumeMultipartUpload(stagingKey, uploadId);
 
   if (request.method === "PUT") {
     const partNumber = Number(url.searchParams.get("partNumber"));
@@ -315,10 +321,10 @@ async function upload(request: Request, env: FeedEnv, url: URL, key: string): Pr
     return part._tag === "ok" ? Response.json(part.value) : unavailable(part);
   }
 
-  if (request.method === "POST") return completeInstaller(request, env, key, uploadId);
+  if (request.method === "POST") return completeInstaller(request, env, key, stagingKey, uploadId);
 
   if (request.method === "DELETE") {
-    const aborted = await stored("abort_multipart", key, () => multipart.abort());
+    const aborted = await stored("abort_multipart", stagingKey, () => multipart.abort());
 
     return aborted._tag === "ok" ? new Response(null, { status: 204 }) : unavailable(aborted);
   }
@@ -354,48 +360,112 @@ async function startInstaller(request: Request, env: FeedEnv, key: string): Prom
 
   if (refused) return refused;
 
-  const multipart = await stored("create_multipart", key, () => env.BUCKET.createMultipartUpload(key, {
-    httpMetadata: { contentType: INSTALLER_TYPE },
+  const stagingKey = `_uploads/${key}/${crypto.randomUUID()}`;
+
+  const multipart = await stored("create_multipart", stagingKey, () => env.BUCKET.createMultipartUpload(stagingKey, {
+    httpMetadata: { contentType: artifactContentType(key) },
     customMetadata: { sha256: claim.data.sha256 },
   }));
 
-  return multipart._tag === "ok" ? Response.json({ status: "created", uploadId: multipart.value.uploadId }) : unavailable(multipart);
+  return multipart._tag === "ok" ? Response.json({ status: "created", uploadId: multipart.value.uploadId, stagingKey }) : unavailable(multipart);
 }
 
-async function completeInstaller(request: Request, env: FeedEnv, key: string, uploadId: string): Promise<Response> {
+function artifactContentType(key: string): string {
+  return MAC_ZIP.test(key) ? "application/zip" : INSTALLER_TYPE;
+}
+
+async function completeInstaller(request: Request, env: FeedEnv, key: string, stagingKey: string, uploadId: string): Promise<Response> {
   const read = await readBounded(request, UPLOAD_REQUEST_MAX_BYTES);
 
   if (read._tag !== "ok") return bodyRejection(read);
   const completion = completionText.safeParse(read.text);
 
   if (!completion.success) return text("Malformed completion request", 400);
-  const multipart = env.BUCKET.resumeMultipartUpload(key, uploadId);
+  const multipart = env.BUCKET.resumeMultipartUpload(stagingKey, uploadId);
   // Another upload may have finished since this one started.
   const refused = await installerGuard(env, key, completion.data);
 
   if (refused) {
-    const aborted = await stored("abort_multipart", key, () => multipart.abort());
+    const aborted = await stored("abort_multipart", stagingKey, () => multipart.abort());
 
-    return aborted._tag === "ok" ? refused : unavailable(aborted);
+    return aborted._tag === "ok" ? removeStaging(env, stagingKey, refused) : unavailable(aborted);
   }
 
-  const object = await stored("complete_multipart", key, () => multipart.complete(completion.data.parts));
+  // A retry after completion resumes from the private object instead of completing an expired multipart ID.
+  const staged = await stored("head", stagingKey, () => env.BUCKET.head(stagingKey));
+
+  if (staged._tag !== "ok") return unavailable(staged);
+  const object = staged.value ? staged : await stored("complete_multipart", stagingKey, () => multipart.complete(completion.data.parts));
 
   if (object._tag !== "ok") return unavailable(object);
-  // The hash recorded when the upload started; absent only if R2 dropped the metadata, leaving size as the check.
+
+  if (!object.value) return text("Staged upload disappeared; start another upload", 409);
   const recorded = recordedSha256(object.value);
 
-  if (object.value.size === completion.data.size && (recorded === null || recorded === completion.data.sha256)) {
-    return Response.json({ status: "published", size: object.value.size });
+  if (object.value.size !== completion.data.size || recorded !== completion.data.sha256) {
+    return removeStaging(env, stagingKey, text("Completed artifact does not match its declared size and SHA-256", 409));
   }
 
-  // The assembled object doesn't match what this upload declared. Nothing was stored under the key before it, so
-  // removing it lets a corrected retry proceed.
-  const removed = await stored("delete", key, () => env.BUCKET.delete(key));
+  const digest = await stored("get", stagingKey, async () => {
+    const source = await env.BUCKET.get(stagingKey);
 
-  if (removed._tag !== "ok") return unavailable(removed);
+    if (!source) return null;
+    const hash = createHash("sha256");
+    const reader = source.body.getReader();
 
-  return text(`Completed installer does not match the declared ${completion.data.size} bytes and SHA-256`, 409);
+    try {
+      for (;;) {
+        const next = await reader.read();
+
+        if (next.done) break;
+        hash.update(next.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return hash.digest("hex");
+  });
+
+  if (digest._tag !== "ok") return unavailable(digest);
+
+  if (digest.value !== completion.data.sha256) return removeStaging(env, stagingKey, text("Completed artifact SHA-256 does not match its bytes", 409));
+  const source = await stored("get", stagingKey, () => env.BUCKET.get(stagingKey));
+
+  if (source._tag !== "ok") return unavailable(source);
+
+  if (!source.value) return text("Staged upload disappeared; start another upload", 409);
+  // R2 get streams do not always retain their known length. FixedLengthStream keeps this copy bounded and
+  // gives R2 put an exact byte count. Abort the producer if a precondition rejects without consuming it.
+  const stream = new FixedLengthStream(completion.data.size);
+  const controller = new AbortController();
+  const transfer = source.value.body.pipeTo(stream.writable, { signal: controller.signal }).then(() => undefined, () => undefined);
+
+  const put = await stored("put", key, () => env.BUCKET.put(key, stream.readable, {
+    httpMetadata: { contentType: artifactContentType(key) },
+    customMetadata: { sha256: completion.data.sha256 },
+    sha256: completion.data.sha256,
+    onlyIf: new Headers({ "if-none-match": "*" }),
+  }));
+
+  controller.abort();
+  // A pending transform write may be waiting for a reader that storage never acquired. Cancelling the
+  // readable releases that backpressure as well as aborting the source; either operation alone can hang.
+  await stream.readable.cancel().catch(() => undefined);
+  await transfer;
+
+  if (put._tag !== "ok") return unavailable(put);
+
+  const result = put.value ? Response.json({ status: "published", size: put.value.size })
+    : await installerGuard(env, key, completion.data) ?? text("Artifact publication changed; retry", 409);
+
+  return removeStaging(env, stagingKey, result);
+}
+
+async function removeStaging(env: FeedEnv, stagingKey: string, response: Response): Promise<Response> {
+  const removed = await stored("delete", stagingKey, () => env.BUCKET.delete(stagingKey));
+
+  return removed._tag === "ok" ? response : unavailable(removed);
 }
 
 // Refuse a manifest whose installer isn't already in place with the advertised size and hash, so clients
@@ -418,6 +488,15 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
   // Installers stored before hashes were recorded are matched by size alone.
   if (!installer.value || installer.value.size !== payload.size || (recorded !== null && recorded !== payload.sha256)) {
     return text("Manifest does not match a published installer", 409);
+  }
+
+  const macKey = `PermitMonitor-${payload.version.text}-mac-arm64.zip`;
+  const mac = await stored("head", macKey, () => env.BUCKET.head(macKey));
+
+  if (mac._tag !== "ok") return unavailable(mac);
+
+  if (!mac.value || mac.value.size === 0 || recordedSha256(mac.value) === null) {
+    return text("The matching Mac archive must be published before the manifest", 409);
   }
 
   const current = await publishedManifest(env);

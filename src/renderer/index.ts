@@ -25,6 +25,8 @@ let detailsPermitId: string | null = null;
 
 let historyGeneration = 0;
 
+let loadedHistory: PermitHistory | null = null;
+
 /** The check state the displayed history reflects, so snapshots about other permits don't refetch it. */
 let historyShown: string | null = null;
 
@@ -880,6 +882,15 @@ function renderHistory(history: PermitHistory): void {
 
   if (items.length === 0) list.replaceChildren(make("li", "timeline-empty", "No checks yet."));
   else list.replaceChildren(...items);
+
+  if (history.nextBefore) {
+    const item = make("li");
+    const more = make("button", "link-button", "Load older history");
+    more.type = "button";
+    more.dataset.historyMore = history.nextBefore;
+    item.append(more);
+    list.append(item);
+  }
 }
 
 /** Says the history read failed, which an empty list would misreport as a permit never checked, and offers to ask again. */
@@ -904,7 +915,7 @@ function historyKey(permit: PermitRow): string {
  * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped. A failed read is
  * shown in the history list with a retry, never as an empty history. Never rejects.
  */
-async function loadHistory(permit: PermitRow): Promise<void> {
+async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   const key = historyKey(permit);
 
   if (key === historyLoading) return;
@@ -912,7 +923,7 @@ async function loadHistory(permit: PermitRow): Promise<void> {
   historyLoading = key;
 
   // A rejected call never got an answer from main. It is shown like a failure main reported, so it can be retried.
-  const result = await api.history(permit.id)
+  const result = await api.history(permit.id, before)
     .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: "The app didn't answer." }));
 
   if (generation !== historyGeneration) return;
@@ -921,10 +932,17 @@ async function loadHistory(permit: PermitRow): Promise<void> {
   if (detailsPermitId !== permit.id) return;
 
   if (result.ok) {
-    renderHistory(result.value);
+    loadedHistory = before && loadedHistory
+      ? { runs: [...loadedHistory.runs, ...result.value.runs], observations: [...loadedHistory.observations, ...result.value.observations],
+        nextBefore: result.value.nextBefore ?? null }
+      : result.value;
+    renderHistory(loadedHistory);
     historyShown = key;
     historyFailed = null;
+  } else if (before) {
+    notice(result.error);
   } else {
+    loadedHistory = null;
     renderHistoryFailure(result.error);
     historyShown = null;
     historyFailed = key;
@@ -1462,7 +1480,10 @@ element("history-list", HTMLOListElement).addEventListener("click", (event) => {
   const retry = eventButton(event, "button[data-history-retry]");
   const permit = currentSnapshot?.permits.find((entry) => entry.id === detailsPermitId);
 
+  const more = eventButton(event, "button[data-history-more]");
+
   if (retry && permit) void busy(retry, () => loadHistory(permit));
+  else if (more?.dataset.historyMore && permit) void busy(more, () => loadHistory(permit, more.dataset.historyMore));
 });
 
 element("history-list", HTMLOListElement).addEventListener("click", async (event) => {
