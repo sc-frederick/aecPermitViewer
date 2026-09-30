@@ -40,9 +40,11 @@ export interface FeedMultipartUpload {
   abort(): Promise<void>;
 }
 
-/** Options for a text object write. `onlyIf` matches an etag or requires that the key is still absent. */
+/** Options for a conditional object write; artifact checksums are verified by storage before publication. */
 export interface FeedPutOptions {
   readonly httpMetadata: { readonly contentType: string };
+  readonly customMetadata?: { readonly sha256: string };
+  readonly sha256?: string;
   readonly onlyIf?: { readonly etagMatches: string } | Headers;
 }
 
@@ -57,7 +59,7 @@ export interface FeedBucket {
   head(key: string): Promise<FeedObject | null>;
   get(key: string, options?: { readonly range: FeedRange }): Promise<FeedObjectBody | null>;
   /** Resolves null when an `onlyIf` precondition fails. */
-  put(key: string, value: string, options: FeedPutOptions): Promise<FeedObject | null>;
+  put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions): Promise<FeedObject | null>;
   delete(key: string): Promise<void>;
   createMultipartUpload(key: string, options: FeedMultipartOptions): Promise<FeedMultipartUpload>;
   resumeMultipartUpload(key: string, uploadId: string): FeedMultipartUpload;

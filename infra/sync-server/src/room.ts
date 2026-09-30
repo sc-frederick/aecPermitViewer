@@ -80,6 +80,11 @@ export class ShareRoom {
     return { revision: parsed.revision, publishedAt: parsed.published_at };
   }
 
+  /** Whether ciphertext already exists, without reading its body or creating any table or alarm. */
+  exists(): boolean {
+    return this.latest() !== null;
+  }
+
   /** Replaces the stored list and pushes its deletion date back, unless the last publication was too recent. */
   async publish(body: ArrayBuffer, now: number): Promise<PublishResult> {
     const latest = this.latest();

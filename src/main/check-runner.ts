@@ -62,6 +62,11 @@ const DEADLINE_MS = 180_000;
 /** More offered steps than this means the page isn't one the worker understands. */
 const MAX_CANDIDATES = 30;
 
+/** A repeated established step gets four local observations (3.2 seconds) before declaring no progress. */
+const MAX_SETTLE_OBSERVATIONS = 4;
+
+const SETTLE_DELAY_MS = 800;
+
 /** Variables the browser worker needs on Windows. The key and the rest of the app's environment stay out. */
 const WORKER_ENVIRONMENT = ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"] as const;
 
@@ -119,7 +124,9 @@ export function runCheck(input: {
     let browserVersion: string | null = null;
     let decisionPending = false;
     let forceKillTimer: NodeJS.Timeout | null = null;
+    let settleTimer: NodeJS.Timeout | null = null;
     const repeated = new Map<string, number>();
+    const settleAttempts = new Map<string, number>();
     let client: TypeSafeClient | null = null;
     const environment = workerEnvironment(input.browserPath);
     environment.TEMP = cachePath;
@@ -142,6 +149,8 @@ export function runCheck(input: {
       done = true;
       controller.abort();
       clearTimeout(timer);
+
+      if (settleTimer) clearTimeout(settleTimer);
 
       if (!exited) {
         try { worker.send({ kind: "cancel", runId: input.runId }); } catch { /* already exited */ }
@@ -180,6 +189,15 @@ export function runCheck(input: {
       }
     };
 
+    const reobserveAfterSettling = () => {
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+
+        if (!done) sendOrFail({ kind: "reobserve", runId: input.runId });
+      }, SETTLE_DELAY_MS);
+      settleTimer.unref();
+    };
+
     worker.onMessage((message) => {
       void handleMessage(message).catch(failLocally);
     });
@@ -187,11 +205,19 @@ export function runCheck(input: {
     async function handleMessage(message: WorkerToMain): Promise<void> {
       if (done || message.runId !== input.runId) return;
 
+      if (Date.now() >= deadline) {
+        finish({ outcome: "timeout" });
+
+        return;
+      }
+
       switch (message.kind) {
         case "action_count":
           actionCount = message.count;
 
-          if (actionCount >= MAX_ACTIONS) finish({ outcome: "timeout" });
+          // The last permitted action still gets to report its verified result. The observation handler refuses
+          // another choice at the limit; an impossible count above it ends immediately.
+          if (actionCount > MAX_ACTIONS) finish({ outcome: "timeout" });
 
           return;
         case "failed":
@@ -229,22 +255,40 @@ export function runCheck(input: {
 
           const observation = message.observation;
 
+          if (settleTimer) {
+            clearTimeout(settleTimer);
+            settleTimer = null;
+          }
+
           if (observation.candidates.length === 0 || observation.candidates.length > MAX_CANDIDATES) {
             finish({ outcome: "unsupported_page" });
 
             return;
           }
 
-          decisionPending = true;
           const [only] = observation.candidates;
 
-          const settled = only && observation.candidates.length === 1 && only.established &&
-            !repeated.has(`${observation.fingerprint}:${only.id}`);
+          const established = only && observation.candidates.length === 1 && only.established;
+          const establishedPair = only ? `${observation.fingerprint}:${only.id}` : "";
+
+          if (established && repeated.has(establishedPair)) {
+            const attempts = settleAttempts.get(establishedPair) ?? 0;
+
+            if (attempts >= MAX_SETTLE_OBSERVATIONS) finish({ outcome: "unsupported_page" });
+            else {
+              settleAttempts.set(establishedPair, attempts + 1);
+              reobserveAfterSettling();
+            }
+
+            return;
+          }
+
+          decisionPending = true;
 
           // A lone step the worker's own checks established needs no model call. The worker still revalidates the
-          // page before acting, and the repeat and action limits below still apply. If the page hasn't moved since
-          // that step, Jev decides instead, so a slow page can still get WAIT.
-          const decision: NavigationDecision = settled
+          // page before acting. Repeated established steps settle locally above: a model cannot authorize an action
+          // that loop protection would reject. Jev is reserved for genuinely unresolved choices.
+          const decision: NavigationDecision = established
             ? { _tag: "chosen", candidateId: only.id, attempts: 0, actualModel: null }
             : await chooseNavigation({
               client: client ??= navigationClient(input.key),
@@ -294,9 +338,7 @@ export function runCheck(input: {
           }
 
           if (decision._tag === "wait") {
-            setTimeout(() => {
-              if (!done) sendOrFail({ kind: "reobserve", runId: input.runId });
-            }, 800).unref();
+            reobserveAfterSettling();
 
             return;
           }

@@ -2,11 +2,18 @@ import { randomBytes } from "node:crypto";
 import type { BridgeResult, ShareState } from "../shared/bridge.js";
 import type { ObservationRow, PermitHistory, PermitRow } from "../shared/permit.js";
 import { CONTENT_KEY_BYTES, formatShareCode, fromBase64Url, parseShareCode, readTokenFor, toBase64Url, WRITE_KEY_BYTES, type ShareCode } from "../shared/share-protocol.js";
-import { buildSharedList, type SharedList } from "./share-list.js";
+import { buildSharedListAsync, SHARED_HISTORY_DAYS, type SharedList } from "./share-list.js";
 import type { ShareService } from "./share-service.js";
 import { cachedListSchema, probeShare, ShareFollower, SharePublisher, type CachedList } from "./share-sync.js";
 import type { PermitStore } from "./store.js";
 import { formatCheckTime } from "../shared/schedule.js";
+
+/** Checks or edits kept changing the list while its history was read; the publisher retries after it settles. */
+class SharedListChanged extends Error {
+  readonly _tag = "SharedListChanged" as const;
+
+  constructor() { super("The shared list changed during its history read"); }
+}
 
 /** Settings rows. The keys sit beside the permit data they protect, which the same database already holds in the clear. */
 const SETTINGS = {
@@ -278,8 +285,7 @@ export class Sharing {
     if (!code || !contentKey) return null;
 
     const publisher = new SharePublisher(service, writeKey, contentKey,
-      () => buildSharedList(this.store.listPermits(), (id) => this.store.history(id),
-        this.store.getMonitoring() === "scheduled" ? this.store.getCheckTimes().map(formatCheckTime) : null),
+      () => this.buildList(),
       () => this.host.checking(), () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
 
     this.publishing = { writeKey, code, publisher };
@@ -287,6 +293,20 @@ export class Sharing {
     publisher.notify();
 
     return publisher;
+  }
+
+  /** A mutation during yielding invalidates the snapshot; a retry observes one consistent store revision. */
+  private async buildList(): Promise<string> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const version = this.store.changeCount();
+
+      const list = await buildSharedListAsync(this.store.listPermits(), (id) => this.store.dailyHistory(id, SHARED_HISTORY_DAYS),
+        this.store.getMonitoring() === "scheduled" ? this.store.getCheckTimes().map(formatCheckTime) : null);
+
+      if (this.store.changeCount() === version) return list;
+    }
+
+    throw new SharedListChanged();
   }
 
   /** Follows a code, showing `cached` until a fetch brings a newer list. The caller starts its fetches. */

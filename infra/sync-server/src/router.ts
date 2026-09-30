@@ -2,10 +2,13 @@
 // of request logs. Publishing and deleting take the write key; fetching takes the read token. Both lead to the same room
 // because the room is named from the read token, which the Worker derives from the write key.
 import { readTokenFor, roomNameFor, SHARE_BODY_MAX_BYTES } from "../../../src/shared/share-protocol.js";
+import type { AdmissionApi, AdmissionDenied } from "./admission.js";
 import type { PublishResult, ReadResult } from "./room.js";
 
 /** A room as the router reaches it: a Durable Object stub in production, a ShareRoom in tests. */
 export interface RoomApi {
+  /** Probes an existing legacy share without allocating persistent storage or reading ciphertext. */
+  exists(): Promise<boolean>;
   publish(body: ArrayBuffer): Promise<PublishResult>;
   read(knownRevision: number | null): Promise<ReadResult>;
   remove(): Promise<void>;
@@ -14,6 +17,7 @@ export interface RoomApi {
 /** The room with this name. The same name always reaches the same room. */
 export type RoomDirectory = (name: string) => RoomApi;
 
+/** The protocol endpoint shared by clients and the Worker. */
 export const LIST_PATH = "/v1/list";
 
 /** AES-GCM output is at least a 12-byte nonce and a 16-byte tag. */
@@ -116,20 +120,75 @@ async function writerRoom(request: Request): Promise<string | null> {
   return token ? roomNameFor(token) : null;
 }
 
-async function publishList(request: Request, rooms: RoomDirectory): Promise<Response> {
+/** CF-Connecting-IP is supplied by the edge. Missing/invalid addresses share one fail-closed bucket in local dev. */
+async function sourceFor(request: Request): Promise<string> {
+  const address = request.headers.get("cf-connecting-ip") ?? "";
+  let source = "unknown-source";
+
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address) && address.split(".").every((part) => Number(part) <= 255)) {
+    source = address.split(".").map((part) => String(Number(part))).join(".");
+  } else if (/^[a-fA-F0-9:]+$/.test(address)) {
+    try {
+      const canonical = new URL(`http://[${address}]`).hostname.slice(1, -1);
+      const [left = "", right = ""] = canonical.split("::");
+      const start = left ? left.split(":") : [];
+      const end = right ? right.split(":") : [];
+      const groups = canonical.includes("::") ? [...start, ...Array<string>(8 - start.length - end.length).fill("0"), ...end] : start;
+      // IPv6 privacy addresses from one network consume the same quota.
+      source = `${groups.slice(0, 4).map((group) => group.padStart(4, "0")).join(":")}/64`;
+    } catch {
+      // Invalid inputs retain the shared unknown-source bucket.
+    }
+  }
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`permitmon-share-source\0${source}`));
+
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function admissionResponse(result: AdmissionDenied): Response {
+  console.warn(JSON.stringify({ event: "share_admission_denied", reason: result.reason, retryAfterSeconds: result.retryAfterSeconds }));
+
+  return text("Sharing is temporarily limited; retry shortly", 429, { "retry-after": String(result.retryAfterSeconds) });
+}
+
+async function publishList(request: Request, rooms: RoomDirectory, admission: AdmissionApi): Promise<Response> {
   const name = await writerRoom(request);
 
   if (!name) return text("Missing or malformed write key", 401);
-  const body = await readBounded(request, SHARE_BODY_MAX_BYTES);
-
-  if (body._tag === "too_large") return text(`Lists are limited to ${SHARE_BODY_MAX_BYTES} bytes`, 413);
-
-  if (body._tag === "malformed" || body.bytes.byteLength < MIN_BODY_BYTES) return text("Malformed list", 400);
 
   return inRoom("publish", async () => {
+    const source = await sourceFor(request);
+    const checked = await admission.check(name, source);
+
+    // Request-rate and metadata limits reject before reaching even an empty room or reading the body. Creation-only
+    // limits allow a storage-free existence probe, so shares from before this admission policy still update at cap.
+    if (checked._tag === "denied" && (checked.reason === "source_writes" || checked.reason === "tracked_sources")) return admissionResponse(checked);
+    let legacy = false;
+
+    if (checked._tag === "denied") {
+      legacy = await rooms(name).exists();
+
+      if (!legacy) return admissionResponse(checked);
+    }
+
+    const body = await readBounded(request, SHARE_BODY_MAX_BYTES);
+
+    if (body._tag === "too_large") return text(`Lists are limited to ${SHARE_BODY_MAX_BYTES} bytes`, 413);
+
+    if (body._tag === "malformed" || body.bytes.byteLength < MIN_BODY_BYTES) return text("Malformed list", 400);
+
+    if (checked._tag === "allowed" && !checked.registered) legacy = await rooms(name).exists();
+
+    if (!legacy && checked._tag === "allowed" && !checked.registered) {
+      const registered = await admission.register(name, source);
+
+      if (registered._tag === "denied") return admissionResponse(registered);
+    }
+
     const result = await rooms(name).publish(body.bytes);
 
-    if (result._tag === "too_soon") return text("Published too recently", 429, { "retry-after": String(result.retryAfterSeconds) });
+    if (result._tag === "too_soon") return text("Published too recently", 429, { "retry-after": String(Math.max(1, Math.min(3600, result.retryAfterSeconds))) });
 
     return new Response(JSON.stringify({ revision: result.revision, publishedAt: result.publishedAt }), {
       status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -150,12 +209,12 @@ async function deleteList(request: Request, rooms: RoomDirectory): Promise<Respo
 }
 
 /** Answers one request. Client mistakes and storage failures become responses, not rejections. */
-export async function route(request: Request, rooms: RoomDirectory): Promise<Response> {
+export async function route(request: Request, rooms: RoomDirectory, admission: AdmissionApi): Promise<Response> {
   if (new URL(request.url).pathname !== LIST_PATH) return text("Not found", 404);
 
   switch (request.method) {
     case "GET": return fetchList(request, rooms);
-    case "PUT": return publishList(request, rooms);
+    case "PUT": return publishList(request, rooms, admission);
     case "DELETE": return deleteList(request, rooms);
     default: return text("Method not allowed", 405, { allow: "GET, PUT, DELETE" });
   }

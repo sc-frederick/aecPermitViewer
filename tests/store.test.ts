@@ -481,3 +481,82 @@ describe("lookups", () => {
     }
   });
 });
+
+describe("schedule edits", () => {
+  it("moves ordinary future deadlines both directions and preserves overdue catch-up", () => {
+    const store = newStore();
+
+    try {
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
+      const overdue = addPermit(store, "HC-BLD-26-0087600");
+      const now = new Date(2026, 8, 29, 10);
+      withDatabase((db) => {
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 12, 30).toISOString(), permitId);
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 8, 30).toISOString(), overdue);
+      });
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 14, minute: 0 }, { hour: 17, minute: 0 }], now);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 14).toISOString());
+      expect(store.duePermitIds(new Date(2026, 8, 29, 12, 30).toISOString())).toEqual([overdue]);
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 11, minute: 0 }], now);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 11).toISOString());
+      expect(store.duePermitIds(new Date(2026, 8, 29, 11).toISOString())).toContain(permitId);
+      expect(store.getPermit(overdue)?.nextDueAt).toBe(new Date(2026, 8, 29, 8, 30).toISOString());
+    } finally { store.close(); }
+  });
+
+  it("keeps a transient retry anchored to its completion and caps it at an earlier new slot", () => {
+    const store = newStore();
+
+    try {
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
+      const runId = store.startRun({ permitId, ...RUN });
+      store.finishRun({ runId, permitId, outcome: "api_unavailable", actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null });
+      withDatabase((db) => {
+        db.prepare("UPDATE check_runs SET finished_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 9, 30).toISOString(), runId);
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 10, 30).toISOString(), permitId);
+      });
+      const now = new Date(2026, 8, 29, 10);
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 14, minute: 0 }], now);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 10, 30).toISOString());
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 10, minute: 15 }], now);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 10, 15).toISOString());
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 14, minute: 0 }], now);
+      store.deferDue(permitId, new Date(2026, 8, 29, 14));
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 15, minute: 0 }], now);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 15).toISOString());
+    } finally { store.close(); }
+  });
+
+  it("rolls a removed late slot to tomorrow while preserving the midnight catch-up", () => {
+    const store = newStore();
+
+    try {
+      const future = addPermit(store, "HC-BLD-26-0087599");
+      const overdue = addPermit(store, "HC-BLD-26-0087600");
+      withDatabase((db) => {
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 23, 50).toISOString(), future);
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(new Date(2026, 8, 29, 23, 0).toISOString(), overdue);
+      });
+      store.setCheckTimes([{ hour: 8, minute: 30 }, { hour: 23, minute: 40 }], new Date(2026, 8, 29, 23, 45));
+      expect(store.getPermit(future)?.nextDueAt).toBe(new Date(2026, 8, 30, 8, 30).toISOString());
+      expect(store.duePermitIds(new Date(2026, 8, 30, 0, 5).toISOString())).toEqual([overdue]);
+    } finally { store.close(); }
+  });
+
+  it("rolls back both times and deadlines if a deadline write fails", () => {
+    const store = newStore();
+
+    try {
+      const permitId = addPermit(store, "HC-BLD-26-0087599");
+      const due = new Date(2026, 8, 29, 12, 30).toISOString();
+      withDatabase((db) => {
+        db.prepare("UPDATE permits SET next_due_at = ? WHERE id = ?").run(due, permitId);
+        db.exec("CREATE TRIGGER fail_schedule BEFORE UPDATE OF next_due_at ON permits BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+      });
+      const before = store.getCheckTimes();
+      expect(() => store.setCheckTimes([{ hour: 14, minute: 0 }], new Date(2026, 8, 29, 10))).toThrow();
+      expect(store.getCheckTimes()).toEqual(before);
+      expect(store.getPermit(permitId)?.nextDueAt).toBe(due);
+    } finally { store.close(); }
+  });
+});

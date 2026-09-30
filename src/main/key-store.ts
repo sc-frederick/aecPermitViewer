@@ -1,18 +1,13 @@
-import { app, safeStorage } from "electron";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { StoredKeyState } from "../shared/bridge.js";
 
-/**
- * Development runs (never a packaged build) may supply the key through TYPESAFE_API_KEY so the
- * app can be driven on machines without Windows or macOS key storage. It is read once here in main and is
- * never written to disk, logs, the renderer, or the worker.
- */
-function developmentKey(): string | null {
-  if (app.isPackaged) return null;
-  const value = process.env.TYPESAFE_API_KEY?.trim();
-
-  return value ? value : null;
+/** Encryption owned by the desktop platform; tests use the same port with synthetic keys. */
+export interface KeyEncryption {
+  available: () => Promise<boolean>;
+  encrypt: (key: string) => Promise<Buffer>;
+  decrypt: (encrypted: Buffer) => Promise<{ result: string; shouldReEncrypt: boolean }>;
 }
 
 /** This computer can't encrypt a key for the current user, so nothing was saved. */
@@ -42,15 +37,14 @@ export type KeySave = { _tag: "saved" } | { _tag: "failed"; error: KeyStorageUna
  */
 export class KeyStore {
   private readonly secretPath: string;
-  private readonly devKey = developmentKey();
+  private mutations: Promise<void> = Promise.resolve();
   /** True when the last read of the saved key failed and no key has been saved or removed since. */
   private lastReadFailed = false;
   /** Counts saves and removals, so a read that finishes after one doesn't judge the new file by the old one. */
   private generation = 0;
 
-  constructor(dataRoot: string) {
+  constructor(dataRoot: string, private readonly encryption: KeyEncryption, private readonly devKey: string | null = null) {
     this.secretPath = path.join(dataRoot, "secrets", "typesafe-key.bin");
-    delete process.env.TYPESAFE_API_KEY;
   }
 
   /**
@@ -60,7 +54,7 @@ export class KeyStore {
   async state(): Promise<StoredKeyState> {
     if (this.devKey) return "configured";
 
-    if (!(await this.encryptionAvailable())) return "unavailable";
+    if (!(await this.encryption.available())) return "unavailable";
 
     try {
       await access(this.secretPath);
@@ -73,25 +67,30 @@ export class KeyStore {
 
   /** Encrypts the key for this user. The plaintext is never returned or persisted. */
   async save(key: string): Promise<KeySave> {
-    if (!(await this.encryptionAvailable())) return { _tag: "failed", error: new KeyStorageUnavailable() };
-
-    try {
-      await this.writeEncrypted(await safeStorage.encryptStringAsync(key));
-    } catch (cause) {
-      return { _tag: "failed", error: new KeyWriteFailed(cause) };
-    }
-
     this.generation += 1;
-    this.lastReadFailed = false;
 
-    return { _tag: "saved" };
+    return this.mutate(async () => {
+      if (!(await this.encryption.available())) return { _tag: "failed", error: new KeyStorageUnavailable() };
+
+      try {
+        await this.writeEncrypted(await this.encryption.encrypt(key));
+      } catch (cause) {
+        return { _tag: "failed", error: new KeyWriteFailed(cause) };
+      }
+
+      this.lastReadFailed = false;
+
+      return { _tag: "saved" };
+    });
   }
 
-  /** Deletes the saved key, if there is one. Rejects when the file exists but can't be deleted. */
+  /** Deletes the saved key after earlier mutations finish. */
   async remove(): Promise<void> {
-    await rm(this.secretPath, { force: true });
     this.generation += 1;
-    this.lastReadFailed = false;
+    await this.mutate(async () => {
+      await rm(this.secretPath, { force: true });
+      this.lastReadFailed = false;
+    });
   }
 
   /**
@@ -101,44 +100,65 @@ export class KeyStore {
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
 
-    if (!(await this.encryptionAvailable())) return null;
-    const generation = this.generation;
+    if (!(await this.encryption.available())) return null;
 
-    try {
-      const key = await this.readSaved();
+    for (;;) {
+      const generation = this.generation;
+      await this.mutations;
 
-      if (generation === this.generation) this.lastReadFailed = false;
+      try {
+        const key = await this.readSaved(generation);
 
-      return key;
-    } catch (cause) {
-      if (generation === this.generation) this.lastReadFailed = true;
-      throw cause;
+        if (generation !== this.generation) continue;
+        this.lastReadFailed = false;
+
+        return key;
+      } catch (cause) {
+        if (generation !== this.generation) continue;
+        this.lastReadFailed = true;
+        throw cause;
+      }
     }
   }
 
-  private async readSaved(): Promise<string | null> {
+  private async readSaved(generation: number): Promise<string | null> {
     const encrypted = await readFile(this.secretPath).catch((cause) => {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return null;
       throw cause;
     });
 
     if (!encrypted) return null;
-    const decrypted = await safeStorage.decryptStringAsync(encrypted);
+    const decrypted = await this.encryption.decrypt(encrypted);
 
-    if (decrypted.shouldReEncrypt) await this.writeEncrypted(await safeStorage.encryptStringAsync(decrypted.result));
+    if (decrypted.shouldReEncrypt && generation === this.generation) {
+      await this.mutate(async () => {
+        if (generation !== this.generation) return;
+        const migrated = await this.encryption.encrypt(decrypted.result);
+
+        if (generation === this.generation) await this.writeEncrypted(migrated);
+      });
+    }
 
     return decrypted.result;
   }
 
-  private async encryptionAvailable(): Promise<boolean> {
-    // Linux falls back to a hard-coded password when no keyring is running, so only these two count.
-    return (process.platform === "win32" || process.platform === "darwin") && await safeStorage.isAsyncEncryptionAvailable();
+  /** Serializes every disk mutation, including migration; rejected work cannot poison the next operation. */
+  private mutate<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.mutations.then(work);
+    this.mutations = result.then(() => undefined, () => undefined);
+
+    return result;
   }
 
   private async writeEncrypted(encrypted: Buffer): Promise<void> {
     await mkdir(path.dirname(this.secretPath), { recursive: true });
-    const temporaryPath = `${this.secretPath}.tmp`;
-    await writeFile(temporaryPath, encrypted, { mode: 0o600 });
-    await rename(temporaryPath, this.secretPath);
+    const temporaryPath = `${this.secretPath}.${randomUUID()}.tmp`;
+
+    try {
+      await writeFile(temporaryPath, encrypted, { mode: 0o600, flag: "wx" });
+      await rename(temporaryPath, this.secretPath);
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
   }
 }

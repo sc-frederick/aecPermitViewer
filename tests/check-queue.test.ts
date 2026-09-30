@@ -29,6 +29,7 @@ function gate(): Gate {
 /** A queue wired to in-memory answers; each started check waits until the test finishes it. */
 function harness(scopes: Record<string, string>) {
   const started: string[] = [];
+  const startedKeys: string[] = [];
   const running = new Map<string, (outcome: RunOutcome) => void>();
   const deferred: string[] = [];
   const keyNotices: Array<[KeyProblem, boolean]> = [];
@@ -38,14 +39,16 @@ function harness(scopes: Record<string, string>) {
     scopeOf: (permitId) => scopes[permitId] ?? null,
     scheduledEligible: () => state.eligible,
     readKey: async () => {
+      const key = state.key;
       await state.keyRead;
 
-      if (state.key === "unreadable") throw new Error("decryption failed");
+      if (key === "unreadable") throw new Error("decryption failed");
 
-      return state.key;
+      return key;
     },
-    start: (permitId): StartedCheck => {
+    start: (permitId, key): StartedCheck => {
       started.push(permitId);
+      startedKeys.push(`${permitId}:${key}`);
       let finish: (outcome: RunOutcome) => void = () => undefined;
       const finished = new Promise<RunOutcome>((resolve) => { finish = resolve; });
       running.set(permitId, finish);
@@ -65,7 +68,7 @@ function harness(scopes: Record<string, string>) {
     await vi.advanceTimersByTimeAsync(0);
   }
 
-  return { queue, started, deferred, keyNotices, state, finish };
+  return { queue, started, startedKeys, deferred, keyNotices, state, finish };
 }
 
 beforeEach(() => {
@@ -286,6 +289,94 @@ describe("scheduled eligibility", () => {
 });
 
 describe("keys", () => {
+  it("restarts a requested check with the new key after replacement during the starter's prerequisite", async () => {
+    const browser = gate();
+    const entered: string[] = [];
+    const recorded: string[] = [];
+    let key = "old";
+
+    const queue = new CheckQueue({
+      scopeOf: () => "accela", scheduledEligible: () => true, readKey: async () => key,
+      start: (id, credential, stillWanted) => {
+        entered.push(`${id}:${credential}`);
+
+        return { finished: browser.promise.then(() => {
+          if (!stillWanted()) return null;
+          recorded.push(`${id}:${credential}`);
+
+          return "success" as const;
+        }), cancel: () => undefined };
+      },
+      defer: () => undefined, keyUnavailable: () => undefined, saveFailed: () => undefined, changed: () => undefined,
+    });
+
+    queue.enqueue("a", "manual");
+    await vi.advanceTimersByTimeAsync(0);
+    key = "new";
+    queue.resume();
+    queue.enqueue("a", "manual");
+    browser.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entered).toEqual(["a:old", "a:new"]);
+    expect(recorded).toEqual(["a:new"]);
+    expect(queue.checkingIds()).toEqual(new Set());
+    await queue.stop();
+  });
+
+  it("ignores an old-key rejection and retains pending new-key work with portal spacing", async () => {
+    const { queue, startedKeys, keyNotices, state, finish } = harness({ a1: "accela", a2: "accela" });
+    state.key = "old";
+    queue.enqueue("a1", "scheduled");
+    await vi.advanceTimersByTimeAsync(0);
+    state.key = "new";
+    queue.resume();
+    queue.enqueue("a2", "scheduled");
+    await finish("a1", "authentication_error");
+    expect(queue.keyPaused).toBe(false);
+    expect(keyNotices).toEqual([]);
+    expect(queue.checkingIds()).toEqual(new Set(["a2"]));
+    await vi.advanceTimersByTimeAsync(SCOPE_SPACING_MS - 1);
+    expect(startedKeys).toEqual(["a1:old"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(startedKeys).toEqual(["a1:old", "a2:new"]);
+    await finish("a2", "authentication_error");
+    expect(queue.keyPaused).toBe(true);
+    expect(keyNotices).toEqual([["rejected", false]]);
+    queue.enqueue("a2", "scheduled");
+    expect(queue.checkingIds()).toEqual(new Set());
+  });
+
+  it("rereads a key replaced during a delayed read instead of starting the stale key", async () => {
+    const { queue, startedKeys, state, finish } = harness({ a1: "accela" });
+    const wait = gate();
+    state.key = "old";
+    state.keyRead = wait.promise;
+    queue.enqueue("a1", "scheduled");
+    await vi.advanceTimersByTimeAsync(0);
+    state.key = "new";
+    queue.resume();
+    wait.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startedKeys).toEqual(["a1:new"]);
+    await finish("a1");
+  });
+
+  it("does not pause on an obsolete missing-key answer after replacement", async () => {
+    const { queue, startedKeys, keyNotices, state, finish } = harness({ a1: "accela" });
+    const wait = gate();
+    state.key = null;
+    state.keyRead = wait.promise;
+    queue.enqueue("a1", "scheduled");
+    await vi.advanceTimersByTimeAsync(0);
+    state.key = "new";
+    queue.resume();
+    wait.open();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startedKeys).toEqual(["a1:new"]);
+    expect(keyNotices).toEqual([]);
+    await finish("a1");
+  });
+
   it("drops work without recording failures while no key is saved, tells someone who asks, and resumes once one reads", async () => {
     const { queue, started, keyNotices, state } = harness({ a1: "accela", h1: "tyler", s1: "click2gov" });
     state.key = null;

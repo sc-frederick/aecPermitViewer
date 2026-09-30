@@ -2,6 +2,7 @@
   "name": "permitmon-updates",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
   // The app and CI use workers.dev: aeccloud.io has Bot Fight Mode on, which challenges
   // non-browser clients. The custom domain is the human download link.
   "workers_dev": true,

@@ -56,13 +56,45 @@ if (args[0] === "s3api" && args[1] === "head-object") {
     writeFileSync(`${file}.meta.json`, JSON.stringify({ contentType: "application/json", metadata: {} }));
   }
 
+  const gate = process.env.FAKE_AWS_GATE_DIR;
+
+  if (gate && key.endsWith(".exe")) {
+    mkdirSync(gate, { recursive: true });
+    writeFileSync(path.join(gate, "ready"), key);
+    const deadline = Date.now() + 10_000;
+
+    while (!existsSync(path.join(gate, "continue"))) {
+      if (Date.now() >= deadline) exit("fake aws publication barrier timed out", 2);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   if ((option("--if-none-match") === "*" && existsSync(file)) ||
     (option("--if-match") && (!existsSync(file) || etag(file) !== option("--if-match")))) {
     exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
   }
 
-  copyFileSync(option("--body") ?? "", file);
-  writeFileSync(`${file}.meta.json`, JSON.stringify({ contentType: option("--content-type"), metadata: {} }));
+  const bytes = readFileSync(option("--body") ?? "");
+  const expectedMd5 = option("--content-md5");
+
+  if (expectedMd5 && createHash("md5").update(bytes).digest("base64") !== expectedMd5) exit("BadDigest", 254);
+  const metadata = {};
+
+  for (const pair of (option("--metadata") ?? "").split(",")) {
+    const [name, value] = pair.split("=");
+
+    if (name && value !== undefined) metadata[name] = value;
+  }
+
+  try {
+    // Exclusive create models the destination condition at commit, including across CLI processes.
+    writeFileSync(file, bytes, option("--if-none-match") === "*" ? { flag: "wx" } : {});
+  } catch (cause) {
+    if (cause.code === "EEXIST") exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
+    throw cause;
+  }
+
+  writeFileSync(`${file}.meta.json`, JSON.stringify({ contentType: option("--content-type"), metadata }));
   appendFileSync(path.join(root, "writes.log"), `${path.relative(root, file)}\n`);
 } else if (args[0] === "s3" && args[1] === "cp" && args[3] === "-") {
   const file = objectFile(args[2] ?? "");
