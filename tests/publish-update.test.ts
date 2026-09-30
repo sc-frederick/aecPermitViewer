@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, un
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import worker, { type FeedEnv } from "../infra/update-server/src/index.js";
@@ -45,7 +46,7 @@ function manifest(version: string, body: string): string {
 
 function run(script: string, cwd: string, env: NodeJS.ProcessEnv, loader?: string) {
   return new Promise<{ readonly status: number | null; readonly output: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [...loader ? ["--import", loader] : [], script], { cwd, env });
+    const child = spawn(process.execPath, [...loader ? ["--import", pathToFileURL(loader).href] : [], script], { cwd, env });
     let output = "";
     child.stdout.on("data", (bytes: Buffer) => { output += bytes.toString(); });
     child.stderr.on("data", (bytes: Buffer) => { output += bytes.toString(); });

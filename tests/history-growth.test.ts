@@ -7,6 +7,7 @@ import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js
 import { PermitStore } from "../src/main/store.js";
 
 // Run with npm run benchmark:history. Fixtures model 75 permits, three daily checks and 20 reviews per check.
+// The two-minute timeout includes seeding 246,375 rows on Windows; publication still has a 100 ms turn budget.
 describe("history growth benchmark", () => {
   it("materializes only the retained daily window as discarded history grows", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "permit-history-growth-"));
@@ -89,5 +90,5 @@ describe("history growth benchmark", () => {
         expect(maxPermitMs).toBeLessThan(100);
       }
     } finally { db.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
-  }, 30_000);
+  }, 120_000);
 });
