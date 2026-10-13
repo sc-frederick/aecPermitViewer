@@ -41,9 +41,9 @@ async function appFilesToSign(directory) {
   return files;
 }
 
-// Only what the packaged app loads goes into its archive. The browser payload ships once, as its own resource below;
+// Runtime files and the project license go into the archive. The browser payload ships once, as its own resource below;
 // source, tests, docs, tooling, and build output stay out.
-const RUNTIME_PATHS = [/^\/package\.json$/, /^\/dist(\/|$)/, /^\/node_modules(\/|$)/];
+const RUNTIME_PATHS = [/^\/package\.json$/, /^\/LICENSE$/, /^\/dist(\/|$)/, /^\/node_modules(\/|$)/];
 
 // Tool caches and links that live beside the packages, such as .bin, .cache, and .vite.
 const BUILD_ONLY_PATHS = [/^\/node_modules\/\.[^/]+(\/|$)/, /^\/dist\/.*\.map$/];

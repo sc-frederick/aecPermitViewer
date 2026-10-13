@@ -1,5 +1,7 @@
 # Permit Monitor
 
+Copyright (c) 2026 Stephen Frederick. All rights reserved. This project is proprietary; use, modification, and redistribution require written permission except as stated in [LICENSE](LICENSE). Third-party components retain their own licenses.
+
 Permit Monitor is a local desktop app for Windows and macOS (Apple silicon) for tracking public building permits from selected Florida authorities, and permits from Florida's five water management districts. It saves the status shown on a verified permit record, the observation time, and a record link. A failed check leaves the prior verified status and its original time intact.
 
 ## Supported workflow

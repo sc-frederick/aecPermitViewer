@@ -3,6 +3,7 @@
   "productName": "Permit Monitor",
   "version": "0.10.1",
   "private": true,
+  "license": "UNLICENSED",
   "description": "Local Windows and macOS permit status monitor for selected Florida building authorities",
   "main": "dist/main.cjs",
   "scripts": {
