@@ -43,6 +43,26 @@ function seed(db: DatabaseSync, permitId: string, times: readonly string[]) {
 }
 
 describe("bounded daily store reads", () => {
+  it("keeps daily picks for verified successes, failed checks, missing observations and equal timestamps", () => {
+    const { store, db, id, close } = setup();
+
+    try {
+      const times = Array.from({ length: 15 }, (_, index) => new Date(Date.UTC(2026, 8, 1 + Math.floor(index / 3),
+        12, index < 12 ? index % 3 : 0)).toISOString());
+      seed(db, id, times);
+      db.prepare("UPDATE check_runs SET outcome = 'success' WHERE id IN (?, ?)").run(`${id}-2`, `${id}-8`);
+      db.prepare("UPDATE status_observations SET run_id = ? WHERE run_id = ?").run(`${id}-2`, `${id}-0`);
+      db.prepare("DELETE FROM status_observations WHERE run_id = ?").run(`${id}-9`);
+
+      const expected = dailyHistory(store.history(id));
+
+      const page = store.dailyHistory(id);
+      expect(page.runs.map((run) => run.id)).toEqual([12, 11, 6, 3, 2].map((index) => `${id}-${index}`));
+      expect(page.runs).toEqual(expected.map((day) => day.run));
+      expect(page.observations).toEqual(expected.flatMap((day) => day.observation ? [day.observation] : []));
+    } finally { close(); }
+  });
+
   it("matches dailyHistory picks, reviews and ordering across UTC boundaries and DST", () => {
     const { store, db, id, close } = setup();
 
