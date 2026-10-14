@@ -14,6 +14,12 @@ The workflow checks that the tag matches `package.json` and is annotated (it sto
 
 The same tag builds a Mac app for Apple silicon on a macOS runner (the `package-mac` job): it stages the headless shell, packages with `npm run package:mac`, signs the bundle ad hoc, runs the packaged browser smoke check, and zips the app. The release job needs both builds, so a Mac failure holds the Windows release too. Run the workflow from the Actions tab on a branch to try the Mac build without releasing; macOS runners use ten times the minutes of Linux ones, so pull requests skip it.
 
+Both package jobs run the history growth benchmark separately from the parallel
+suite. Its 100 ms permit-read and event-loop budgets, retained 120-day window and
+responsiveness assertions are unchanged. Run `npm test -- --exclude
+tests/history-growth.test.ts`, then `npm run benchmark:history` to reproduce the
+CI checks without unrelated browser/SQLite workers competing for the benchmark's CPU.
+
 Unsigned installers trigger SmartScreen's "Windows protected your PC." on first install. Users click **More info**, then **Run anyway**; the release notes say this. After that, **Settings → Updates** downloads and installs new versions in the app. Updates downloaded by the app don't carry a download-origin mark, so SmartScreen doesn't prompt again. Data in `%LOCALAPPDATA%\PermitMonitorData` is kept. Builds before 0.2.0 have no update feed; those users must install 0.2.0 by hand once.
 
 ### Mac builds

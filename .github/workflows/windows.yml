@@ -60,7 +60,9 @@ jobs:
       - run: npm run lint
       # Renderer and worker tests run in the staged browser.
       - run: npm run browser:stage
-      - run: npm test
+      - run: npm test -- --exclude tests/history-growth.test.ts
+      # Keep the 100 ms responsiveness budget without competing with parallel browser/SQLite test workers.
+      - run: npm run benchmark:history
       - run: npm run make:win
       - name: Test packaged browser HTTPS path
         shell: pwsh
@@ -95,7 +97,9 @@ jobs:
       - run: npm ci --allow-git=all
       # Renderer and worker tests run in the staged browser, which is the Mac headless shell here.
       - run: npm run browser:stage
-      - run: npm test
+      - run: npm test -- --exclude tests/history-growth.test.ts
+      # Run the timing benchmark alone; its latency limit and retained-history assertions remain unchanged.
+      - run: npm run benchmark:history
       - run: npm run package:mac
       # Packaging edits Electron's Info.plist, which breaks the bundle's seal, and Gatekeeper calls an app with a broken
       # seal "damaged" with no way to open it. An ad hoc signature reseals it. The browser payload stays as it was.
