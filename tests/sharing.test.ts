@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { route } from "../infra/sync-server/src/router.js";
 import { describeSharedUpdate } from "../src/main/notifications.js";
-import { buildSharedList, parseSharedList, SHARED_HISTORY_DAYS, type SharedList } from "../src/main/share-list.js";
+import { buildSharedList, buildSharedListAsync, parseSharedList, SHARED_HISTORY_DAYS, type SharedList } from "../src/main/share-list.js";
 import { openList, parseServiceUrl, sealList, ShareService, type PublishReply } from "../src/main/share-service.js";
 import { FOLLOW_DELAY_MS, nextFetchAt, PUBLISH_SETTLE_MS, SharePublisher, UNSCHEDULED_FOLLOW_MS } from "../src/main/share-sync.js";
 import { Sharing, type SharingHost } from "../src/main/sharing.js";
@@ -174,6 +174,22 @@ describe("shared list format", () => {
     expect(list.schedule).toEqual(normalizeCheckTimes(["08:30", "16:30"]));
     expect(list.histories.get(permit.id)?.runs).toHaveLength(SHARED_HISTORY_DAYS);
     expect(list.histories.get(permit.id)?.observations).toHaveLength(SHARED_HISTORY_DAYS);
+  });
+
+  it("publishes identical wire bytes when history reads and serialization yield separately", async () => {
+    const retained = history(200);
+
+    const reviewHistory: PermitHistory = { ...retained, observations: retained.observations.map((entry) => ({ ...entry,
+      reviews: [{ process: "Building", status: "Corrections Required", date: null, dueDate: null },
+        { process: "Electrical", status: "Approved", date: null, dueDate: null }],
+    })) };
+
+    for (const permits of [[], [permit]]) {
+      for (const schedule of [null, ["08:30", "16:30"]]) {
+        const json = await buildSharedListAsync(permits, () => reviewHistory, schedule);
+        expect(json).toBe(buildSharedList(permits, () => reviewHistory, schedule));
+      }
+    }
   });
 
   it("leaves out permits under jurisdictions this version doesn't know, and rejects other formats", () => {

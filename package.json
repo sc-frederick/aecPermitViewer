@@ -1,7 +1,7 @@
 {
   "name": "hillsborough-permit-monitor",
   "productName": "Permit Monitor",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "private": true,
   "license": "UNLICENSED",
   "description": "Local Windows and macOS permit status monitor for selected Florida building authorities",
