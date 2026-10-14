@@ -530,6 +530,10 @@ export class PermitStore {
     const runSelect = `SELECT r.id, r.permit_id AS permitId, r.started_at AS startedAt, r.finished_at AS finishedAt,
       r.outcome, r.action_count AS actionCount, r.request_count AS requestCount FROM check_runs r`;
 
+    const observationSelect = `SELECT id, run_id AS runId, permit_id AS permitId,
+      verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel, status_value AS statusValue,
+      observed_at AS observedAt, record_url AS recordUrl, reviews FROM status_observations WHERE run_id = ?`;
+
     for (let index = 0; index < days; index += 1) {
       const latest = this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at < ?
         ORDER BY r.started_at DESC LIMIT 1`, permitId, cursor);
@@ -538,16 +542,19 @@ export class PermitStore {
       const date = new Date(latest.startedAt);
       const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
 
-      const chosen = this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at >= ?
+      // A verified latest success is already the daily pick. Reuse it rather
+      // than seeking and parsing the same run again; other outcomes and missing
+      // observations still use the indexed successful-run fallback.
+      const latestObservation = latest.outcome === "success" ? this.row(observationSchema, observationSelect, latest.id) : null;
+
+      const chosen = latestObservation ? latest : this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at >= ?
         AND r.started_at < ? AND r.outcome = 'success'
         AND EXISTS (SELECT 1 FROM status_observations o WHERE o.run_id = r.id)
         ORDER BY r.started_at DESC LIMIT 1`, permitId, start, cursor) ?? latest;
 
       runs.push(chosen);
 
-      const observation = this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
-        verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel, status_value AS statusValue,
-        observed_at AS observedAt, record_url AS recordUrl, reviews FROM status_observations WHERE run_id = ?`, chosen.id);
+      const observation = latestObservation ?? this.row(observationSchema, observationSelect, chosen.id);
 
       if (observation) observations.push(observation);
       cursor = start;

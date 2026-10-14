@@ -8,7 +8,11 @@ including a 96 ms history read. Shared-list publication now yields between each
 retained-history read and preparation of its JSON entry so those costs do not
 accumulate in one turn. It retains the same 120-day window, exact wire bytes,
 encryption, scheduling and store-revision check that rebuilds a list if data
-changes while yielding. The database and sharing protocol are unchanged.
+changes while yielding. Daily reads also reuse the newest verified successful
+run instead of querying and parsing it a second time. Failed checks and success
+rows without observations retain the indexed fallback. Regression tests cover
+those cases and equal timestamps against the existing daily-history selection.
+The database schema and sharing protocol are unchanged.
 
 The existing 100 ms read/turn limits remain intact, and CI runs the benchmark
 separately from parallel browser/SQLite tests. A regression compares asynchronous
