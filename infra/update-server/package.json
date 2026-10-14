@@ -1,4 +1,12 @@
 {
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "cf": "node cloudflare-cli/run.mjs",
+    "cf:build": "node cloudflare-cli/run.mjs build",
+    "cf:dry-run": "node cloudflare-cli/run.mjs dry-run",
+    "cf:dev": "node cloudflare-cli/run.mjs dev",
+    "cf:types": "node cloudflare-cli/run.mjs workers types",
+    "cf:deploy": "node cloudflare-cli/run.mjs deploy"
+  }
 }

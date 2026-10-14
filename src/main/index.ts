@@ -488,7 +488,7 @@ async function startApp(): Promise<void> {
     minWidth: 820,
     minHeight: 600,
     show: false,
-    backgroundColor: "#f1ede4",
+    backgroundColor: "#f6f1eb",
     icon: path.join(__dirname, "assets", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),

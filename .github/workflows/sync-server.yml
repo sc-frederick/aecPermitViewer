@@ -30,9 +30,6 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      # Pinned so a new wrangler release can't change the deploy unannounced. Match the version used for manual deploys.
-      WRANGLER: wrangler@4.143.0
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -46,8 +43,8 @@ jobs:
       - name: Bundle without deploying
         if: github.event_name == 'pull_request'
         working-directory: infra/sync-server
-        run: npx --yes "$WRANGLER" deploy --dry-run --outdir "$RUNNER_TEMP/sync-server"
-      # Wrangler talks to api.cloudflare.com, which doesn't challenge runner IPs the way the workers.dev hosts do.
+        run: node cloudflare-cli/run.mjs dry-run --skip-prepare
+      # cf uses the existing account and deployment token. The toolchain is pinned in cloudflare-cli/app.
       - name: Deploy
         if: github.event_name != 'pull_request'
         working-directory: infra/sync-server
@@ -56,7 +53,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: 838798e8498ddea23910e8e812f26c17
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::CLOUDFLARE_SYNC_DEPLOY_TOKEN is not set; deploy by hand with npx wrangler deploy (docs/RELEASE.md)."
+            echo "::error::CLOUDFLARE_SYNC_DEPLOY_TOKEN is not set; deploy by hand with node cloudflare-cli/run.mjs deploy (cloudflare-cli/README.md)."
             exit 1
           fi
-          npx --yes "$WRANGLER" deploy --message "$GITHUB_SHA"
+          node cloudflare-cli/run.mjs deploy --message "$GITHUB_SHA"

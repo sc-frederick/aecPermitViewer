@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, mkdirSync } from "node:fs";
-import { readdir, writeFile } from "node:fs/promises";
+import { readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isBrowserDiagnosticFile } from "../src/shared/browser-payload.ts";
 
 const browserPath = path.resolve("vendor/playwright-browsers");
 
@@ -23,6 +24,14 @@ async function filesIn(directory, prefix = "") {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
+
+    // Tests may have produced this volatile Windows log. Keep it out of the
+    // staged distribution and manifest; all browser code is still hashed.
+    if (entry.isFile() && isBrowserDiagnosticFile(relative)) {
+      await unlink(path.join(directory, entry.name));
+
+      continue;
+    }
 
     if (entry.isDirectory()) files.push(...await filesIn(path.join(directory, entry.name), relative));
     else if (entry.isFile()) files.push(relative);

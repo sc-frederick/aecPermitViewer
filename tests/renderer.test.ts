@@ -1,10 +1,12 @@
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdtempSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { AppEvent, BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
@@ -49,17 +51,44 @@ let page: Page;
 
 let directory: string;
 
+let server: Server;
+
+let rendererUrl: string;
+
 beforeAll(async () => {
   directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-renderer-"));
-  await build({ entryPoints: ["src/renderer/index.ts"], outfile: path.join(directory, "renderer.js"), bundle: true,
-    target: "es2022", platform: "browser", format: "iife", logLevel: "silent" });
+  await build({ entryPoints: { renderer: "src/renderer/index.ts" }, outdir: directory, bundle: true,
+    target: "es2022", platform: "browser", format: "esm", splitting: true, chunkNames: "chunks/[name]-[hash]", logLevel: "silent" });
   copyFileSync("src/renderer/index.html", path.join(directory, "index.html"));
   copyFileSync("src/renderer/styles.css", path.join(directory, "styles.css"));
+  cpSync("assets", path.join(directory, "assets"), { recursive: true });
+  // Browsers restrict ES modules opened directly from file://; Electron grants
+  // its own local app access. Serve the same files and CSP without weakening it.
+  server = createServer((request, response) => {
+    const relative = new URL(request.url ?? "/", "http://localhost").pathname.slice(1) || "index.html";
+    const file = path.resolve(directory, relative);
+
+    if (!file.startsWith(`${directory}${path.sep}`)) {
+      response.writeHead(403).end();
+
+      return;
+    }
+
+    void readFile(file).then((body) => {
+      response.setHeader("Content-Type", relative.endsWith(".js") ? "text/javascript" : relative.endsWith(".css") ? "text/css" : relative.endsWith(".woff2") ? "font/woff2" : relative.endsWith(".svg") ? "image/svg+xml" : "text/html");
+      response.end(body);
+    }, () => { response.writeHead(404).end(); });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = z.object({ port: z.int().min(1).max(65535) }).parse(server.address());
+  rendererUrl = `http://127.0.0.1:${address.port}/`;
   browser = await chromium.launch({ headless: true });
 }, 60_000);
 
 afterAll(async () => {
   await browser?.close();
+
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   rmSync(directory, { recursive: true, force: true });
 });
 
@@ -201,7 +230,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
       },
     });
   }, { first: initial, hold: holdFirstSnapshot });
-  await page.goto(pathToFileURL(path.join(directory, "index.html")).href);
+  await page.goto(rendererUrl);
 
   if (!holdFirstSnapshot) await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
 }
@@ -397,7 +426,7 @@ describe("AEC filter", () => {
       permit(4, { jurisdictionId: "swfwmd-erp", permitNumber: "43047590.008", lastStatus: "Issued" }),
     ]));
     const actionCells = page.locator("#permit-table tbody tr td:nth-child(3)");
-    expect(await actionCells.allInnerTexts()).toEqual(["AEC", "AEC?", "NONE", "—"]);
+    expect(await actionCells.allInnerTexts()).toEqual(["AEC", "AEC?", "None", "—"]);
 
     await page.selectOption("#permit-filter", "applicant");
     expect(await page.locator("#permit-table tbody tr").count()).toBe(2);
@@ -684,5 +713,71 @@ describe("shared lists", () => {
     expect(await page.locator("#confirm-body").textContent()).toBe("Your own 50 permits stay on this computer but aren't shown or checked until you stop following.");
     await page.locator('#confirm-dialog button[value="cancel"]').click();
     expect(await page.locator("#follow-input").inputValue()).toBe("PMS1-code");
+  });
+});
+
+describe("workspace accessibility", () => {
+  it("expands a shared workspace with the window while keeping dates and row actions readable", async () => {
+    const project = "24082_914_E_128th_Ave-Recycling_Facility";
+    await open(snapshot([permit(1, { projectNumber: project }), permit(2, { projectNumber: project })], {
+      share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: null, problem: null },
+    }));
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.evaluate(() => document.fonts.ready);
+    const dock = defined(await page.locator(".nav-inner").boundingBox(), "the command dock");
+    const list = defined(await page.locator(".table-card").boundingBox(), "the permit list");
+    const filter = defined(await page.locator(".add-card").boundingBox(), "the shared filter");
+    expect(list.x).toBe(dock.x);
+    expect(list.width).toBe(dock.width);
+    expect(list.width).toBeGreaterThan(1800);
+    expect(filter.height).toBeLessThan(64);
+    expect(await page.locator(".group-number").textContent()).toBe(project);
+
+    const dates = await page.locator("#permit-table td:nth-child(4) time").evaluateAll((nodes) => nodes.map((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+
+      return range.getClientRects().length;
+    }));
+
+    expect(dates).toEqual([1, 1]);
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    const expanded = defined(await page.locator(".table-card").boundingBox(), "the expanded permit list");
+    expect(expanded.width - list.width).toBeGreaterThan(600);
+    await page.setViewportSize({ width: 820, height: 560 });
+    const record = page.locator('#permit-table button[data-action="open"]').last();
+    await record.focus();
+    const action = defined(await record.boundingBox(), "the focused record link");
+    expect(action.x).toBeGreaterThanOrEqual(0);
+    expect(action.x + action.width).toBeLessThanOrEqual(820);
+    expect(action.y + action.height).toBeLessThanOrEqual(560);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(820);
+  });
+
+  it("keeps row actions reachable by keyboard in a narrow window without scrolling the whole app", async () => {
+    await page.setViewportSize({ width: 820, height: 560 });
+    const region = page.getByRole("region", { name: "Scrollable permit list" });
+    await region.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => (document.querySelector(".table-scroll")?.scrollLeft ?? 0) > 0);
+    const last = page.locator("#permit-table tbody tr").last().getByRole("button", { name: "Check now" });
+    await last.focus();
+    const box = await last.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.x).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(820);
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(560);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(820);
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
+  });
+
+  it("turns off decorative effects when reduced motion changes while keeping permit controls usable", async () => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.waitForFunction(() => document.querySelector("#warm-background")?.getAttribute("data-fallback") === "reduced-effects");
+    expect(await page.locator("#warm-background").isVisible()).toBe(false);
+    await page.locator("#open-settings").click();
+    expect(await page.locator("#settings-sheet").isVisible()).toBe(true);
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
   });
 });

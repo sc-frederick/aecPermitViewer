@@ -1,7 +1,7 @@
 {
   "name": "hillsborough-permit-monitor",
   "productName": "Permit Monitor",
-  "version": "0.10.1",
+  "version": "0.11.1",
   "private": true,
   "license": "UNLICENSED",
   "description": "Local Windows and macOS permit status monitor for selected Florida building authorities",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0",
     "playwright": "1.63.0",
+    "shaders": "4.0.4",
     "zod": "4.1.11"
   },
   "devDependencies": {
@@ -33,6 +34,7 @@
     "@electron/windows-sign": "1.2.2",
     "@oxlint/plugins": "1.85.0",
     "@types/node": "24.10.1",
+    "@webgpu/types": "0.1.74",
     "electron": "44.4.5",
     "esbuild": "0.25.12",
     "oxlint": "1.85.0",
