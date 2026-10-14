@@ -6,12 +6,15 @@
   <meta name="color-scheme" content="light">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Permit Monitor</title>
+  <link rel="stylesheet" href="assets/aether/aether.css">
   <link rel="stylesheet" href="styles.css">
-  <script src="renderer.js" defer></script>
+  <script src="renderer.js" type="module"></script>
 </head>
 <body>
+  <div id="warm-background" class="warm-background" aria-hidden="true" data-background="loading"><canvas data-renderer="shaders"></canvas></div>
   <!-- Icons: Lucide (https://lucide.dev), ISC License, Copyright (c) Lucide Icons and Contributors. -->
   <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-permit" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m8 15 2 2 5-5"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
@@ -26,7 +29,7 @@
   <div class="app-shell">
     <header class="nav">
       <div class="container nav-inner">
-        <h1 class="mark"><img class="mark-icon" src="assets/icon.svg" alt="" width="22" height="22"><span class="mark-wordmark">Permit <em>Monitor</em></span></h1>
+        <h1 class="mark"><span class="mark-icon" aria-hidden="true"><svg class="icon"><use href="#i-permit"/></svg></span><span class="mark-wordmark">Permit Monitor</span></h1>
         <div class="nav-actions">
           <p id="next-check" class="coord"></p>
           <button id="share-sync" class="btn btn-ghost" type="button" hidden><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"/></svg>Sync now</button>
@@ -52,7 +55,7 @@
             <label class="field-label" for="permit-number">Permit number</label>
             <input id="permit-number" class="field-control mono-input" name="permitNumber" type="text" autocomplete="off" spellcheck="false" placeholder="HC-BLD-26-0087599" required maxlength="80" aria-describedby="permit-number-error">
           </div>
-          <button id="add-button" class="btn btn-primary" type="submit">Add permit</button>
+          <button id="add-button" class="btn btn-primary" type="submit"><span class="chip"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></span>Add permit</button>
           <div class="field filter-field">
             <label class="field-label" for="permit-filter">Show</label>
             <select id="permit-filter" class="field-control">
@@ -68,10 +71,12 @@
       </section>
 
       <section class="card table-card" aria-label="Permits">
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable permit list">
         <table id="permit-table" class="table">
           <thead><tr><th scope="col">Permit</th><th scope="col">Status</th><th scope="col">Action</th><th scope="col">Verified</th><th scope="col">Last check</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         </table>
         <p id="empty-state" class="empty-state">No permits yet.</p>
+        </div>
       </section>
     </main>
   </div>

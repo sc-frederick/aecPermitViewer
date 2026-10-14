@@ -8,6 +8,7 @@ import { groupByProject, PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN, projectKey,
 import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
 import { actionLabel, actionReason, permitAction, type StatusAction } from "../shared/action.js";
 import { describeReview, latestReviews, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
+import { mountWarmBackground } from "./warm-background.js";
 
 declare global { interface Window { permitMonitor: PermitBridge } }
 
@@ -18,6 +19,15 @@ type Filter = typeof FILTERS[number];
 type OutcomeKind = "ok" | "failed" | "checking" | "none";
 
 const api = window.permitMonitor;
+
+const backgroundHost = document.getElementById("warm-background");
+
+const backgroundCanvas = backgroundHost?.querySelector("canvas");
+
+if (backgroundHost && backgroundCanvas instanceof HTMLCanvasElement) {
+  const stopBackground = mountWarmBackground(backgroundHost, backgroundCanvas);
+  window.addEventListener("pagehide", stopBackground, { once: true });
+}
 
 let currentSnapshot: AppSnapshot | null = null;
 

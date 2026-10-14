@@ -1,0 +1,14 @@
+{
+  "app": {
+    "source": "wrangler.jsonc",
+    "sourceHash": "dfb4f6efca61784ebcc340c91f00e386cc17ca3549389089c52a0eb87af84a7e",
+    "deploymentOwner": "cf",
+    "prepare": null,
+    "persistTo": ".wrangler/state",
+    "databases": {
+      "default": []
+    },
+    "limitations": [],
+    "modes": []
+  }
+}

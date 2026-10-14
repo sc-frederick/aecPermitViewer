@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { isBrowserDiagnosticFile } from "../shared/browser-payload.js";
 
 const browserManifestSchema = z.object({
   version: z.literal(1),
@@ -21,6 +22,10 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
 
+    // Only the known regular log file is mutable. Symlinks, directories and
+    // every code/payload file continue through the existing integrity checks.
+    if (entry.isFile() && isBrowserDiagnosticFile(relative)) continue;
+
     if (entry.isDirectory()) files.push(...await filesIn(path.join(directory, entry.name), relative));
     else if (entry.isFile()) files.push(relative);
     else throw new Error("Browser payload contains an unexpected entry");
@@ -34,7 +39,9 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
  *
  * @param directory - The browser payload directory, which holds the manifest.
  * @throws Error when the manifest is malformed, the directory holds a file (or entry) the manifest does not list or
- *   lacks one it does, or any file's SHA-256 differs. The payload is treated as tampered and must not be launched.
+ *   lacks one it does, or any file's SHA-256 differs. Chromium's known Windows
+ *   diagnostic log is runtime data; it is excluded from the payload file list.
+ *   The payload is treated as tampered and must not be launched.
  */
 export async function verifyBrowserPayload(directory: string): Promise<void> {
   const parsed = browserManifestSchema.safeParse(JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")));

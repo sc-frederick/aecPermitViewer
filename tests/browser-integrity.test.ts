@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,34 @@ afterEach(async () => {
 });
 
 describe("bundled browser integrity", () => {
+  it("accepts Chromium's changing Windows diagnostic log while rejecting extra code and a log symlink", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-log-test-"));
+    temporary.push(directory);
+    const content = "browser binary fixture";
+    await writeFile(path.join(directory, "chrome.exe"), content);
+    await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify({ version: 1, files: [
+      { path: "chrome.exe", sha256: createHash("sha256").update(content).digest("hex") },
+    ] }));
+    const folder = path.join(directory, "chromium_headless_shell-1243", "chrome-headless-shell-win64");
+    await mkdir(folder, { recursive: true });
+    const log = path.join(folder, "debug.log");
+    await writeFile(log, "GPU diagnostics");
+    await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
+    await writeFile(log, "Changed diagnostics");
+    await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
+    const extra = path.join(folder, "extra.dll");
+    await writeFile(extra, "unexpected code");
+    await expect(verifyBrowserPayload(directory)).rejects.toThrow("file list");
+    await rm(extra);
+    await rm(log);
+
+    // Creating Windows symlinks requires privileges the test runner may not have.
+    if (process.platform !== "win32") {
+      await symlink(path.join(directory, "chrome.exe"), log);
+      await expect(verifyBrowserPayload(directory)).rejects.toThrow("unexpected entry");
+    }
+  });
+
   it("accepts the staged file list and rejects changed or additional files", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-test-"));
     temporary.push(directory);

@@ -1,0 +1,17 @@
+{
+  "runs": [
+    {
+      "code": 0,
+      "signal": null,
+      "stdout": "\r\nPackaged browser smoke passed (153.0.8010.12).\n",
+      "stderr": ""
+    },
+    {
+      "code": 0,
+      "signal": null,
+      "stdout": "\r\nPackaged browser smoke passed (153.0.8010.12).\n",
+      "stderr": ""
+    }
+  ],
+  "repeatLaunchPassed": true
+}
