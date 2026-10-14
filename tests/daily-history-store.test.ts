@@ -49,6 +49,7 @@ describe("bounded daily store reads", () => {
     try {
       const times = Array.from({ length: 15 }, (_, index) => new Date(Date.UTC(2026, 8, 1 + Math.floor(index / 3),
         12, index < 12 ? index % 3 : 0)).toISOString());
+
       seed(db, id, times);
       db.prepare("UPDATE check_runs SET outcome = 'success' WHERE id IN (?, ?)").run(`${id}-2`, `${id}-8`);
       db.prepare("UPDATE status_observations SET run_id = ? WHERE run_id = ?").run(`${id}-2`, `${id}-0`);
