@@ -140,14 +140,20 @@ function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof 
   };
 }
 
-/** Builds the same wire format one permit per event-loop turn, so bounded history reads do not accumulate into a freeze. */
+/** Builds the same wire format while yielding between history reads and serialization, so their costs do not accumulate into a freeze. */
 export async function buildSharedListAsync(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory,
   schedule: readonly string[] | null): Promise<string> {
   const entries: string[] = [];
 
   for (const permit of permits) {
     await setImmediate();
-    entries.push(JSON.stringify(sharedEntry(permit, historyOf(permit.id))));
+
+    const history = historyOf(permit.id);
+
+    // A retained history read and its review-heavy JSON each fit the turn budget
+    // separately. Let pending UI/IPC work run before preparing the wire entry.
+    await setImmediate();
+    entries.push(JSON.stringify(sharedEntry(permit, history)));
   }
 
   const prefix = JSON.stringify({ format: 1, schedule: schedule ? [...schedule] : null, permits: [] }).slice(0, -2);
