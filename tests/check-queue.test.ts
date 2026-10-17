@@ -21,7 +21,10 @@ interface Gate {
 /** A gate that stays closed until the test opens it. */
 function gate(): Gate {
   let open: () => void = () => undefined;
-  const promise = new Promise<void>((resolve) => { open = resolve; });
+
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
 
   return { promise, open };
 }
@@ -50,7 +53,11 @@ function harness(scopes: Record<string, string>) {
       started.push(permitId);
       startedKeys.push(`${permitId}:${key}`);
       let finish: (outcome: RunOutcome) => void = () => undefined;
-      const finished = new Promise<RunOutcome>((resolve) => { finish = resolve; });
+
+      const finished = new Promise<RunOutcome>((resolve) => {
+        finish = resolve;
+      });
+
       running.set(permitId, finish);
 
       return { finished, cancel: () => finish("cancelled") };
@@ -149,7 +156,10 @@ describe("cancelling", () => {
       readKey: async () => "key",
       start: (): StartedCheck => {
         let settle: (outcome: RunOutcome | null) => void = () => undefined;
-        const finished = new Promise<RunOutcome | null>((resolve) => { settle = resolve; });
+
+        const finished = new Promise<RunOutcome | null>((resolve) => {
+          settle = resolve;
+        });
 
         // Main answers null when the check stopped before its run was saved, such as while the browser is verified.
         return { finished, cancel: () => settle(null) };
@@ -296,18 +306,26 @@ describe("keys", () => {
     let key = "old";
 
     const queue = new CheckQueue({
-      scopeOf: () => "accela", scheduledEligible: () => true, readKey: async () => key,
+      scopeOf: () => "accela",
+      scheduledEligible: () => true,
+      readKey: async () => key,
       start: (id, credential, stillWanted) => {
         entered.push(`${id}:${credential}`);
 
-        return { finished: browser.promise.then(() => {
-          if (!stillWanted()) return null;
-          recorded.push(`${id}:${credential}`);
+        return {
+          finished: browser.promise.then(() => {
+            if (!stillWanted()) return null;
+            recorded.push(`${id}:${credential}`);
 
-          return "success" as const;
-        }), cancel: () => undefined };
+            return "success" as const;
+          }),
+          cancel: () => undefined,
+        };
       },
-      defer: () => undefined, keyUnavailable: () => undefined, saveFailed: () => undefined, changed: () => undefined,
+      defer: () => undefined,
+      keyUnavailable: () => undefined,
+      saveFailed: () => undefined,
+      changed: () => undefined,
     });
 
     queue.enqueue("a", "manual");
@@ -392,7 +410,10 @@ describe("keys", () => {
     await vi.advanceTimersByTimeAsync(0);
     queue.enqueue("h1", "manual");
     await vi.advanceTimersByTimeAsync(0);
-    expect(keyNotices).toEqual([["missing", false], ["missing", true]]);
+    expect(keyNotices).toEqual([
+      ["missing", false],
+      ["missing", true],
+    ]);
 
     state.key = "key";
     queue.enqueue("a1", "scheduled");

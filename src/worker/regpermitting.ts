@@ -1,5 +1,10 @@
 import type { Browser, Frame, Locator, Page } from "playwright";
-import { parseRegPermittingNumber, regPermittingRecordUrl, sameJurisdictionPermitNumber, statusLabels } from "../shared/permit.js";
+import {
+  parseRegPermittingNumber,
+  regPermittingRecordUrl,
+  sameJurisdictionPermitNumber,
+  statusLabels,
+} from "../shared/permit.js";
 import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
@@ -51,7 +56,14 @@ export async function plainUserAgent(browser: Browser): Promise<string> {
 
 async function frameShowing(page: Page, selector: string): Promise<Frame | null> {
   for (const frame of page.frames()) {
-    if (await frame.locator(selector).filter({ visible: true }).count().catch(() => 0) > 0) return frame;
+    if (
+      (await frame
+        .locator(selector)
+        .filter({ visible: true })
+        .count()
+        .catch(() => 0)) > 0
+    )
+      return frame;
   }
 
   return null;
@@ -72,9 +84,18 @@ async function waitForFrameShowing(page: Page, selector: string, timeout: number
 
 /** The value beside a read-only field caption, such as "Permit Status". */
 async function fieldValue(frame: Frame, label: string): Promise<string | null> {
-  const values = await frame.locator("span.field-caption.dataLabelForRead").evaluateAll((captions, name) => captions
-    .filter((caption) => caption.textContent?.trim() === name)
-    .map((caption) => caption.parentElement?.querySelector(":scope > .field-item.dataValueRead")?.textContent?.trim() ?? ""), label)
+  const values = await frame
+    .locator("span.field-caption.dataLabelForRead")
+    .evaluateAll(
+      (captions, name) =>
+        captions
+          .filter((caption) => caption.textContent?.trim() === name)
+          .map(
+            (caption) =>
+              caption.parentElement?.querySelector(":scope > .field-item.dataValueRead")?.textContent?.trim() ?? "",
+          ),
+      label,
+    )
     .catch((): string[] => []);
 
   return values.length === 1 && values[0] && values[0] !== "no value" ? values[0] : null;
@@ -91,7 +112,13 @@ async function searchFrame(page: Page, requested: string): Promise<Frame | null>
 
 async function criteriaEntered(frame: Frame, requested: string): Promise<boolean> {
   const wanted = parseRegPermittingNumber(requested);
-  const value = await frame.locator(form(requested).input).filter({ visible: true }).first().inputValue().catch(() => "");
+
+  const value = await frame
+    .locator(form(requested).input)
+    .filter({ visible: true })
+    .first()
+    .inputValue()
+    .catch(() => "");
 
   return Boolean(wanted && value.trim().toUpperCase() === wanted.number);
 }
@@ -100,7 +127,7 @@ async function criteriaEntered(frame: Frame, requested: string): Promise<boolean
 async function resultLinks(frame: Frame, requested: string): Promise<Locator | null> {
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
 
-  return await grid.count() === 0 ? null : grid.locator(`${RESULT_ROW} td:first-child a`);
+  return (await grid.count()) === 0 ? null : grid.locator(`${RESULT_ROW} td:first-child a`);
 }
 
 async function resultNumbers(frame: Frame, requested: string): Promise<string[] | null> {
@@ -121,12 +148,22 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
   if (!wanted) return { phase: "unknown", ...none };
 
   if (await frameShowing(page, RECORD_HEADING)) return { phase: "detail", ...none, visibleControls: ["Record view"] };
-  const frame = await frameShowing(page, FORMS.application.input) ?? await frameShowing(page, FORMS.permit.input);
+  const frame = (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
 
   if (!frame) {
-    return await page.locator(SEARCH_RECORDS_LINK).count() > 0
-      ? { phase: "search", ...none, visibleControls: ["Search Records link"], candidates: [{ id: "open_public_search", established: true,
-        description: "Open Search Records, RegPermitting's public search." }] }
+    return (await page.locator(SEARCH_RECORDS_LINK).count()) > 0
+      ? {
+          phase: "search",
+          ...none,
+          visibleControls: ["Search Records link"],
+          candidates: [
+            {
+              id: "open_public_search",
+              established: true,
+              description: "Open Search Records, RegPermitting's public search.",
+            },
+          ],
+        }
       : { phase: "search", ...none };
   }
 
@@ -139,20 +176,57 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
     const exact = shown.filter((text) => isRequested(text, requested));
 
     return exact.length > 1
-      ? { phase: "results", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact, candidates: [] }
-      : { phase: "search", inputValue, formLabels: [], visibleControls: ["Search results"], resultNumbers: exact,
-        candidates: exact.length === 1 ? [{ id: "open_exact_result", established: true, description: `Open the result whose number exactly matches ${requested}.` }] : [] };
+      ? {
+          phase: "results",
+          inputValue,
+          formLabels: [],
+          visibleControls: ["Search results"],
+          resultNumbers: exact,
+          candidates: [],
+        }
+      : {
+          phase: "search",
+          inputValue,
+          formLabels: [],
+          visibleControls: ["Search results"],
+          resultNumbers: exact,
+          candidates:
+            exact.length === 1
+              ? [
+                  {
+                    id: "open_exact_result",
+                    established: true,
+                    description: `Open the result whose number exactly matches ${requested}.`,
+                  },
+                ]
+              : [],
+        };
   }
 
   const candidates: Candidate[] = [];
 
   if (!entered) {
-    candidates.push({ id: "fill_record_number", established: true, description: `Open ${tab} and enter the exact ${wanted.kind} number.` });
-  } else if (await frame.locator(form(requested).button).filter({ visible: true }).count() > 0) {
-    candidates.push({ id: "search_record_number", established: true, description: `Submit ${tab} for the exact ${wanted.kind} number.` });
+    candidates.push({
+      id: "fill_record_number",
+      established: true,
+      description: `Open ${tab} and enter the exact ${wanted.kind} number.`,
+    });
+  } else if ((await frame.locator(form(requested).button).filter({ visible: true }).count()) > 0) {
+    candidates.push({
+      id: "search_record_number",
+      established: true,
+      description: `Submit ${tab} for the exact ${wanted.kind} number.`,
+    });
   }
 
-  return { phase: "search", inputValue, formLabels: [tab], visibleControls: [`${tab} field`], resultNumbers: [], candidates };
+  return {
+    phase: "search",
+    inputValue,
+    formLabels: [tab],
+    visibleControls: [`${tab} field`],
+    resultNumbers: [],
+    candidates,
+  };
 }
 
 /** True once a search for the exact number returned "No cases", or every result on a single page is another number. */
@@ -162,28 +236,30 @@ async function regPermittingFoundNothing(page: Page, requested: string): Promise
   if (!frame || !(await criteriaEntered(frame, requested))) return false;
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
 
-  if (await grid.locator(NO_RESULTS_ROW).filter({ visible: true }).count() > 0) return true;
+  if ((await grid.locator(NO_RESULTS_ROW).filter({ visible: true }).count()) > 0) return true;
   const shown = await resultNumbers(frame, requested);
 
-  return Boolean(shown && shown.length > 0 && shown.length < PAGE_SIZE && !shown.some((text) => isRequested(text, requested)));
+  return Boolean(
+    shown && shown.length > 0 && shown.length < PAGE_SIZE && !shown.some((text) => isRequested(text, requested)),
+  );
 }
 
 async function openRegPermittingSearch(page: Page): Promise<void> {
   const link = page.locator(SEARCH_RECORDS_LINK).first();
 
-  if (await link.count() === 0) return;
+  if ((await link.count()) === 0) return;
   await link.dispatchEvent("click");
   await waitForFrameShowing(page, FORMS.application.input, 20_000);
 }
 
 async function fillRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const wanted = parseRegPermittingNumber(requested);
-  let frame = await frameShowing(page, FORMS.application.input) ?? await frameShowing(page, FORMS.permit.input);
+  let frame = (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
 
   if (!wanted || !frame) return;
   const target = form(requested);
 
-  if (await frame.locator(target.input).filter({ visible: true }).count() === 0) {
+  if ((await frame.locator(target.input).filter({ visible: true }).count()) === 0) {
     await frame.locator("[role=tab]").filter({ hasText: target.tab }).first().click();
     frame = await waitForFrameShowing(page, target.input, 12_000);
 
@@ -199,16 +275,24 @@ async function submitRegPermittingSearch(page: Page, requested: string): Promise
   if (!frame || !(await criteriaEntered(frame, requested))) return;
   const target = form(requested);
   await frame.locator(target.button).filter({ visible: true }).first().click();
-  await frame.locator(`${target.grid} ${RESULT_ROW}, ${target.grid} ${NO_RESULTS_ROW}`).filter({ visible: true }).first()
-    .waitFor({ state: "visible", timeout: 30_000 }).catch(() => undefined);
+  await frame
+    .locator(`${target.grid} ${RESULT_ROW}, ${target.grid} ${NO_RESULTS_ROW}`)
+    .filter({ visible: true })
+    .first()
+    .waitFor({ state: "visible", timeout: 30_000 })
+    .catch(() => undefined);
 }
 
 async function openRegPermittingResult(page: Page, requested: string): Promise<void> {
   const frame = await searchFrame(page, requested);
-  const links = frame && await resultLinks(frame, requested);
+  const links = frame && (await resultLinks(frame, requested));
 
   if (!links) return;
-  const exact = (await links.allInnerTexts()).flatMap((text, index) => isRequested(text.trim(), requested) ? [index] : []);
+
+  const exact = (await links.allInnerTexts()).flatMap((text, index) =>
+    isRequested(text.trim(), requested) ? [index] : [],
+  );
+
   const only = onlyElement(exact);
 
   if (only === null) return;
@@ -218,7 +302,11 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
 
 /** Wait up to 20 seconds for the Search Records link to attach. Returns either way; the next observation decides. */
 export async function waitForSearchRecordsLink(page: Page): Promise<void> {
-  await page.locator(SEARCH_RECORDS_LINK).first().waitFor({ state: "attached", timeout: 20_000 }).catch(() => undefined);
+  await page
+    .locator(SEARCH_RECORDS_LINK)
+    .first()
+    .waitFor({ state: "attached", timeout: 20_000 })
+    .catch(() => undefined);
 }
 
 /** True when a record view's heading is showing; the adapter's read waits separately for its identity and status. */
@@ -231,8 +319,12 @@ export async function regPermittingRecordShown(page: Page, timeout: number): Pro
  * for water use, App Status; Permit Number with Permit Status). A record opened from a result carries its key in its
  * frame address; one opened from a saved link was opened from that link.
  */
-async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile, requested: string,
-  openedRecordUrl: string | null): Promise<DisplayedRecord> {
+async function readRegPermittingRecord(
+  page: Page,
+  profile: RegPermittingProfile,
+  requested: string,
+  openedRecordUrl: string | null,
+): Promise<DisplayedRecord> {
   const wanted = parseRegPermittingNumber(requested);
   const frame = await frameShowing(page, RECORD_HEADING);
 
@@ -258,13 +350,22 @@ async function readRegPermittingRecord(page: Page, profile: RegPermittingProfile
 }
 
 /** Both saved links and search results can show their heading before the requested record's fields finish loading. */
-async function readReadyRegPermittingRecord(page: Page, profile: RegPermittingProfile, requested: string,
-  openedRecordUrl: string | null, timeout: number): Promise<DisplayedRecord> {
+async function readReadyRegPermittingRecord(
+  page: Page,
+  profile: RegPermittingProfile,
+  requested: string,
+  openedRecordUrl: string | null,
+  timeout: number,
+): Promise<DisplayedRecord> {
   const until = Date.now() + timeout;
   let record = await readRegPermittingRecord(page, profile, requested, openedRecordUrl);
 
-  while (!(record.displayedNumber && sameJurisdictionPermitNumber(requested, record.displayedNumber, profile.id) &&
-    record.statusLabel && record.statusValue)) {
+  while (!(
+    record.displayedNumber &&
+    sameJurisdictionPermitNumber(requested, record.displayedNumber, profile.id) &&
+    record.statusLabel &&
+    record.statusValue
+  )) {
     const remaining = until - Date.now();
 
     if (remaining <= 0 || page.isClosed()) return record;
@@ -282,8 +383,13 @@ async function readReadyRegPermittingRecord(page: Page, profile: RegPermittingPr
  *   record view's frame carries no key.
  * @param readinessTimeout - The bounded time to wait for the requested number and its kind-specific status.
  */
-export function regPermittingAdapter(page: Page, profile: RegPermittingProfile, requested: string,
-  openedRecordUrl: string | null, readinessTimeout = 20_000): PortalAdapter {
+export function regPermittingAdapter(
+  page: Page,
+  profile: RegPermittingProfile,
+  requested: string,
+  openedRecordUrl: string | null,
+  readinessTimeout = 20_000,
+): PortalAdapter {
   return {
     observe: () => observeRegPermitting(page, requested),
     foundNothing: () => regPermittingFoundNothing(page, requested),

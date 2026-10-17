@@ -18,9 +18,27 @@ export interface CheckEvent {
 /** The notice shown when checks can't run for want of a usable key. */
 export function keyNotice(problem: KeyProblem): CheckEvent {
   switch (problem) {
-    case "missing": return { kind: "key-needed", permitId: null, title: "TypeSafe key needed", body: "Add it in Settings to run checks." };
-    case "unreadable": return { kind: "key-needed", permitId: null, title: "TypeSafe key unreadable", body: "Save it again in Settings." };
-    case "rejected": return { kind: "key-needed", permitId: null, title: "TypeSafe key rejected", body: "Replace it in Settings. Scheduled checks are paused." };
+    case "missing":
+      return {
+        kind: "key-needed",
+        permitId: null,
+        title: "TypeSafe key needed",
+        body: "Add it in Settings to run checks.",
+      };
+    case "unreadable":
+      return {
+        kind: "key-needed",
+        permitId: null,
+        title: "TypeSafe key unreadable",
+        body: "Save it again in Settings.",
+      };
+    case "rejected":
+      return {
+        kind: "key-needed",
+        permitId: null,
+        title: "TypeSafe key rejected",
+        body: "Replace it in Settings. Scheduled checks are paused.",
+      };
   }
 }
 
@@ -28,7 +46,8 @@ export function keyNotice(problem: KeyProblem): CheckEvent {
 function statusBody(quoted: string, after: PermitRow): string {
   const classified = permitAction(after);
 
-  if (classified?.basis === "review") return `${quoted} · ${classified.reviews.map(describeReview).join("; ")} · Action: AEC`;
+  if (classified?.basis === "review")
+    return `${quoted} · ${classified.reviews.map(describeReview).join("; ")} · Action: AEC`;
 
   return classified?.action === "applicant" ? `${quoted} · Action: ${actionLabel(classified)}` : quoted;
 }
@@ -43,23 +62,39 @@ export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome:
 
   if (outcome === "success" && after.lastStatus !== null) {
     const previousRequests = new Set(outstandingReviews(before.reviews ?? []).map(reviewRequestKey));
-    const newRequests = outstandingReviews(after.reviews ?? []).filter((entry) => !previousRequests.has(reviewRequestKey(entry)));
+
+    const newRequests = outstandingReviews(after.reviews ?? []).filter(
+      (entry) => !previousRequests.has(reviewRequestKey(entry)),
+    );
 
     if (newRequests.length > 0) {
-      const status = before.lastStatus && before.lastStatus !== after.lastStatus
-        ? `“${before.lastStatus}” → “${after.lastStatus}”` : `“${after.lastStatus}”`;
+      const status =
+        before.lastStatus && before.lastStatus !== after.lastStatus
+          ? `“${before.lastStatus}” → “${after.lastStatus}”`
+          : `“${after.lastStatus}”`;
 
-      return { kind: "review-action", permitId: after.id, title: number,
-        body: `${status} · ${newRequests.map(describeReview).join("; ")} · Action: AEC` };
+      return {
+        kind: "review-action",
+        permitId: after.id,
+        title: number,
+        body: `${status} · ${newRequests.map(describeReview).join("; ")} · Action: AEC`,
+      };
     }
 
     if (before.lastStatus === null) {
-      return { kind: "first-status", permitId: after.id, title: number, body: statusBody(`“${after.lastStatus}”`, after) };
+      return {
+        kind: "first-status",
+        permitId: after.id,
+        title: number,
+        body: statusBody(`“${after.lastStatus}”`, after),
+      };
     }
 
     if (before.lastStatus !== after.lastStatus) {
       return {
-        kind: "status-changed", permitId: after.id, title: number,
+        kind: "status-changed",
+        permitId: after.id,
+        title: number,
         body: statusBody(`“${before.lastStatus}” → “${after.lastStatus}”`, after),
       };
     }
@@ -96,8 +131,10 @@ export function describeSharedUpdate(before: readonly PermitRow[], after: readon
 }
 
 /** Records a completed check before describing it, using the previous completed outcome rather than its unfinished run. */
-export function recordCheckEvent(store: Pick<PermitStore, "getPermitBeforeRun" | "finishRun" | "getPermit">,
-  input: Parameters<PermitStore["finishRun"]>[0]): CheckEvent | null {
+export function recordCheckEvent(
+  store: Pick<PermitStore, "getPermitBeforeRun" | "finishRun" | "getPermit">,
+  input: Parameters<PermitStore["finishRun"]>[0],
+): CheckEvent | null {
   const before = store.getPermitBeforeRun(input.permitId, input.runId);
   store.finishRun(input);
   const after = store.getPermit(input.permitId);

@@ -31,7 +31,10 @@ export interface ClassifiedCause {
 }
 
 /** An identifier-like value: codes, tags, and names never carry free text into the log. */
-const identifier = z.string().max(64).regex(/^[\w.-]+$/);
+const identifier = z
+  .string()
+  .max(64)
+  .regex(/^[\w.-]+$/);
 
 /** The structured fields read from a thrown value. Each falls back on its own, so one odd field doesn't hide the rest. */
 const causeFieldsSchema = z.object({
@@ -48,13 +51,20 @@ const DEFECT_NAMES = new Set(["TypeError", "RangeError", "ReferenceError", "Synt
 export function classifyCause(cause: unknown): ClassifiedCause {
   const parsed = cause instanceof Error ? causeFieldsSchema.safeParse(cause) : null;
 
-  if (!parsed?.success) return { class: "unclassified", name: "non-error", tag: null, code: null, errcode: null, syscall: null };
+  if (!parsed?.success)
+    return { class: "unclassified", name: "non-error", tag: null, code: null, errcode: null, syscall: null };
   const { name, _tag: tag = null, code = null, errcode = null, syscall = null } = parsed.data;
 
   return { class: failureClass(name, tag, code, errcode, syscall), name, tag, code, errcode, syscall };
 }
 
-function failureClass(name: string, tag: string | null, code: string | null, errcode: number | null, syscall: string | null): FailureClass {
+function failureClass(
+  name: string,
+  tag: string | null,
+  code: string | null,
+  errcode: number | null,
+  syscall: string | null,
+): FailureClass {
   if (tag !== null) return "tagged";
 
   if (code === "ERR_SQLITE_ERROR" || errcode !== null) return "sqlite";
@@ -83,7 +93,10 @@ export class DiagnosticLog {
   /** True between `stop()` and `restart()`. */
   private stopped = false;
 
-  constructor(private readonly filePath: string, private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   /**
    * Appends one diagnostic, unless the log is stopped. Never throws: when the log itself can't be written there is

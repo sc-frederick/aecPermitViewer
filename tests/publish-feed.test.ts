@@ -18,15 +18,20 @@ function sha256(value: string): string {
 }
 
 function manifest(version: string, installer: string): string {
-  const signed = Buffer.from(JSON.stringify({
-    version,
-    url: `https://permitmon-updates.example.test/PermitMonitorSetup-${version}.exe`,
-    sha256: sha256(installer),
-    size: Buffer.byteLength(installer),
-    publisher: "",
-  }));
+  const signed = Buffer.from(
+    JSON.stringify({
+      version,
+      url: `https://permitmon-updates.example.test/PermitMonitorSetup-${version}.exe`,
+      sha256: sha256(installer),
+      size: Buffer.byteLength(installer),
+      publisher: "",
+    }),
+  );
 
-  return JSON.stringify({ signed: signed.toString("base64"), signature: sign(null, signed, keys.privateKey).toString("base64") });
+  return JSON.stringify({
+    signed: signed.toString("base64"),
+    signature: sign(null, signed, keys.privateKey).toString("base64"),
+  });
 }
 
 // The release job runs on Linux, and the fake CLI is reached through a shell wrapper on PATH.
@@ -68,7 +73,10 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
       /** Stores an object as an earlier release (or an older publisher that recorded no hash) left it. */
       seed(key: string, body: string, metadata: { sha256?: string } = {}): void {
         writeFileSync(path.join(store, BUCKET, key), body);
-        writeFileSync(path.join(store, BUCKET, `${key}.meta.json`), JSON.stringify({ contentType: "application/octet-stream", metadata }));
+        writeFileSync(
+          path.join(store, BUCKET, `${key}.meta.json`),
+          JSON.stringify({ contentType: "application/octet-stream", metadata }),
+        );
       },
       stored(key: string): string | null {
         const file = path.join(store, BUCKET, key);
@@ -84,8 +92,12 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
         return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
       },
       publish(fail?: string, racedManifest?: string) {
-        const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-          R2_ENDPOINT: "https://r2.example.test", FAKE_AWS_ROOT: store };
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          R2_ENDPOINT: "https://r2.example.test",
+          FAKE_AWS_ROOT: store,
+        };
 
         if (fail) env.FAKE_AWS_FAIL = fail;
 
@@ -110,7 +122,11 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
     expect(feed.recordedSha256("PermitMonitorSetup-0.8.0.exe")).toBe(sha256("eight"));
     expect(feed.stored("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
-    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`, `${BUCKET}/release-manifest.json`]);
+    expect(feed.writes()).toEqual([
+      `${BUCKET}/PermitMonitorSetup-0.8.0.exe`,
+      `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
+      `${BUCKET}/release-manifest.json`,
+    ]);
   });
 
   it("uploads the Mac zip before the manifest and never replaces it with other bytes", () => {
@@ -121,8 +137,11 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(result.status, result.output).toBe(0);
     expect(feed.stored("PermitMonitor-0.8.0-mac-arm64.zip")).toBe("mac eight");
     expect(feed.recordedSha256("PermitMonitor-0.8.0-mac-arm64.zip")).toBe(sha256("mac eight"));
-    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitorSetup-0.8.0.exe`, `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
-      `${BUCKET}/release-manifest.json`]);
+    expect(feed.writes()).toEqual([
+      `${BUCKET}/PermitMonitorSetup-0.8.0.exe`,
+      `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
+      `${BUCKET}/release-manifest.json`,
+    ]);
 
     feed.buildMac("MAC EIGHT");
     const rebuilt = feed.publish();

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
-    tags: ['v*']
+    tags: ["v*"]
   pull_request:
 
 # A newer push to the same pull request replaces its run. Branch and tag runs always finish.
@@ -58,6 +58,7 @@ jobs:
       - run: npm ci --allow-git=all
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run format:check
       # Renderer and worker tests run in the staged browser.
       - run: npm run browser:stage
       - run: npm test -- --exclude tests/history-growth.test.ts

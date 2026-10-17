@@ -7,7 +7,9 @@ import * as z from "zod/mini";
 export type SqlValue = string | number | null | ArrayBuffer;
 
 /** A result row, keyed by column name. */
-export interface SqlRow { readonly [column: string]: SqlValue }
+export interface SqlRow {
+  readonly [column: string]: SqlValue;
+}
 
 /**
  * The part of a SQLite-backed Durable Object's storage the room uses. Cloudflare's DurableObjectStorage satisfies it
@@ -65,7 +67,9 @@ export class ShareRoom {
   constructor(private readonly storage: RoomStorage) {}
 
   private hasTable(): boolean {
-    const row = this.storage.sql.exec("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'list'").toArray()[0];
+    const row = this.storage.sql
+      .exec("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'list'")
+      .toArray()[0];
 
     return tableCountSchema.parse(row).tables > 0;
   }
@@ -104,9 +108,13 @@ export class ShareRoom {
       published_at TEXT NOT NULL,
       body BLOB NOT NULL
     )`);
-    this.storage.sql.exec(`INSERT INTO list (id, revision, published_at, body) VALUES (1, ?, ?, ?)
+    this.storage.sql.exec(
+      `INSERT INTO list (id, revision, published_at, body) VALUES (1, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, published_at = excluded.published_at, body = excluded.body`,
-    revision, publishedAt, body);
+      revision,
+      publishedAt,
+      body,
+    );
     await this.storage.setAlarm(now + RETENTION_MS);
 
     return { _tag: "published", revision, publishedAt };

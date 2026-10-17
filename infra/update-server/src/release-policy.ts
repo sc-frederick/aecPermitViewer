@@ -46,7 +46,10 @@ export function compareReleaseVersions(a: ReleaseVersion, b: ReleaseVersion): nu
  * same size and recorded hash is an identical retry; different bytes are a conflict. A same-size object with no
  * recorded hash is `unverified`: the caller must hash the stored bytes itself or refuse.
  */
-export function decideInstallerUpload(existing: InstallerIdentity | null, candidate: InstallerCandidate): InstallerDecision {
+export function decideInstallerUpload(
+  existing: InstallerIdentity | null,
+  candidate: InstallerCandidate,
+): InstallerDecision {
   if (!existing) return { _tag: "upload" };
 
   if (existing.size !== candidate.size) {
@@ -66,7 +69,10 @@ export function decideInstallerUpload(existing: InstallerIdentity | null, candid
  * Decides whether `candidate` may become the current manifest. Only a strictly newer version replaces the
  * published one. Re-sending the identical manifest is a no-op, so a publication retry succeeds.
  */
-export function decideManifestReplacement(published: VersionedManifest | null, candidate: VersionedManifest): ManifestDecision {
+export function decideManifestReplacement(
+  published: VersionedManifest | null,
+  candidate: VersionedManifest,
+): ManifestDecision {
   if (!published) return { _tag: "replace" };
   const order = compareReleaseVersions(candidate.version, published.version);
 
@@ -74,5 +80,7 @@ export function decideManifestReplacement(published: VersionedManifest | null, c
 
   if (order < 0) return { _tag: "stale", published: published.version.text };
 
-  return candidate.text === published.text ? { _tag: "unchanged" } : { _tag: "conflict", published: published.version.text };
+  return candidate.text === published.text
+    ? { _tag: "unchanged" }
+    : { _tag: "conflict", published: published.version.text };
 }

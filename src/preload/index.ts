@@ -17,7 +17,8 @@ const bridge: PermitBridge = {
   setMonitoring: (mode) => ipcRenderer.invoke("permit:set-monitoring", mode),
   setCheckTimes: (times) => ipcRenderer.invoke("permit:set-check-times", times),
   setPermitMonitoring: (permitId, enabled) => ipcRenderer.invoke("permit:set-permit-monitoring", { permitId, enabled }),
-  setProjectNumber: (permitId, projectNumber) => ipcRenderer.invoke("permit:set-project-number", { permitId, projectNumber }),
+  setProjectNumber: (permitId, projectNumber) =>
+    ipcRenderer.invoke("permit:set-project-number", { permitId, projectNumber }),
   setPreference: (key, value) => ipcRenderer.invoke("permit:set-preference", { key, value }),
   checkForUpdate: () => ipcRenderer.invoke("permit:check-update"),
   downloadUpdate: () => ipcRenderer.invoke("permit:download-update"),
@@ -31,7 +32,9 @@ const bridge: PermitBridge = {
   stopFollowing: () => ipcRenderer.invoke("permit:follow-stop"),
   syncShared: () => ipcRenderer.invoke("permit:share-sync"),
   onSnapshot: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) =>
+      callback(snapshot);
+
     ipcRenderer.on("permit:snapshot-changed", listener);
 
     return () => ipcRenderer.removeListener("permit:snapshot-changed", listener);

@@ -11,10 +11,14 @@ mkdirSync(browserPath, { recursive: true });
 
 // The worker and tests only launch the headless shell, so the full Chromium (about 400 MB) stays out of the installer.
 // On macOS it is also an app bundle full of symlinks, which the payload check refuses.
-const result = spawnSync(process.execPath, [path.resolve("node_modules/playwright/cli.js"), "install", "chromium", "--only-shell"], {
-  stdio: "inherit",
-  env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browserPath },
-});
+const result = spawnSync(
+  process.execPath,
+  [path.resolve("node_modules/playwright/cli.js"), "install", "chromium", "--only-shell"],
+  {
+    stdio: "inherit",
+    env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browserPath },
+  },
+);
 
 if (result.status !== 0) process.exit(result.status ?? 1);
 
@@ -33,7 +37,7 @@ async function filesIn(directory, prefix = "") {
       continue;
     }
 
-    if (entry.isDirectory()) files.push(...await filesIn(path.join(directory, entry.name), relative));
+    if (entry.isDirectory()) files.push(...(await filesIn(path.join(directory, entry.name), relative)));
     else if (entry.isFile()) files.push(relative);
     else throw new Error(`Unexpected browser payload entry: ${relative}`);
   }

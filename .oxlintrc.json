@@ -18,9 +18,7 @@
     "vendor/**",
     "tools/oxlint/anti-slop/**"
   ],
-  "jsPlugins": [
-    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
-  ],
+  "jsPlugins": [{ "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }],
   "rules": {
     "typescript/no-non-null-assertion": "error",
     "oxc/no-accumulating-spread": "error",

@@ -42,7 +42,8 @@ export async function readLocalRelease() {
   if (!payload) throw new Error(`${manifestPath} is malformed; run scripts/sign-release-manifest.mjs again.`);
   const key = `PermitMonitorSetup-${payload.version.text}.exe`;
 
-  if (new URL(payload.url).pathname !== `/${key}`) throw new Error(`The signed manifest points at ${payload.url}, not ${key}.`);
+  if (new URL(payload.url).pathname !== `/${key}`)
+    throw new Error(`The signed manifest points at ${payload.url}, not ${key}.`);
   const { size } = await stat(installerPath);
 
   if (size !== payload.size || (await sha256File(installerPath)) !== payload.sha256) {
@@ -61,7 +62,9 @@ export async function readLocalMac(version) {
   } catch (cause) {
     if (cause.code !== "ENOENT") throw cause;
 
-    throw new Error(`The matching Mac archive is missing: put the mac-app artifact at ${macZipPath} before publishing.`);
+    throw new Error(
+      `The matching Mac archive is missing: put the mac-app artifact at ${macZipPath} before publishing.`,
+    );
   }
 
   if (size === 0) throw new Error("The matching Mac archive is empty.");

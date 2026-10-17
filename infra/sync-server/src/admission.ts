@@ -52,7 +52,12 @@ export interface AdmissionApi {
 
 const countSchema = z.object({ count: z.number() });
 
-const sourceSchema = z.object({ write_window: z.number(), writes: z.number(), creation_window: z.number(), creations: z.number() });
+const sourceSchema = z.object({
+  write_window: z.number(),
+  writes: z.number(),
+  creation_window: z.number(),
+  creations: z.number(),
+});
 
 const deploymentSchema = z.object({ creation_window: z.number(), creations: z.number() });
 
@@ -66,7 +71,10 @@ function denied(reason: AdmissionDenied["reason"], until: number, now: number): 
  */
 export class ShareAdmission {
   /** Initializes the fixed coordinator schema; limits must already have passed admissionLimitsSchema. */
-  constructor(private readonly storage: RoomStorage, private readonly limits: AdmissionLimits = DEFAULT_ADMISSION_LIMITS) {
+  constructor(
+    private readonly storage: RoomStorage,
+    private readonly limits: AdmissionLimits = DEFAULT_ADMISSION_LIMITS,
+  ) {
     storage.sql.exec("CREATE TABLE IF NOT EXISTS admitted_rooms (name TEXT PRIMARY KEY)");
     storage.sql.exec(`CREATE TABLE IF NOT EXISTS admission_sources (
       source TEXT PRIMARY KEY, write_window INTEGER NOT NULL, writes INTEGER NOT NULL,
@@ -85,10 +93,16 @@ export class ShareAdmission {
     const minute = Math.floor(now / MINUTE_MS);
     const day = Math.floor(now / DAY_MS);
     this.storage.sql.exec("DELETE FROM admission_sources WHERE creation_window < ? AND write_window < ?", day, minute);
-    const row = this.storage.sql.exec("SELECT write_window, writes, creation_window, creations FROM admission_sources WHERE source = ?", source).toArray()[0];
+
+    const row = this.storage.sql
+      .exec("SELECT write_window, writes, creation_window, creations FROM admission_sources WHERE source = ?", source)
+      .toArray()[0];
 
     if (row) return sourceSchema.parse(row);
-    const tracked = countSchema.parse(this.storage.sql.exec("SELECT count(*) AS count FROM admission_sources").toArray()[0]).count;
+
+    const tracked = countSchema.parse(
+      this.storage.sql.exec("SELECT count(*) AS count FROM admission_sources").toArray()[0],
+    ).count;
 
     if (tracked >= this.limits.trackedSources) return denied("tracked_sources", (day + 1) * DAY_MS, now);
     this.storage.sql.exec("INSERT INTO admission_sources VALUES (?, ?, 0, ?, 0)", source, minute, day);
@@ -100,12 +114,21 @@ export class ShareAdmission {
     const day = Math.floor(now / DAY_MS);
     const until = (day + 1) * DAY_MS;
 
-    if (source.creation_window === day && source.creations >= this.limits.sourceCreationsPerDay) return denied("source_creations", until, now);
-    const row = this.storage.sql.exec("SELECT creation_window, creations FROM admission_deployment WHERE id = 1").toArray()[0];
+    if (source.creation_window === day && source.creations >= this.limits.sourceCreationsPerDay)
+      return denied("source_creations", until, now);
+
+    const row = this.storage.sql
+      .exec("SELECT creation_window, creations FROM admission_deployment WHERE id = 1")
+      .toArray()[0];
+
     const deployment = row ? deploymentSchema.parse(row) : null;
 
-    if (deployment?.creation_window === day && deployment.creations >= this.limits.deploymentCreationsPerDay) return denied("deployment_creations", until, now);
-    const rooms = countSchema.parse(this.storage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()[0]).count;
+    if (deployment?.creation_window === day && deployment.creations >= this.limits.deploymentCreationsPerDay)
+      return denied("deployment_creations", until, now);
+
+    const rooms = countSchema.parse(
+      this.storage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()[0],
+    ).count;
 
     return rooms >= this.limits.registeredRooms ? denied("room_capacity", now + 3_600_000, now) : null;
   }
@@ -119,7 +142,12 @@ export class ShareAdmission {
     const writes = state.write_window === minute ? state.writes : 0;
 
     if (writes >= this.limits.sourceWritesPerMinute) return denied("source_writes", (minute + 1) * MINUTE_MS, now);
-    this.storage.sql.exec("UPDATE admission_sources SET write_window = ?, writes = ? WHERE source = ?", minute, writes + 1, source);
+    this.storage.sql.exec(
+      "UPDATE admission_sources SET write_window = ?, writes = ? WHERE source = ?",
+      minute,
+      writes + 1,
+      source,
+    );
 
     if (this.registered(name)) return { _tag: "allowed", registered: true };
 
@@ -138,12 +166,31 @@ export class ShareAdmission {
     const day = Math.floor(now / DAY_MS);
     const creations = state.creation_window === day ? state.creations : 0;
     this.storage.sql.exec("INSERT INTO admitted_rooms VALUES (?)", name);
-    this.storage.sql.exec("UPDATE admission_sources SET creation_window = ?, creations = ? WHERE source = ?", day, creations + 1, source);
-    this.storage.sql.exec(`INSERT INTO admission_deployment VALUES (1, ?, 1)
+    this.storage.sql.exec(
+      "UPDATE admission_sources SET creation_window = ?, creations = ? WHERE source = ?",
+      day,
+      creations + 1,
+      source,
+    );
+    this.storage.sql.exec(
+      `INSERT INTO admission_deployment VALUES (1, ?, 1)
       ON CONFLICT(id) DO UPDATE SET creation_window = excluded.creation_window,
-      creations = CASE WHEN admission_deployment.creation_window = excluded.creation_window THEN admission_deployment.creations + 1 ELSE 1 END`, day);
-    const registeredRooms = countSchema.parse(this.storage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()[0]).count;
-    console.info(JSON.stringify({ event: "share_admitted", registeredRooms, roomCapacity: this.limits.registeredRooms, maximumCiphertextBytes: this.limits.registeredRooms * SHARE_BODY_MAX_BYTES }));
+      creations = CASE WHEN admission_deployment.creation_window = excluded.creation_window THEN admission_deployment.creations + 1 ELSE 1 END`,
+      day,
+    );
+
+    const registeredRooms = countSchema.parse(
+      this.storage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()[0],
+    ).count;
+
+    console.info(
+      JSON.stringify({
+        event: "share_admitted",
+        registeredRooms,
+        roomCapacity: this.limits.registeredRooms,
+        maximumCiphertextBytes: this.limits.registeredRooms * SHARE_BODY_MAX_BYTES,
+      }),
+    );
 
     return { _tag: "allowed", registered: true };
   }

@@ -55,7 +55,11 @@ function newer(candidate: string, current: string): boolean {
  * @throws Error or ZodError when the envelope or payload is malformed, the signature is invalid, the installer URL is
  *   not a plain HTTPS URL, or the publisher differs. Callers treat any throw as "no trustworthy update".
  */
-export function verifyReleaseEnvelope(text: string, publicKeySpkiBase64: string, expectedPublisher: string): UpdatePayload {
+export function verifyReleaseEnvelope(
+  text: string,
+  publicKeySpkiBase64: string,
+  expectedPublisher: string,
+): UpdatePayload {
   const envelope = envelopeSchema.parse(JSON.parse(text));
   const signedBytes = Buffer.from(envelope.signed, "base64");
   const signature = Buffer.from(envelope.signature, "base64");
@@ -64,7 +68,8 @@ export function verifyReleaseEnvelope(text: string, publicKeySpkiBase64: string,
   if (!verify(null, signedBytes, key, signature)) throw new Error("Update manifest signature invalid");
   const payload = payloadSchema.parse(JSON.parse(signedBytes.toString("utf8")));
 
-  if (!safeHttpsUrl(payload.url) || payload.publisher !== expectedPublisher) throw new Error("Update manifest target invalid");
+  if (!safeHttpsUrl(payload.url) || payload.publisher !== expectedPublisher)
+    throw new Error("Update manifest target invalid");
 
   return payload;
 }
@@ -146,7 +151,12 @@ function sameHex(left: string, right: string): boolean {
  * the stream is cancelled, the file is closed, and the error is rethrown. The file is removed only if this call created
  * it; an existing file at `file` fails the call and is left alone. `onProgress` runs after each read.
  */
-export async function saveDownload(body: ReadableStream<Uint8Array>, file: string, size: number, onProgress: () => void): Promise<string> {
+export async function saveDownload(
+  body: ReadableStream<Uint8Array>,
+  file: string,
+  size: number,
+  onProgress: () => void,
+): Promise<string> {
   const reader = body.getReader();
   let handle: FileHandle | null = null;
   let created = false;
@@ -194,7 +204,10 @@ export async function saveDownload(body: ReadableStream<Uint8Array>, file: strin
 export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
-  constructor(readonly operation: "check" | "download" | "install", override readonly cause?: unknown) {
+  constructor(
+    readonly operation: "check" | "download" | "install",
+    override readonly cause?: unknown,
+  ) {
     super(`Update ${operation} was superseded`);
   }
 }
@@ -215,12 +228,22 @@ export class UpdateNotReady extends Error {
 type UpdateState =
   | { readonly _tag: "idle" }
   | { readonly _tag: "available"; readonly payload: UpdatePayload }
-  | { readonly _tag: "downloading"; readonly payload: UpdatePayload; readonly operation: Promise<string>; readonly abort: AbortController }
+  | {
+      readonly _tag: "downloading";
+      readonly payload: UpdatePayload;
+      readonly operation: Promise<string>;
+      readonly abort: AbortController;
+    }
   | { readonly _tag: "ready"; readonly payload: UpdatePayload; readonly file: string };
 
 function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
-  return left.version === right.version && left.url === right.url && left.sha256 === right.sha256 &&
-    left.size === right.size && left.publisher === right.publisher;
+  return (
+    left.version === right.version &&
+    left.url === right.url &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size &&
+    left.publisher === right.publisher
+  );
 }
 
 /**
@@ -238,7 +261,12 @@ export class UpdateManager {
   /** Settles once the latest download has finished all its file work, successful or not. Never rejects. */
   private downloadSettled: Promise<void> = Promise.resolve();
 
-  constructor(private readonly dataRoot: string, private readonly currentVersion: string, private readonly scriptPath: string, configPath: string) {
+  constructor(
+    private readonly dataRoot: string,
+    private readonly currentVersion: string,
+    private readonly scriptPath: string,
+    configPath: string,
+  ) {
     this.config = configSchema.parse(JSON.parse(readFileSync(configPath, "utf8")));
   }
 
@@ -306,18 +334,24 @@ export class UpdateManager {
     // update folder at once.
     const operation = this.downloadSettled
       .then(() => this.saveInstaller(payload, abort.signal))
-      .then((file) => {
-        if (generation !== this.generation) throw new UpdateSuperseded("download");
-        this.state = { _tag: "ready", payload, file };
+      .then(
+        (file) => {
+          if (generation !== this.generation) throw new UpdateSuperseded("download");
+          this.state = { _tag: "ready", payload, file };
 
-        return payload.version;
-      }, (cause) => {
-        if (generation !== this.generation) throw new UpdateSuperseded("download", cause);
-        this.state = { _tag: "available", payload };
-        throw cause;
-      });
+          return payload.version;
+        },
+        (cause) => {
+          if (generation !== this.generation) throw new UpdateSuperseded("download", cause);
+          this.state = { _tag: "available", payload };
+          throw cause;
+        },
+      );
 
-    this.downloadSettled = operation.then(() => undefined, () => undefined);
+    this.downloadSettled = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     this.state = { _tag: "downloading", payload, operation, abort };
 
     return operation;
@@ -415,8 +449,11 @@ export class UpdateManager {
       await rename(temporary, final);
 
       for (const entry of await readdir(updateDir)) {
-        if ((entry.startsWith("PermitMonitorSetup-") && entry.endsWith(".exe") && entry !== path.basename(final)) ||
-          entry.endsWith(".partial.exe")) await rm(path.join(updateDir, entry), { force: true });
+        if (
+          (entry.startsWith("PermitMonitorSetup-") && entry.endsWith(".exe") && entry !== path.basename(final)) ||
+          entry.endsWith(".partial.exe")
+        )
+          await rm(path.join(updateDir, entry), { force: true });
       }
     } catch (cause) {
       await rm(temporary, { force: true });
@@ -433,11 +470,25 @@ export class UpdateManager {
 
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", this.scriptPath,
-        "-InstallerPath", file, "-ExpectedPublisher", publisher], { windowsHide: true, stdio: "ignore", signal });
+      const child = spawn(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-File",
+          this.scriptPath,
+          "-InstallerPath",
+          file,
+          "-ExpectedPublisher",
+          publisher,
+        ],
+        { windowsHide: true, stdio: "ignore", signal },
+      );
 
       child.once("error", reject);
-      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error("Update publisher verification failed")));
+      child.once("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error("Update publisher verification failed")),
+      );
     });
   }
 }

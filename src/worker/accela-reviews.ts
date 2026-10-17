@@ -22,11 +22,11 @@ export async function readAccelaReviews(page: Page): Promise<ReviewRead> {
   try {
     const tab = page.locator("#tab-processing_status");
 
-    if (await tab.count() === 0) return failed;
+    if ((await tab.count()) === 0) return failed;
     const table = page.locator("#divProcessingTable");
 
     // Some tenants render the workflow at page load; others fetch it the first time the tab opens.
-    if (await table.locator("table, .ACA_CapDetail_NoRecord").count() === 0) {
+    if ((await table.locator("table, .ACA_CapDetail_NoRecord").count()) === 0) {
       await page.locator('a[data-control="tab-processing_status"]').evaluate((link) => {
         if (link instanceof HTMLElement) link.click();
       });
@@ -67,7 +67,8 @@ export async function readAccelaReviews(page: Page): Promise<ReviewRead> {
     const entries: ReviewEntry[] = [];
 
     for (const process of processes) {
-      if (process.entries.length === 0) entries.push({ process: process.process, status: null, date: null, dueDate: null });
+      if (process.entries.length === 0)
+        entries.push({ process: process.process, status: null, date: null, dueDate: null });
 
       for (const values of process.entries) {
         const [due, , status, dated] = values;

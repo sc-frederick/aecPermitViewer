@@ -48,10 +48,7 @@
   "idleStable": true,
   "resolutionCapped": false,
   "hover": {
-    "centerError": [
-      0,
-      0
-    ],
+    "centerError": [0, 0],
     "shadow": "none"
   },
   "narrow": {

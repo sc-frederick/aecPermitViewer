@@ -11,7 +11,12 @@ export interface DisplayedRecord {
   reviews?: ReviewEntry[] | null;
 }
 
-export const NOTHING_DISPLAYED: DisplayedRecord = { displayedNumber: null, statusLabel: null, statusValue: null, recordUrl: null };
+export const NOTHING_DISPLAYED: DisplayedRecord = {
+  displayedNumber: null,
+  statusLabel: null,
+  statusValue: null,
+  recordUrl: null,
+};
 
 /** A search page's state and the next steps it allows. */
 export interface SearchObservation {

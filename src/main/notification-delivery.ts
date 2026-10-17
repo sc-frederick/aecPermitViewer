@@ -45,7 +45,9 @@ export class CheckNotifier {
   /** Apply preferences, suppress repeated key notices, and deliver through the appropriate visible surface. */
   async announce(event: CheckEvent): Promise<void> {
     const state = this.delivery.state();
-    const statusNotice = event.kind === "first-status" || event.kind === "status-changed" || event.kind === "review-action";
+
+    const statusNotice =
+      event.kind === "first-status" || event.kind === "status-changed" || event.kind === "review-action";
 
     if (!(statusNotice ? state.statusChanges : state.failures)) return;
 
@@ -90,9 +92,14 @@ export class CheckNotifier {
     const first = notices[0];
 
     if (!first) return;
-    this.delivery.inApp(notices.length === 1 ? first : {
-      tone: "error", title: "Desktop notifications could not be shown",
-      body: `${notices.length} permits or checks have updates. Review the permit list; check the system notification settings.`,
-    });
+    this.delivery.inApp(
+      notices.length === 1
+        ? first
+        : {
+            tone: "error",
+            title: "Desktop notifications could not be shown",
+            body: `${notices.length} permits or checks have updates. Review the permit list; check the system notification settings.`,
+          },
+    );
   }
 }

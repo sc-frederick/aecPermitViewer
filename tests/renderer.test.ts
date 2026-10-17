@@ -57,8 +57,17 @@ let rendererUrl: string;
 
 beforeAll(async () => {
   directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-renderer-"));
-  await build({ entryPoints: { renderer: "src/renderer/index.ts" }, outdir: directory, bundle: true,
-    target: "es2022", platform: "browser", format: "esm", splitting: true, chunkNames: "chunks/[name]-[hash]", logLevel: "silent" });
+  await build({
+    entryPoints: { renderer: "src/renderer/index.ts" },
+    outdir: directory,
+    bundle: true,
+    target: "es2022",
+    platform: "browser",
+    format: "esm",
+    splitting: true,
+    chunkNames: "chunks/[name]-[hash]",
+    logLevel: "silent",
+  });
   copyFileSync("src/renderer/index.html", path.join(directory, "index.html"));
   copyFileSync("src/renderer/styles.css", path.join(directory, "styles.css"));
   cpSync("assets", path.join(directory, "assets"), { recursive: true });
@@ -74,10 +83,26 @@ beforeAll(async () => {
       return;
     }
 
-    void readFile(file).then((body) => {
-      response.setHeader("Content-Type", relative.endsWith(".js") ? "text/javascript" : relative.endsWith(".css") ? "text/css" : relative.endsWith(".woff2") ? "font/woff2" : relative.endsWith(".svg") ? "image/svg+xml" : "text/html");
-      response.end(body);
-    }, () => { response.writeHead(404).end(); });
+    void readFile(file).then(
+      (body) => {
+        response.setHeader(
+          "Content-Type",
+          relative.endsWith(".js")
+            ? "text/javascript"
+            : relative.endsWith(".css")
+              ? "text/css"
+              : relative.endsWith(".woff2")
+                ? "font/woff2"
+                : relative.endsWith(".svg")
+                  ? "image/svg+xml"
+                  : "text/html",
+        );
+        response.end(body);
+      },
+      () => {
+        response.writeHead(404).end();
+      },
+    );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = z.object({ port: z.int().min(1).max(65535) }).parse(server.address());
@@ -98,7 +123,8 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
     jurisdictionId: "hillsborough-county-building",
     permitNumber: `HC-BLD-26-${String(index).padStart(7, "0")}`,
     projectNumber: null,
-    reviews: null, monitoringEnabled: true,
+    reviews: null,
+    monitoringEnabled: true,
     lastStatus: "In Process",
     lastObservedAt: "2026-09-24T12:00:00.000Z",
     lastRecordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx",
@@ -113,7 +139,10 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
 let revision = 0;
 
 /** A snapshot as main would send it next: each one takes a higher revision than the one before. */
-function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "revision" | "permits">> = {}): AppSnapshot {
+function snapshot(
+  permits: PermitRow[],
+  overrides: Partial<Omit<AppSnapshot, "revision" | "permits">> = {},
+): AppSnapshot {
   revision += 1;
 
   return {
@@ -125,8 +154,14 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "re
     monitoring: "manual",
     checkTimes: ["08:30"],
     preferences: {
-      notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false, desktopShortcut: false,
-      backgroundAvailable: false, installedApp: false, offerDesktopShortcut: false,
+      notifyStatusChanges: true,
+      notifyFailures: true,
+      runInBackground: false,
+      openAtLogin: false,
+      desktopShortcut: false,
+      backgroundAvailable: false,
+      installedApp: false,
+      offerDesktopShortcut: false,
     },
     share: { mode: "off", available: true },
     ...overrides,
@@ -140,96 +175,167 @@ function snapshot(permits: PermitRow[], overrides: Partial<Omit<AppSnapshot, "re
 async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<void> {
   await page?.close();
   page = await browser.newPage();
-  await page.addInitScript(({ first, hold }) => {
-    const listeners: Array<(value: AppSnapshot) => void> = [];
-    const appEvents: Array<(value: AppEvent) => void> = [];
-    const openDetails: Array<(value: string) => void> = [];
+  await page.addInitScript(
+    ({ first, hold }) => {
+      const listeners: Array<(value: AppSnapshot) => void> = [];
+      const appEvents: Array<(value: AppEvent) => void> = [];
+      const openDetails: Array<(value: string) => void> = [];
 
-    const pending: Array<{ permitId: string; resolve: (value: BridgeResult<PermitHistory>) => void; reject: (cause: Error) => void }> = [];
+      const pending: Array<{
+        permitId: string;
+        resolve: (value: BridgeResult<PermitHistory>) => void;
+        reject: (cause: Error) => void;
+      }> = [];
 
-    const failures = new Map<string, string>();
+      const failures = new Map<string, string>();
 
-    const answer = (method: string) => async (): Promise<BridgeResult<null>> => {
-      const error = failures.get(method);
+      const answer = (method: string) => async (): Promise<BridgeResult<null>> => {
+        const error = failures.get(method);
 
-      return error === undefined ? { ok: true, value: null } : { ok: false, error };
-    };
+        return error === undefined ? { ok: true, value: null } : { ok: false, error };
+      };
 
-    let answerFirst: () => void = () => undefined;
+      let answerFirst: () => void = () => undefined;
 
-    const firstReply = new Promise<AppSnapshot>((resolve) => { answerFirst = () => resolve(first); });
+      const firstReply = new Promise<AppSnapshot>((resolve) => {
+        answerFirst = () => resolve(first);
+      });
 
-    if (!hold) answerFirst();
+      if (!hold) answerFirst();
 
-    const control: TestBridge = {
-      historyCalls: [],
-      checkTimeCalls: [],
-      preferenceCalls: [],
-      unhandled: [],
-      push: (next) => { for (const listener of listeners) listener(next); },
-      appEvent: (event) => { for (const listener of appEvents) listener(event); },
-      openDetails: (permitId) => { for (const listener of openDetails) listener(permitId); },
-      answerSnapshot: () => answerFirst(),
-      failHistory: (index, error) => { pending[index]?.resolve({ ok: false, error }); },
-      rejectHistory: (index) => { pending[index]?.reject(new Error("IPC channel closed")); },
-      fail: (method, error) => { failures.set(method, error); },
-      answerHistory: (index: number, status: string, nextBefore?: string, startedAt = "2026-09-24T12:00:00.000Z") => {
-        const request = pending[index];
-
-        request?.resolve({ ok: true, value: { nextBefore: nextBefore ?? null, runs: [{ id: `r${index}`, permitId: request.permitId, startedAt,
-          finishedAt: "2026-09-24T12:01:00.000Z", outcome: "success", actionCount: 0, requestCount: 0 }],
-        observations: [{ id: `o${index}`, runId: `r${index}`, permitId: request.permitId,
-          verifiedPermitNumber: "x", statusLabel: "Record Status:", statusValue: status, reviews: null, observedAt: "2026-09-24T12:00:00.000Z",
-          recordUrl: "https://example.test" }] } });
-      },
-    };
-
-    window.addEventListener("unhandledrejection", (event) => { control.unhandled.push(String(event.reason)); });
-
-    const methods = ["addAndCheck", "checkNow", "cancel", "openPortal", "recordManualStatus", "saveKey", "removeKey", "openRecord",
-      "openObservationRecord", "removePermit", "setMonitoring", "setPermitMonitoring", "setProjectNumber", "setPreference",
-      "checkForUpdate", "downloadUpdate", "installUpdate", "openUpdateDownload", "deleteLocalData", "startSharing", "stopSharing", "copyShareCode",
-      "follow", "stopFollowing", "syncShared"];
-
-    Object.assign(window, {
-      testBridge: control,
-      permitMonitor: {
-        ...Object.fromEntries(methods.map((method) => [method, answer(method)])),
-        snapshot: () => firstReply,
-        history: (permitId: string) => {
-          control.historyCalls.push(permitId);
-
-          return new Promise((resolve, reject) => pending.push({ permitId, resolve, reject }));
+      const control: TestBridge = {
+        historyCalls: [],
+        checkTimeCalls: [],
+        preferenceCalls: [],
+        unhandled: [],
+        push: (next) => {
+          for (const listener of listeners) listener(next);
         },
-        setCheckTimes: async (times: string[]) => {
-          control.checkTimeCalls.push(times);
-
-          return answer("setCheckTimes")();
+        appEvent: (event) => {
+          for (const listener of appEvents) listener(event);
         },
-        setPreference: async (key: string, value: boolean) => {
-          control.preferenceCalls.push([key, value]);
-
-          return answer("setPreference")();
+        openDetails: (permitId) => {
+          for (const listener of openDetails) listener(permitId);
         },
-        onSnapshot: (callback: (value: AppSnapshot) => void) => {
-          listeners.push(callback);
-
-          return () => undefined;
+        answerSnapshot: () => answerFirst(),
+        failHistory: (index, error) => {
+          pending[index]?.resolve({ ok: false, error });
         },
-        onLocalError: () => () => undefined,
-        onOpenDetails: (callback: (value: string) => void) => {
-          openDetails.push(callback);
-
-          return () => undefined;
+        rejectHistory: (index) => {
+          pending[index]?.reject(new Error("IPC channel closed"));
         },
-        onAppEvent: (callback: (value: AppEvent) => void) => {
-          appEvents.push(callback);
-
-          return () => undefined;
+        fail: (method, error) => {
+          failures.set(method, error);
         },
-      },
-    });
-  }, { first: initial, hold: holdFirstSnapshot });
+        answerHistory: (index: number, status: string, nextBefore?: string, startedAt = "2026-09-24T12:00:00.000Z") => {
+          const request = pending[index];
+
+          request?.resolve({
+            ok: true,
+            value: {
+              nextBefore: nextBefore ?? null,
+              runs: [
+                {
+                  id: `r${index}`,
+                  permitId: request.permitId,
+                  startedAt,
+                  finishedAt: "2026-09-24T12:01:00.000Z",
+                  outcome: "success",
+                  actionCount: 0,
+                  requestCount: 0,
+                },
+              ],
+              observations: [
+                {
+                  id: `o${index}`,
+                  runId: `r${index}`,
+                  permitId: request.permitId,
+                  verifiedPermitNumber: "x",
+                  statusLabel: "Record Status:",
+                  statusValue: status,
+                  reviews: null,
+                  observedAt: "2026-09-24T12:00:00.000Z",
+                  recordUrl: "https://example.test",
+                },
+              ],
+            },
+          });
+        },
+      };
+
+      window.addEventListener("unhandledrejection", (event) => {
+        control.unhandled.push(String(event.reason));
+      });
+
+      const methods = [
+        "addAndCheck",
+        "checkNow",
+        "cancel",
+        "openPortal",
+        "recordManualStatus",
+        "saveKey",
+        "removeKey",
+        "openRecord",
+        "openObservationRecord",
+        "removePermit",
+        "setMonitoring",
+        "setPermitMonitoring",
+        "setProjectNumber",
+        "setPreference",
+        "checkForUpdate",
+        "downloadUpdate",
+        "installUpdate",
+        "openUpdateDownload",
+        "deleteLocalData",
+        "startSharing",
+        "stopSharing",
+        "copyShareCode",
+        "follow",
+        "stopFollowing",
+        "syncShared",
+      ];
+
+      Object.assign(window, {
+        testBridge: control,
+        permitMonitor: {
+          ...Object.fromEntries(methods.map((method) => [method, answer(method)])),
+          snapshot: () => firstReply,
+          history: (permitId: string) => {
+            control.historyCalls.push(permitId);
+
+            return new Promise((resolve, reject) => pending.push({ permitId, resolve, reject }));
+          },
+          setCheckTimes: async (times: string[]) => {
+            control.checkTimeCalls.push(times);
+
+            return answer("setCheckTimes")();
+          },
+          setPreference: async (key: string, value: boolean) => {
+            control.preferenceCalls.push([key, value]);
+
+            return answer("setPreference")();
+          },
+          onSnapshot: (callback: (value: AppSnapshot) => void) => {
+            listeners.push(callback);
+
+            return () => undefined;
+          },
+          onLocalError: () => () => undefined,
+          onOpenDetails: (callback: (value: string) => void) => {
+            openDetails.push(callback);
+
+            return () => undefined;
+          },
+          onAppEvent: (callback: (value: AppEvent) => void) => {
+            appEvents.push(callback);
+
+            return () => undefined;
+          },
+        },
+      });
+    },
+    { first: initial, hold: holdFirstSnapshot },
+  );
   await page.goto(rendererUrl);
 
   if (!holdFirstSnapshot) await page.locator("#permit-table tbody tr").first().waitFor({ state: "attached" });
@@ -274,19 +380,25 @@ describe("permit table updates", () => {
       window.keptRows = new Set(document.querySelectorAll("#permit-table tbody tr"));
     });
 
-    await push(snapshot(fifty.map((entry, index) => index === 19 ? { ...entry, checking: true } : entry)));
+    await push(snapshot(fifty.map((entry, index) => (index === 19 ? { ...entry, checking: true } : entry))));
 
     expect(await focused.evaluate((node) => node === document.activeElement)).toBe(true);
-    expect(await page.evaluate(() => [...document.querySelectorAll("#permit-table tbody tr")]
-      .every((row) => window.keptRows.has(row)))).toBe(true);
-    await expect.poll(() => page.locator(`button[data-permit-id="${twentieth.id}"][data-action="cancel"]`).count()).toBe(1);
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll("#permit-table tbody tr")].every((row) => window.keptRows.has(row)),
+      ),
+    ).toBe(true);
+    await expect
+      .poll(() => page.locator(`button[data-permit-id="${twentieth.id}"][data-action="cancel"]`).count())
+      .toBe(1);
   });
 
   it("groups by project and moves rows between groups as numbers change", async () => {
-    await push(snapshot(fifty.map((entry, index) => index < 3 ? { ...entry, projectNumber: "28069" } : entry)));
+    await push(snapshot(fifty.map((entry, index) => (index < 3 ? { ...entry, projectNumber: "28069" } : entry))));
 
-    const heads = await page.locator("#permit-table tr.group-row .group-head").evaluateAll((nodes) =>
-      nodes.map((node) => [...node.children].map((part) => part.textContent).join(" ")));
+    const heads = await page
+      .locator("#permit-table tr.group-row .group-head")
+      .evaluateAll((nodes) => nodes.map((node) => [...node.children].map((part) => part.textContent).join(" ")));
 
     expect(heads).toEqual(["Project 28069 3 permits", "No project 47 permits"]);
     expect(await page.locator("#permit-table tbody tr:not(.group-row)").count()).toBe(50);
@@ -301,15 +413,19 @@ describe("permit table updates", () => {
     await push(snapshot(fifty.slice(1)));
     await push(snapshot(fifty));
 
-    expect(await page.locator(`#permit-table tr:has(button[data-permit-id="${returning.id}"])`).getAttribute("class")).toBe("row-enter");
+    expect(
+      await page.locator(`#permit-table tr:has(button[data-permit-id="${returning.id}"])`).getAttribute("class"),
+    ).toBe("row-enter");
   });
 });
 
 describe("check time editing", () => {
   const schedule = { ...snapshot(fifty), monitoring: "scheduled" as const, checkTimes: ["08:30", "12:30", "16:30"] };
 
-  const times = () => page.locator("#check-time-list input").evaluateAll((nodes) =>
-    nodes.map((node) => node instanceof HTMLInputElement ? node.value : null));
+  const times = () =>
+    page
+      .locator("#check-time-list input")
+      .evaluateAll((nodes) => nodes.map((node) => (node instanceof HTMLInputElement ? node.value : null)));
 
   beforeEach(async () => {
     await open(schedule);
@@ -370,8 +486,13 @@ describe("notices over dialogs", () => {
 describe("notification surfaces", () => {
   it("shows a review alert above an open settings dialog", async () => {
     await page.locator("#open-settings").click();
-    await page.evaluate(() => window.testBridge.appEvent({ tone: "info", title: "HC-SITECON-26-0000004",
-      body: "Natural Resources Review: Corrections Required · Action: AEC" }));
+    await page.evaluate(() =>
+      window.testBridge.appEvent({
+        tone: "info",
+        title: "HC-SITECON-26-0000004",
+        body: "Natural Resources Review: Corrections Required · Action: AEC",
+      }),
+    );
     expect(await page.locator("#notice").innerText()).toContain("Corrections Required · Action: AEC");
     expect(await noticeOnTop()).toBe(true);
   });
@@ -390,7 +511,12 @@ describe("notification surfaces", () => {
 describe("AEC filter", () => {
   it("shows review-driven AEC action and the latest discipline statuses while preserving the portal's In Process wording", async () => {
     const reviews = [
-      { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" },
+      {
+        process: "Natural Resources Review",
+        status: "Corrections Required",
+        date: "2026-09-24",
+        dueDate: "2026-09-22",
+      },
       { process: "Stormwater Review", status: "Corrections Required", date: "2026-07-16", dueDate: "2026-07-14" },
       { process: "Stormwater Review", status: null, date: null, dueDate: "2026-09-22" },
     ];
@@ -413,25 +539,39 @@ describe("AEC filter", () => {
     expect(await page.locator("#details-review-list li").nth(1).innerText()).toContain("Pending");
     expect(await page.locator("#details-review-list li").nth(1).innerText()).not.toContain("Corrections Required");
 
-    await push(snapshot([permit(1, { reviews: [{ ...defined(reviews[0], "Natural Resources"), status: "Approved", date: "2026-09-28" }] }), permit(2)]));
+    await push(
+      snapshot([
+        permit(1, {
+          reviews: [{ ...defined(reviews[0], "Natural Resources"), status: "Approved", date: "2026-09-28" }],
+        }),
+        permit(2),
+      ]),
+    );
     expect(await page.locator("#details-action").innerText()).toContain("AHJ");
     expect(await page.locator("#empty-state").innerText()).toBe("No matches.");
   });
 
   it("includes cautious AEC? badges, leaves unclassified permits out, and never reads as an all-clear", async () => {
-    await open(snapshot([
-      permit(1, { lastStatus: "Awaiting Client Reply" }),
-      permit(2, { lastStatus: "Expired" }),
-      permit(3, { lastStatus: "Issued" }),
-      permit(4, { jurisdictionId: "swfwmd-erp", permitNumber: "43047590.008", lastStatus: "Issued" }),
-    ]));
+    await open(
+      snapshot([
+        permit(1, { lastStatus: "Awaiting Client Reply" }),
+        permit(2, { lastStatus: "Expired" }),
+        permit(3, { lastStatus: "Issued" }),
+        permit(4, { jurisdictionId: "swfwmd-erp", permitNumber: "43047590.008", lastStatus: "Issued" }),
+      ]),
+    );
     const actionCells = page.locator("#permit-table tbody tr td:nth-child(3)");
     expect(await actionCells.allInnerTexts()).toEqual(["AEC", "AEC?", "None", "—"]);
 
     await page.selectOption("#permit-filter", "applicant");
     expect(await page.locator("#permit-table tbody tr").count()).toBe(2);
 
-    await push(snapshot([permit(3, { lastStatus: "Issued" }), permit(4, { jurisdictionId: "swfwmd-erp", permitNumber: "43047590.008", lastStatus: "Issued" })]));
+    await push(
+      snapshot([
+        permit(3, { lastStatus: "Issued" }),
+        permit(4, { jurisdictionId: "swfwmd-erp", permitNumber: "43047590.008", lastStatus: "Issued" }),
+      ]),
+    );
     expect(await page.locator("#empty-state").innerText()).toBe("No matches.");
   });
 });
@@ -448,7 +588,9 @@ describe("details history", () => {
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newest");
     await expect.poll(() => more.isEnabled()).toBe(true);
     await more.click();
-    await page.evaluate(() => window.testBridge.answerHistory(2, "Previous day", "2026-09-23T00:00:00.000Z", "2026-09-23T12:00:00.000Z"));
+    await page.evaluate(() =>
+      window.testBridge.answerHistory(2, "Previous day", "2026-09-23T00:00:00.000Z", "2026-09-23T12:00:00.000Z"),
+    );
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Previous day");
     expect(await page.locator("#history-list").innerText()).toContain("Newest");
     await more.click();
@@ -468,11 +610,15 @@ describe("details history", () => {
     await page.locator(`button[data-action="details"][data-permit-id="${first.id}"]`).click();
     expect(await historyCalls()).toEqual([first.id]);
 
-    await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
-    await push(snapshot(fifty.map((entry, index) => index === 6 ? { ...entry, checking: true } : entry)));
+    await push(snapshot(fifty.map((entry, index) => (index === 5 ? { ...entry, checking: true } : entry))));
+    await push(snapshot(fifty.map((entry, index) => (index === 6 ? { ...entry, checking: true } : entry))));
     expect(await historyCalls()).toEqual([first.id]);
 
-    await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
+    await push(
+      snapshot(
+        fifty.map((entry, index) => (index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)),
+      ),
+    );
     expect(await historyCalls()).toEqual([first.id, first.id]);
 
     // The older answer arrives last and is dropped; the newer one is shown.
@@ -493,7 +639,7 @@ describe("details history", () => {
     expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
 
     // Snapshots about other permits leave the failure alone rather than asking again.
-    await push(snapshot(fifty.map((entry, index) => index === 5 ? { ...entry, checking: true } : entry)));
+    await push(snapshot(fifty.map((entry, index) => (index === 5 ? { ...entry, checking: true } : entry))));
     expect(await historyCalls()).toEqual([shown.id]);
 
     await retry.click();
@@ -501,7 +647,11 @@ describe("details history", () => {
     await page.evaluate(() => window.testBridge.answerHistory(1, "Issued"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Issued");
 
-    await push(snapshot(fifty.map((entry, index) => index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)));
+    await push(
+      snapshot(
+        fifty.map((entry, index) => (index === 0 ? { ...entry, latestAttemptAt: "2026-09-25T12:00:00.000Z" } : entry)),
+      ),
+    );
     await page.evaluate(() => window.testBridge.failHistory(2, "Permit not found."));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Permit not found.");
     expect(await retry.count()).toBe(1);
@@ -513,9 +663,12 @@ describe("update controls", () => {
     await page.evaluate(() => {
       Object.assign(window.permitMonitor, {
         checkForUpdate: async () => ({ ok: true, value: { state: "available", version: "1.1.0", size: 5_000_000 } }),
-        downloadUpdate: () => new Promise((resolve) => {
-          document.addEventListener("test-download-finished", () => resolve({ ok: true, value: "1.1.0" }), { once: true });
-        }),
+        downloadUpdate: () =>
+          new Promise((resolve) => {
+            document.addEventListener("test-download-finished", () => resolve({ ok: true, value: "1.1.0" }), {
+              once: true,
+            });
+          }),
       });
     });
     await page.locator("#open-settings").click();
@@ -533,7 +686,9 @@ describe("update controls", () => {
     await page.evaluate(() => {
       Object.assign(window.permitMonitor, {
         checkForUpdate: async () => ({ ok: true, value: { state: "available", version: "1.1.0", size: 5_000_000 } }),
-        downloadUpdate: async () => { throw new Error("downloadUpdate called on a Mac"); },
+        downloadUpdate: async () => {
+          throw new Error("downloadUpdate called on a Mac");
+        },
         openUpdateDownload: async () => {
           document.body.dataset.downloadOpened = "yes";
 
@@ -574,8 +729,16 @@ describe("snapshot order", () => {
 });
 
 describe("desktop shortcut", () => {
-  const firstRun = { notifyStatusChanges: true, notifyFailures: true, runInBackground: false, openAtLogin: false,
-    desktopShortcut: false, backgroundAvailable: true, installedApp: true, offerDesktopShortcut: true };
+  const firstRun = {
+    notifyStatusChanges: true,
+    notifyFailures: true,
+    runInBackground: false,
+    openAtLogin: false,
+    desktopShortcut: false,
+    backgroundAvailable: true,
+    installedApp: true,
+    offerDesktopShortcut: true,
+  };
 
   it("asks once on the first launch after installing and saves a no as the setting", async () => {
     await open(snapshot([permit(1)], { preferences: firstRun }));
@@ -615,13 +778,28 @@ describe("desktop shortcut", () => {
 
 describe("key banner", () => {
   it("stays up after the key is turned down, even with failure notices off, and leads to Settings", async () => {
-    await open(snapshot([permit(1)], { monitoring: "scheduled", keyState: "rejected",
-      preferences: { notifyStatusChanges: true, notifyFailures: false, runInBackground: false,
-        openAtLogin: false, desktopShortcut: false, backgroundAvailable: false, installedApp: false, offerDesktopShortcut: false } }));
+    await open(
+      snapshot([permit(1)], {
+        monitoring: "scheduled",
+        keyState: "rejected",
+        preferences: {
+          notifyStatusChanges: true,
+          notifyFailures: false,
+          runInBackground: false,
+          openAtLogin: false,
+          desktopShortcut: false,
+          backgroundAvailable: false,
+          installedApp: false,
+          offerDesktopShortcut: false,
+        },
+      }),
+    );
 
     const banner = page.locator("#key-banner");
     expect(await banner.isVisible()).toBe(true);
-    expect(await page.locator("#key-banner-title").innerText()).toBe("TypeSafe turned down your key. Scheduled checks are paused.");
+    expect(await page.locator("#key-banner-title").innerText()).toBe(
+      "TypeSafe turned down your key. Scheduled checks are paused.",
+    );
     expect(await page.locator("#next-check").textContent()).toBe("Scheduled checks paused");
 
     await page.locator("#banner-add-key").click();
@@ -641,15 +819,27 @@ describe("key banner", () => {
     await open(snapshot([permit(1)], { keyState: "unreadable" }));
 
     expect(await page.locator("#key-banner").isVisible()).toBe(true);
-    expect(await page.locator("#key-banner-title").innerText()).toBe("Your saved TypeSafe key can't be read. Checks are paused.");
+    expect(await page.locator("#key-banner-title").innerText()).toBe(
+      "Your saved TypeSafe key can't be read. Checks are paused.",
+    );
     expect(await page.locator("#banner-add-key").textContent()).toBe("Save key again");
   });
 });
 
 describe("shared lists", () => {
   it("shows a followed list read-only, without this app's key or schedule prompts", async () => {
-    await open(snapshot([permit(1)], { keyState: "missing", monitoring: "scheduled",
-      share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: "2026-09-24T12:05:00.000Z", problem: null } }));
+    await open(
+      snapshot([permit(1)], {
+        keyState: "missing",
+        monitoring: "scheduled",
+        share: {
+          mode: "following",
+          publishedAt: "2026-09-24T12:00:00.000Z",
+          checkedAt: "2026-09-24T12:05:00.000Z",
+          problem: null,
+        },
+      }),
+    );
 
     expect(await page.locator("#next-check").textContent()).toMatch(/^Shared list · updated Sep 24,/);
     expect(await page.locator("#share-sync").isVisible()).toBe(true);
@@ -664,7 +854,9 @@ describe("shared lists", () => {
     expect(await page.locator("#details-check").isVisible()).toBe(false);
     expect(await page.locator("#details-remove").isVisible()).toBe(false);
     expect(await page.locator("#details-daily-option").isVisible()).toBe(false);
-    expect(await page.locator("#details-project").evaluate((node) => node instanceof HTMLInputElement && node.readOnly)).toBe(true);
+    expect(
+      await page.locator("#details-project").evaluate((node) => node instanceof HTMLInputElement && node.readOnly),
+    ).toBe(true);
     await page.keyboard.press("Escape");
 
     await page.locator("#open-settings").click();
@@ -672,8 +864,16 @@ describe("shared lists", () => {
     expect(await page.locator("#share-off").isVisible()).toBe(false);
 
     // A failed fetch keeps the list and says the copy may be old.
-    await push(snapshot([permit(1)], { share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: null,
-      problem: "Couldn't reach the sharing service. Retrying." } }));
+    await push(
+      snapshot([permit(1)], {
+        share: {
+          mode: "following",
+          publishedAt: "2026-09-24T12:00:00.000Z",
+          checkedAt: null,
+          problem: "Couldn't reach the sharing service. Retrying.",
+        },
+      }),
+    );
     expect(await page.locator("#next-check").textContent()).toBe("Shared list · couldn't update");
     expect(await page.locator("#share-status").textContent()).toBe("Couldn't reach the sharing service. Retrying.");
 
@@ -687,11 +887,15 @@ describe("shared lists", () => {
   });
 
   it("shows the code while sharing and hides sharing in a build without a service", async () => {
-    await open(snapshot([permit(1)], { share: { mode: "sharing", code: "PMS1-example", publishedAt: null, problem: null } }));
+    await open(
+      snapshot([permit(1)], { share: { mode: "sharing", code: "PMS1-example", publishedAt: null, problem: null } }),
+    );
     await page.locator("#open-settings").click();
 
     expect(await page.locator("#share-code").inputValue()).toBe("PMS1-example");
-    expect(await page.locator("#share-status").textContent()).toBe("Anyone with this code can view this list. It's sent after each round of checks.");
+    expect(await page.locator("#share-status").textContent()).toBe(
+      "Anyone with this code can view this list. It's sent after each round of checks.",
+    );
     await page.keyboard.press("Escape");
     expect(await page.locator("#share-sync").isVisible()).toBe(true);
     await page.locator("#share-sync").click();
@@ -710,7 +914,9 @@ describe("shared lists", () => {
     await page.locator("#follow-input").fill("PMS1-code");
     await page.locator("#follow-save").click();
 
-    expect(await page.locator("#confirm-body").textContent()).toBe("Your own 50 permits stay on this computer but aren't shown or checked until you stop following.");
+    expect(await page.locator("#confirm-body").textContent()).toBe(
+      "Your own 50 permits stay on this computer but aren't shown or checked until you stop following.",
+    );
     await page.locator('#confirm-dialog button[value="cancel"]').click();
     expect(await page.locator("#follow-input").inputValue()).toBe("PMS1-code");
   });
@@ -719,9 +925,11 @@ describe("shared lists", () => {
 describe("workspace accessibility", () => {
   it("expands a shared workspace with the window while keeping dates and row actions readable", async () => {
     const project = "24082_914_E_128th_Ave-Recycling_Facility";
-    await open(snapshot([permit(1, { projectNumber: project }), permit(2, { projectNumber: project })], {
-      share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: null, problem: null },
-    }));
+    await open(
+      snapshot([permit(1, { projectNumber: project }), permit(2, { projectNumber: project })], {
+        share: { mode: "following", publishedAt: "2026-09-24T12:00:00.000Z", checkedAt: null, problem: null },
+      }),
+    );
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.evaluate(() => document.fonts.ready);
     const dock = defined(await page.locator(".nav-inner").boundingBox(), "the command dock");
@@ -733,12 +941,14 @@ describe("workspace accessibility", () => {
     expect(filter.height).toBeLessThan(64);
     expect(await page.locator(".group-number").textContent()).toBe(project);
 
-    const dates = await page.locator("#permit-table td:nth-child(4) time").evaluateAll((nodes) => nodes.map((node) => {
-      const range = document.createRange();
-      range.selectNodeContents(node);
+    const dates = await page.locator("#permit-table td:nth-child(4) time").evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
 
-      return range.getClientRects().length;
-    }));
+        return range.getClientRects().length;
+      }),
+    );
 
     expect(dates).toEqual([1, 1]);
     await page.setViewportSize({ width: 2560, height: 1440 });
@@ -774,7 +984,9 @@ describe("workspace accessibility", () => {
 
   it("turns off decorative effects when reduced motion changes while keeping permit controls usable", async () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.waitForFunction(() => document.querySelector("#warm-background")?.getAttribute("data-fallback") === "reduced-effects");
+    await page.waitForFunction(
+      () => document.querySelector("#warm-background")?.getAttribute("data-fallback") === "reduced-effects",
+    );
     expect(await page.locator("#warm-background").isVisible()).toBe(false);
     await page.locator("#open-settings").click();
     expect(await page.locator("#settings-sheet").isVisible()).toBe(true);

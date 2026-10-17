@@ -20,7 +20,9 @@ const OBSERVATION: PageObservation = {
 };
 
 /** The part of the request body that says which labels were offered. */
-const offeredCriteriaSchema = z.object({ questions: z.object({ next: z.object({ criteria: z.record(z.string(), z.string()) }) }) });
+const offeredCriteriaSchema = z.object({
+  questions: z.object({ next: z.object({ criteria: z.record(z.string(), z.string()) }) }),
+});
 
 /** What the service saw: the criteria of each request it received. */
 interface ServiceLog {
@@ -53,7 +55,8 @@ function service(replies: Reply[]): ScriptedService {
 }
 
 function json(status: number, body: JsonValue, headers: Record<string, string> = {}): Reply {
-  return async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+  return async () =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
 /** A successful reply carrying `next` as the answer. */
@@ -67,7 +70,11 @@ function answer(choice: string, confidence: number, probabilities: Record<string
 
 const rateLimited = json(429, { error: "rate limited" }, { "retry-after-ms": "0" });
 
-async function decide(fetch: Fetch, controller = new AbortController(), remainingRequests = 20): Promise<NavigationDecision> {
+async function decide(
+  fetch: Fetch,
+  controller = new AbortController(),
+  remainingRequests = 20,
+): Promise<NavigationDecision> {
   return chooseNavigation({
     client: navigationClient("test-key", fetch),
     jurisdictionId: "hillsborough-county-building",
@@ -84,21 +91,37 @@ describe("Jev navigation answers", () => {
   it("takes a confident, well-separated choice among the offered steps", async () => {
     const { fetch, log } = service([answer("open", 0.95, { open: 0.95, WAIT: 0.03, STOP: 0.02 })]);
 
-    expect(await decide(fetch)).toEqual({ _tag: "chosen", candidateId: "open", actualModel: "jev-1.13.0", attempts: 1 });
+    expect(await decide(fetch)).toEqual({
+      _tag: "chosen",
+      candidateId: "open",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
     expect(log.offered).toEqual([["open", "WAIT", "STOP"]]);
   });
 
   it("returns WAIT and STOP as their own decisions", async () => {
-    expect(await decide(service([answer("WAIT", 0.9, { open: 0.05, WAIT: 0.9, STOP: 0.05 })]).fetch))
-      .toEqual({ _tag: "wait", actualModel: "jev-1.13.0", attempts: 1 });
-    expect(await decide(service([answer("STOP", 0.9, { open: 0.05, WAIT: 0.05, STOP: 0.9 })]).fetch))
-      .toEqual({ _tag: "stop", actualModel: "jev-1.13.0", attempts: 1 });
+    expect(await decide(service([answer("WAIT", 0.9, { open: 0.05, WAIT: 0.9, STOP: 0.05 })]).fetch)).toEqual({
+      _tag: "wait",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
+    expect(await decide(service([answer("STOP", 0.9, { open: 0.05, WAIT: 0.05, STOP: 0.9 })]).fetch)).toEqual({
+      _tag: "stop",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
   });
 
   it("refuses an answer that omits offered alternatives, which would otherwise inflate the margin", async () => {
     const decision = await decide(service([answer("open", 0.9, { open: 1 })]).fetch);
 
-    expect(decision).toEqual({ _tag: "malformed_response", problem: "missing_alternative", actualModel: "jev-1.13.0", attempts: 1 });
+    expect(decision).toEqual({
+      _tag: "malformed_response",
+      problem: "missing_alternative",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
   });
 
   it.each([
@@ -106,10 +129,16 @@ describe("Jev navigation answers", () => {
     ["a negative probability", answer("open", 0.9, { open: 1.05, WAIT: -0.05, STOP: 0 })],
     ["a probability above 1", answer("open", 0.9, { open: 1.2, WAIT: 0, STOP: 0 })],
     ["not a choice answer", answering({ type: "noul", noul: 0.9 })],
-    ["a missing confidence", answering({ type: "choice", choice: "open", probabilities: { open: 1, WAIT: 0, STOP: 0 } })],
+    [
+      "a missing confidence",
+      answering({ type: "choice", choice: "open", probabilities: { open: 1, WAIT: 0, STOP: 0 } }),
+    ],
     ["no answer to the question asked", json(200, { model: "jev-1.13.0", answers: {} })],
   ])("refuses %s", async (_case, reply) => {
-    expect(await decide(service([reply]).fetch)).toMatchObject({ _tag: "malformed_response", problem: "invalid_answer" });
+    expect(await decide(service([reply]).fetch)).toMatchObject({
+      _tag: "malformed_response",
+      problem: "invalid_answer",
+    });
   });
 
   it("refuses a choice that wasn't offered", async () => {
@@ -119,7 +148,9 @@ describe("Jev navigation answers", () => {
   });
 
   it("refuses probabilities for labels that weren't offered", async () => {
-    const decision = await decide(service([answer("open", 0.9, { open: 0.9, WAIT: 0.05, STOP: 0, submit: 0.05 })]).fetch);
+    const decision = await decide(
+      service([answer("open", 0.9, { open: 0.9, WAIT: 0.05, STOP: 0, submit: 0.05 })]).fetch,
+    );
 
     expect(decision).toMatchObject({ _tag: "malformed_response", problem: "unexpected_alternative" });
   });
@@ -137,18 +168,39 @@ describe("Jev navigation answers", () => {
   });
 
   it.each([
-    ["no model name", json(200, { answers: { next: { type: "choice", choice: "open", confidence: 1, probabilities: { open: 1, WAIT: 0, STOP: 0 } } } })],
+    [
+      "no model name",
+      json(200, {
+        answers: {
+          next: { type: "choice", choice: "open", confidence: 1, probabilities: { open: 1, WAIT: 0, STOP: 0 } },
+        },
+      }),
+    ],
     ["no answers", json(200, { model: "jev-1.13.0" })],
-    ["a body that isn't JSON", async () => new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } })],
+    [
+      "a body that isn't JSON",
+      async () => new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } }),
+    ],
   ])("refuses a reply with %s", async (_case, reply: Reply) => {
-    expect(await decide(service([reply]).fetch)).toEqual({ _tag: "malformed_response", problem: "reply", actualModel: null, attempts: 1 });
+    expect(await decide(service([reply]).fetch)).toEqual({
+      _tag: "malformed_response",
+      problem: "reply",
+      actualModel: null,
+      attempts: 1,
+    });
   });
 
   it("keeps a weak margin or low confidence as too uncertain to act on, not as a malformed reply", async () => {
-    expect(await decide(service([answer("open", 0.9, { open: 0.5, WAIT: 0.45, STOP: 0.05 })]).fetch))
-      .toEqual({ _tag: "unsupported_page", actualModel: "jev-1.13.0", attempts: 1 });
-    expect(await decide(service([answer("open", 0.5, { open: 0.9, WAIT: 0.05, STOP: 0.05 })]).fetch))
-      .toEqual({ _tag: "unsupported_page", actualModel: "jev-1.13.0", attempts: 1 });
+    expect(await decide(service([answer("open", 0.9, { open: 0.5, WAIT: 0.45, STOP: 0.05 })]).fetch)).toEqual({
+      _tag: "unsupported_page",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
+    expect(await decide(service([answer("open", 0.5, { open: 0.9, WAIT: 0.05, STOP: 0.05 })]).fetch)).toEqual({
+      _tag: "unsupported_page",
+      actualModel: "jev-1.13.0",
+      attempts: 1,
+    });
   });
 });
 
@@ -156,10 +208,13 @@ describe("Jev navigation requests", () => {
   it("reports cancellation when the run's signal ends a request in flight", async () => {
     const controller = new AbortController();
 
-    const { fetch, log } = service([(init) => new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-      controller.abort();
-    })]);
+    const { fetch, log } = service([
+      (init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          controller.abort();
+        }),
+    ]);
 
     expect(await decide(fetch, controller)).toEqual({ _tag: "cancelled", actualModel: null, attempts: 1 });
     expect(log.offered).toHaveLength(1);
@@ -170,11 +225,13 @@ describe("Jev navigation requests", () => {
   it("reports cancellation during the wait before retrying a rate-limited request", async () => {
     const controller = new AbortController();
 
-    const { fetch, log } = service([async () => {
-      setTimeout(() => controller.abort(), 50);
+    const { fetch, log } = service([
+      async () => {
+        setTimeout(() => controller.abort(), 50);
 
-      return json(429, { error: "rate limited" }, { "retry-after-ms": "5000" })(undefined);
-    }]);
+        return json(429, { error: "rate limited" }, { "retry-after-ms": "5000" })(undefined);
+      },
+    ]);
 
     expect(await decide(fetch, controller)).toEqual({ _tag: "cancelled", actualModel: null, attempts: 1 });
     expect(log.offered).toHaveLength(1);
@@ -192,7 +249,12 @@ describe("Jev navigation requests", () => {
   it("retries a rate-limited request once, then answers", async () => {
     const { fetch, log } = service([rateLimited, answer("open", 0.95, { open: 0.95, WAIT: 0.03, STOP: 0.02 })]);
 
-    expect(await decide(fetch)).toEqual({ _tag: "chosen", candidateId: "open", actualModel: "jev-1.13.0", attempts: 2 });
+    expect(await decide(fetch)).toEqual({
+      _tag: "chosen",
+      candidateId: "open",
+      actualModel: "jev-1.13.0",
+      attempts: 2,
+    });
     expect(log.offered).toHaveLength(2);
   });
 
@@ -206,7 +268,11 @@ describe("Jev navigation requests", () => {
   it("does not retry past the run's remaining request budget", async () => {
     const { fetch, log } = service([rateLimited]);
 
-    expect(await decide(fetch, new AbortController(), 1)).toEqual({ _tag: "api_unavailable", actualModel: null, attempts: 1 });
+    expect(await decide(fetch, new AbortController(), 1)).toEqual({
+      _tag: "api_unavailable",
+      actualModel: null,
+      attempts: 1,
+    });
     expect(log.offered).toHaveLength(1);
   });
 

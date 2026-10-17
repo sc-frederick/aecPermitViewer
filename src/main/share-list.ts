@@ -4,7 +4,13 @@ import { z } from "zod";
 import { setImmediate } from "node:timers/promises";
 import { dailyHistory } from "../shared/history.js";
 import { getJurisdiction } from "../shared/jurisdictions.js";
-import { runOutcomeSchema, type CheckRunRow, type ObservationRow, type PermitHistory, type PermitRow } from "../shared/permit.js";
+import {
+  runOutcomeSchema,
+  type CheckRunRow,
+  type ObservationRow,
+  type PermitHistory,
+  type PermitRow,
+} from "../shared/permit.js";
 import { outstandingReviews, reviewsSchema } from "../shared/reviews.js";
 import { normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
@@ -58,13 +64,17 @@ const sharedListSchema = z.object({
   format: z.literal(1),
   /** The publisher's daily check times ("HH:MM"), or null when it only checks on request. */
   schedule: z.array(text(5)).max(24).nullable(),
-  permits: z.array(z.object({
-    permit: sharedPermitSchema,
-    history: z.object({
-      runs: z.array(checkRunSchema).max(SHARED_HISTORY_DAYS),
-      observations: z.array(observationSchema).max(SHARED_HISTORY_DAYS),
-    }),
-  })).max(MAX_SHARED_PERMITS),
+  permits: z
+    .array(
+      z.object({
+        permit: sharedPermitSchema,
+        history: z.object({
+          runs: z.array(checkRunSchema).max(SHARED_HISTORY_DAYS),
+          observations: z.array(observationSchema).max(SHARED_HISTORY_DAYS),
+        }),
+      }),
+    )
+    .max(MAX_SHARED_PERMITS),
 });
 
 /** A shared list as a follower uses it: permits in the publisher's order, and each permit's history by id. */
@@ -86,8 +96,17 @@ function recentHistory(history: PermitHistory, days: number): PermitHistory {
 
   return {
     runs: picked.map((day) => day.run),
-    observations: picked.flatMap((day) => day.observation
-      ? [{ ...day.observation, id: day.run.id, reviews: day.observation.reviews && outstandingReviews(day.observation.reviews) }] : []),
+    observations: picked.flatMap((day) =>
+      day.observation
+        ? [
+            {
+              ...day.observation,
+              id: day.run.id,
+              reviews: day.observation.reviews && outstandingReviews(day.observation.reviews),
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -96,8 +115,11 @@ function recentHistory(history: PermitHistory, days: number): PermitHistory {
  * state isn't shared: a follower can't cancel a check, and a publisher that quits mid-check would leave it showing as
  * running.
  */
-export function buildSharedList(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory,
-  schedule: readonly string[] | null): string {
+export function buildSharedList(
+  permits: readonly PermitRow[],
+  historyOf: (permitId: string) => PermitHistory,
+  schedule: readonly string[] | null,
+): string {
   return JSON.stringify({
     format: 1,
     schedule: schedule ? [...schedule] : null,
@@ -131,9 +153,16 @@ export function parseSharedList(json: string): SharedList {
 function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof sharedListSchema>["permits"][number] {
   return {
     permit: {
-      id: permit.id, jurisdictionId: permit.jurisdictionId, permitNumber: permit.permitNumber, projectNumber: permit.projectNumber,
-      monitoringEnabled: permit.monitoringEnabled, lastStatus: permit.lastStatus, reviews: permit.reviews,
-      lastObservedAt: permit.lastObservedAt, lastRecordUrl: permit.lastRecordUrl, latestAttemptAt: permit.latestAttemptAt,
+      id: permit.id,
+      jurisdictionId: permit.jurisdictionId,
+      permitNumber: permit.permitNumber,
+      projectNumber: permit.projectNumber,
+      monitoringEnabled: permit.monitoringEnabled,
+      lastStatus: permit.lastStatus,
+      reviews: permit.reviews,
+      lastObservedAt: permit.lastObservedAt,
+      lastRecordUrl: permit.lastRecordUrl,
+      latestAttemptAt: permit.latestAttemptAt,
       latestOutcome: permit.latestOutcome,
     },
     history: recentHistory(history, SHARED_HISTORY_DAYS),
@@ -141,8 +170,11 @@ function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof 
 }
 
 /** Builds the same wire format while yielding between history reads and serialization, so their costs do not accumulate into a freeze. */
-export async function buildSharedListAsync(permits: readonly PermitRow[], historyOf: (permitId: string) => PermitHistory,
-  schedule: readonly string[] | null): Promise<string> {
+export async function buildSharedListAsync(
+  permits: readonly PermitRow[],
+  historyOf: (permitId: string) => PermitHistory,
+  schedule: readonly string[] | null,
+): Promise<string> {
   const entries: string[] = [];
 
   for (const permit of permits) {

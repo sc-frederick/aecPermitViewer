@@ -1,7 +1,16 @@
 import { randomBytes } from "node:crypto";
 import type { BridgeResult, ShareState } from "../shared/bridge.js";
 import type { ObservationRow, PermitHistory, PermitRow } from "../shared/permit.js";
-import { CONTENT_KEY_BYTES, formatShareCode, fromBase64Url, parseShareCode, readTokenFor, toBase64Url, WRITE_KEY_BYTES, type ShareCode } from "../shared/share-protocol.js";
+import {
+  CONTENT_KEY_BYTES,
+  formatShareCode,
+  fromBase64Url,
+  parseShareCode,
+  readTokenFor,
+  toBase64Url,
+  WRITE_KEY_BYTES,
+  type ShareCode,
+} from "../shared/share-protocol.js";
 import { buildSharedListAsync, SHARED_HISTORY_DAYS, type SharedList } from "./share-list.js";
 import type { ShareService } from "./share-service.js";
 import { cachedListSchema, probeShare, ShareFollower, SharePublisher, type CachedList } from "./share-sync.js";
@@ -12,7 +21,9 @@ import { formatCheckTime } from "../shared/schedule.js";
 class SharedListChanged extends Error {
   readonly _tag = "SharedListChanged" as const;
 
-  constructor() { super("The shared list changed during its history read"); }
+  constructor() {
+    super("The shared list changed during its history read");
+  }
 }
 
 /** Settings rows. The keys sit beside the permit data they protect, which the same database already holds in the clear. */
@@ -64,7 +75,11 @@ export class Sharing {
   private listVersion: number | null = null;
 
   /** @param service - The sharing service, or null when this build has none. */
-  constructor(private readonly store: PermitStore, private readonly service: ShareService | null, private readonly host: SharingHost) {}
+  constructor(
+    private readonly store: PermitStore,
+    private readonly service: ShareService | null,
+    private readonly host: SharingHost,
+  ) {}
 
   /** Runs `work` after every operation queued before it has finished. */
   private serially<T>(work: () => Promise<T>): Promise<T> {
@@ -202,7 +217,11 @@ export class Sharing {
     } catch (cause) {
       this.host.report("share:remove", cause);
       this.publishing = null;
-      await this.startPublishing(this.service, publishing.writeKey, fromBase64Url(this.store.getText(SETTINGS.contentKey) ?? "", CONTENT_KEY_BYTES));
+      await this.startPublishing(
+        this.service,
+        publishing.writeKey,
+        fromBase64Url(this.store.getText(SETTINGS.contentKey) ?? "", CONTENT_KEY_BYTES),
+      );
 
       return problem("Couldn't remove the shared copy, so it's still shared. Try again.");
     }
@@ -240,10 +259,14 @@ export class Sharing {
     }
 
     switch (probe._tag) {
-      case "absent": return problem("No shared list uses that code.");
-      case "undecryptable": return problem("That code doesn't open the shared list. Copy it again.");
-      case "unreadable": return problem("This shared list needs a newer version of Permit Monitor.");
-      case "ok": break;
+      case "absent":
+        return problem("No shared list uses that code.");
+      case "undecryptable":
+        return problem("That code doesn't open the shared list. Copy it again.");
+      case "unreadable":
+        return problem("This shared list needs a newer version of Permit Monitor.");
+      case "ok":
+        break;
     }
 
     await this.follower?.stop();
@@ -271,22 +294,36 @@ export class Sharing {
   /** Sends the shared list now, or fetches the followed one now. */
   sync(): Promise<BridgeResult<null>> {
     return this.serially(async () => {
-      const failed = this.publishing ? await this.publishing.publisher.syncNow() : this.follower ? await this.follower.refresh() : null;
+      const failed = this.publishing
+        ? await this.publishing.publisher.syncNow()
+        : this.follower
+          ? await this.follower.refresh()
+          : null;
 
       return failed ? problem(failed) : ok;
     });
   }
 
   /** Starts the publisher for saved keys, or returns null when they don't make a share code. */
-  private async startPublishing(service: ShareService, writeKey: string, contentKey: Uint8Array | null): Promise<SharePublisher | null> {
+  private async startPublishing(
+    service: ShareService,
+    writeKey: string,
+    contentKey: Uint8Array | null,
+  ): Promise<SharePublisher | null> {
     const readToken = await readTokenFor(writeKey);
     const code = readToken && contentKey ? formatShareCode(readToken, contentKey) : null;
 
     if (!code || !contentKey) return null;
 
-    const publisher = new SharePublisher(service, writeKey, contentKey,
+    const publisher = new SharePublisher(
+      service,
+      writeKey,
+      contentKey,
       () => this.buildList(),
-      () => this.host.checking(), () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
+      () => this.host.checking(),
+      () => this.host.changed(),
+      (operation, cause) => this.host.report(operation, cause),
+    );
 
     this.publishing = { writeKey, code, publisher };
     this.listVersion = this.store.changeCount();
@@ -300,8 +337,11 @@ export class Sharing {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const version = this.store.changeCount();
 
-      const list = await buildSharedListAsync(this.store.listPermits(), (id) => this.store.dailyHistory(id, SHARED_HISTORY_DAYS),
-        this.store.getMonitoring() === "scheduled" ? this.store.getCheckTimes().map(formatCheckTime) : null);
+      const list = await buildSharedListAsync(
+        this.store.listPermits(),
+        (id) => this.store.dailyHistory(id, SHARED_HISTORY_DAYS),
+        this.store.getMonitoring() === "scheduled" ? this.store.getCheckTimes().map(formatCheckTime) : null,
+      );
 
       if (this.store.changeCount() === version) return list;
     }
@@ -311,10 +351,16 @@ export class Sharing {
 
   /** Follows a code, showing `cached` until a fetch brings a newer list. The caller starts its fetches. */
   private startFollowing(service: ShareService, code: ShareCode, cached: CachedList | null): ShareFollower {
-    const follower = new ShareFollower(service, code.readToken, code.contentKey, cached,
+    const follower = new ShareFollower(
+      service,
+      code.readToken,
+      code.contentKey,
+      cached,
       (cache) => this.store.setText(SETTINGS.followCache, JSON.stringify(cache)),
       (before, after) => this.host.listUpdated(before, after),
-      () => this.host.changed(), (operation, cause) => this.host.report(operation, cause));
+      () => this.host.changed(),
+      (operation, cause) => this.host.report(operation, cause),
+    );
 
     this.follower = follower;
 

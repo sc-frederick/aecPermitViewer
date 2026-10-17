@@ -16,13 +16,21 @@ describe("history growth benchmark", () => {
     const db = new DatabaseSync(file);
     const ids: string[] = [];
 
-    const reviewJson = JSON.stringify(Array.from({ length: 20 }, (_, index) => ({ process: `Review ${index}`,
-      status: "Corrections Required", date: "2026-09-01", dueDate: "2026-09-01" })));
+    const reviewJson = JSON.stringify(
+      Array.from({ length: 20 }, (_, index) => ({
+        process: `Review ${index}`,
+        status: "Corrections Required",
+        date: "2026-09-01",
+        dueDate: "2026-09-01",
+      })),
+    );
 
-    const run = db.prepare(`INSERT INTO check_runs (id, permit_id, started_at, finished_at, outcome, app_version, adapter_version,
+    const run =
+      db.prepare(`INSERT INTO check_runs (id, permit_id, started_at, finished_at, outcome, app_version, adapter_version,
       prompt_version, requested_model, playwright_version) VALUES (?, ?, ?, ?, 'success', 'test', 'test', 'test', 'test', 'test')`);
 
-    const observed = db.prepare(`INSERT INTO status_observations (id, run_id, permit_id, verified_permit_number, status_label,
+    const observed =
+      db.prepare(`INSERT INTO status_observations (id, run_id, permit_id, verified_permit_number, status_label,
       status_value, observed_at, record_url, extractor_version, reviews) VALUES (?, ?, ?, 'X', 'Status', 'In Process', ?, 'https://example.test', 'test', ?)`);
 
     try {
@@ -33,7 +41,10 @@ describe("history growth benchmark", () => {
         ids.push(added.value);
       }
 
-      for (const [from, to] of [[0, 365], [365, 1095]]) {
+      for (const [from, to] of [
+        [0, 365],
+        [365, 1095],
+      ]) {
         if (from === undefined || to === undefined) throw new Error("fixture range missing");
         db.exec("BEGIN");
 
@@ -64,22 +75,33 @@ describe("history growth benchmark", () => {
 
         const start = performance.now();
 
-        const json = await buildSharedListAsync(store.listPermits(), (id) => {
-          const permitStart = performance.now();
-          const history = store.dailyHistory(id, 120);
-          maxPermitMs = Math.max(maxPermitMs, performance.now() - permitStart);
-          reads += history.observations.length;
+        const json = await buildSharedListAsync(
+          store.listPermits(),
+          (id) => {
+            const permitStart = performance.now();
+            const history = store.dailyHistory(id, 120);
+            maxPermitMs = Math.max(maxPermitMs, performance.now() - permitStart);
+            reads += history.observations.length;
 
-          return history;
-        }, null);
+            return history;
+          },
+          null,
+        );
 
         const elapsedMs = performance.now() - start;
         maxTurnMs = Math.max(maxTurnMs, performance.now() - lastTick);
         clearInterval(heartbeat);
         const list = parseSharedList(json);
 
-        const result = { rawObservations: 75 * to * 3, materializedObservations: reads, timerTicks: ticks,
-          elapsedMs: Math.round(elapsedMs), maxPermitMs: Math.round(maxPermitMs), maxTurnMs: Math.round(maxTurnMs), jsonBytes: Buffer.byteLength(json) };
+        const result = {
+          rawObservations: 75 * to * 3,
+          materializedObservations: reads,
+          timerTicks: ticks,
+          elapsedMs: Math.round(elapsedMs),
+          maxPermitMs: Math.round(maxPermitMs),
+          maxTurnMs: Math.round(maxTurnMs),
+          jsonBytes: Buffer.byteLength(json),
+        };
 
         console.log(JSON.stringify(result));
         writeFileSync(path.join(tmpdir(), `aec-history-${to}.json`), JSON.stringify(result));
@@ -89,6 +111,10 @@ describe("history growth benchmark", () => {
         expect(list.histories.size).toBe(75);
         expect(maxPermitMs).toBeLessThan(100);
       }
-    } finally { db.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      db.close();
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   }, 120_000);
 });

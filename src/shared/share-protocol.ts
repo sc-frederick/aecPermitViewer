@@ -37,7 +37,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 /** The bytes a base64url string holds, or null when it isn't base64url of exactly `length` bytes. */
 export function fromBase64Url(value: string, length: number): Uint8Array<ArrayBuffer> | null {
-  if (!BASE64URL.test(value) || value.length !== Math.ceil(length * 4 / 3)) return null;
+  if (!BASE64URL.test(value) || value.length !== Math.ceil((length * 4) / 3)) return null;
   const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
 
   if (binary.length !== length) return null;
@@ -73,7 +73,7 @@ export async function roomNameFor(readToken: string): Promise<string | null> {
 
   if (!bytes) return null;
 
-  return [...await sha256("permitmon-share-room", bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [...(await sha256("permitmon-share-room", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** What a follower needs: the token that fetches the list and the key that decrypts it. */

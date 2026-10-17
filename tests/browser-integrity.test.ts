@@ -18,9 +18,13 @@ describe("bundled browser integrity", () => {
     temporary.push(directory);
     const content = "browser binary fixture";
     await writeFile(path.join(directory, "chrome.exe"), content);
-    await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify({ version: 1, files: [
-      { path: "chrome.exe", sha256: createHash("sha256").update(content).digest("hex") },
-    ] }));
+    await writeFile(
+      path.join(directory, "sha256-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        files: [{ path: "chrome.exe", sha256: createHash("sha256").update(content).digest("hex") }],
+      }),
+    );
     const folder = path.join(directory, "chromium_headless_shell-1243", "chrome-headless-shell-win64");
     await mkdir(folder, { recursive: true });
     const log = path.join(folder, "debug.log");
@@ -46,9 +50,13 @@ describe("bundled browser integrity", () => {
     temporary.push(directory);
     const content = "browser binary fixture";
     await writeFile(path.join(directory, "chrome.exe"), content);
-    await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify({ version: 1, files: [
-      { path: "chrome.exe", sha256: createHash("sha256").update(content).digest("hex") },
-    ] }));
+    await writeFile(
+      path.join(directory, "sha256-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        files: [{ path: "chrome.exe", sha256: createHash("sha256").update(content).digest("hex") }],
+      }),
+    );
     await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
     await writeFile(path.join(directory, "chrome.exe"), "changed");
     await expect(verifyBrowserPayload(directory)).rejects.toThrow("integrity");
@@ -62,7 +70,12 @@ describe("bundled browser integrity", () => {
     const names = Array.from({ length: 12 }, (_, index) => `file-${String(index).padStart(2, "0")}.bin`);
 
     for (const name of names) await writeFile(path.join(directory, name), name);
-    const manifest = { version: 1, files: names.map((name) => ({ path: name, sha256: createHash("sha256").update(name).digest("hex") })) };
+
+    const manifest = {
+      version: 1,
+      files: names.map((name) => ({ path: name, sha256: createHash("sha256").update(name).digest("hex") })),
+    };
+
     await writeFile(path.join(directory, "sha256-manifest.json"), JSON.stringify(manifest));
     await expect(verifyBrowserPayload(directory)).resolves.toBeUndefined();
     await writeFile(path.join(directory, defined(names[10], "an eleventh payload file")), "changed");

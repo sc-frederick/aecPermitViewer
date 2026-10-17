@@ -46,17 +46,32 @@ describe("completed check announcements", () => {
         const runId = store.startRun({ permitId: id, ...RUN });
         expect(store.getPermit(id)?.latestOutcome).toBeNull();
 
-        const event = recordCheckEvent(store, { runId, permitId: id, outcome, actionCount: 0, requestCount: 0,
-          actualModel: null, browserVersion: null, observation: { verifiedPermitNumber: "HC-BLD-26-0087599",
-            statusLabel: "Record Status", statusValue: index === 6 ? "Issued" : "In Process", reviews: null,
-            observedAt: new Date().toISOString(), recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?id=1" } });
+        const event = recordCheckEvent(store, {
+          runId,
+          permitId: id,
+          outcome,
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+          observation: {
+            verifiedPermitNumber: "HC-BLD-26-0087599",
+            statusLabel: "Record Status",
+            statusValue: index === 6 ? "Issued" : "In Process",
+            reviews: null,
+            observedAt: new Date().toISOString(),
+            recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?id=1",
+          },
+        });
 
         events.push(event?.kind ?? null);
       }
 
       expect(events).toEqual(["check-failed", null, null, "first-status", "check-failed", null, "status-changed"]);
       expect(store.history(id).observations).toHaveLength(3);
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
 
   it("treats an interrupted recovered run as an existing failure without replaying a startup notice", () => {
@@ -71,9 +86,20 @@ describe("completed check announcements", () => {
     try {
       expect(reopened.getPermit(added.value)?.latestOutcome).toBe("browser_error");
       const runId = reopened.startRun({ permitId: added.value, ...RUN });
-      expect(recordCheckEvent(reopened, { runId, permitId: added.value, outcome: "blocked", actionCount: 0,
-        requestCount: 0, actualModel: null, browserVersion: null })).toBeNull();
-    } finally { reopened.close(); }
+      expect(
+        recordCheckEvent(reopened, {
+          runId,
+          permitId: added.value,
+          outcome: "blocked",
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+        }),
+      ).toBeNull();
+    } finally {
+      reopened.close();
+    }
   });
 });
 
@@ -103,26 +129,52 @@ describe("permit insertion broadcasts", () => {
       readKey: async () => "fixture",
       start: (id) => {
         started.push(id);
-        const finished = new Promise<RunOutcome>((resolve) => { finish = () => resolve("success"); });
+
+        const finished = new Promise<RunOutcome>((resolve) => {
+          finish = () => resolve("success");
+        });
 
         return { finished, cancel: finish };
       },
-      defer: () => undefined, keyUnavailable: () => undefined, saveFailed: () => undefined,
-      changed: () => { void broadcast(); },
+      defer: () => undefined,
+      keyUnavailable: () => undefined,
+      saveFailed: () => undefined,
+      changed: () => {
+        void broadcast();
+      },
     });
 
     try {
       const manual: JurisdictionId[] = ["palm-bay-building", "orange-county-building", "baker-county-building"];
 
       for (const [index, jurisdiction] of manual.entries()) {
-        expect(addAndCheck(store, queue, () => { void broadcast(); }, `BLD2024-0123${index}`, jurisdiction)._tag).toBe("ok");
+        expect(
+          addAndCheck(
+            store,
+            queue,
+            () => {
+              void broadcast();
+            },
+            `BLD2024-0123${index}`,
+            jurisdiction,
+          )._tag,
+        ).toBe("ok");
         await broadcast();
         expect(snapshots.at(-1)).toEqual({ permits: index + 1, checking: 0 });
         expect(publications.at(-1)).toBe(index + 1);
       }
 
       expect(started).toEqual([]);
-      const automated = addAndCheck(store, queue, () => { void broadcast(); }, "HC-BLD-26-0087599", "hillsborough-county-building");
+
+      const automated = addAndCheck(
+        store,
+        queue,
+        () => {
+          void broadcast();
+        },
+        "HC-BLD-26-0087599",
+        "hillsborough-county-building",
+      );
 
       if (automated._tag !== "ok") throw automated.error;
       await broadcast();
@@ -130,11 +182,23 @@ describe("permit insertion broadcasts", () => {
       expect(snapshots).toHaveLength(4);
       expect(snapshots.at(-1)).toEqual({ permits: 4, checking: 1 });
       expect(defined(store.getPermit(automated.value), "saved permit").permitNumber).toBe("HC-BLD-26-0087599");
-      expect(addAndCheck(store, queue, () => { void broadcast(); }, "HC-BLD-26-0087599", "hillsborough-county-building")._tag).toBe("err");
+      expect(
+        addAndCheck(
+          store,
+          queue,
+          () => {
+            void broadcast();
+          },
+          "HC-BLD-26-0087599",
+          "hillsborough-county-building",
+        )._tag,
+      ).toBe("err");
       expect(snapshots).toHaveLength(4);
       finish();
       await queue.stop();
       await broadcast();
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
 });

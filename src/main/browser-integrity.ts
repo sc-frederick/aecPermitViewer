@@ -26,7 +26,7 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
     // every code/payload file continue through the existing integrity checks.
     if (entry.isFile() && isBrowserDiagnosticFile(relative)) continue;
 
-    if (entry.isDirectory()) files.push(...await filesIn(path.join(directory, entry.name), relative));
+    if (entry.isDirectory()) files.push(...(await filesIn(path.join(directory, entry.name), relative)));
     else if (entry.isFile()) files.push(relative);
     else throw new Error("Browser payload contains an unexpected entry");
   }
@@ -44,7 +44,9 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
  *   The payload is treated as tampered and must not be launched.
  */
 export async function verifyBrowserPayload(directory: string): Promise<void> {
-  const parsed = browserManifestSchema.safeParse(JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")));
+  const parsed = browserManifestSchema.safeParse(
+    JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")),
+  );
 
   if (!parsed.success) throw new Error("Browser payload manifest is invalid");
   const manifest = parsed.data;
@@ -55,7 +57,8 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
     throw new Error("Browser payload file list differs from the packaged manifest");
   }
 
-  if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256))) throw new Error("Browser payload hash is invalid");
+  if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256)))
+    throw new Error("Browser payload hash is invalid");
   // Readers share one iterator, so each file is claimed exactly once.
   const pending = manifest.files.values();
   let failed = false;
@@ -73,7 +76,8 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
 
         for await (const chunk of createReadStream(file, { highWaterMark: READ_CHUNK_BYTES })) hash.update(chunk);
 
-        if (!timingSafeEqual(hash.digest(), Buffer.from(entry.sha256, "hex"))) throw new Error("Browser payload file integrity failed");
+        if (!timingSafeEqual(hash.digest(), Buffer.from(entry.sha256, "hex")))
+          throw new Error("Browser payload file integrity failed");
       } catch (error) {
         // The other readers stop at their next file.
         failed = true;

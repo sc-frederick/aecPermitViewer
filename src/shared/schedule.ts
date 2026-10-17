@@ -6,7 +6,10 @@ import type { RunOutcome } from "./permit.js";
  * (first slot until half an hour after the last), so nothing fires overnight; the next morning's
  * first slot covers it. A late last slot keeps its full half hour even when that runs past midnight.
  */
-export interface CheckTime { hour: number; minute: number }
+export interface CheckTime {
+  hour: number;
+  minute: number;
+}
 
 /** Sorted, de-duplicated, never empty. */
 export type CheckTimes = readonly [CheckTime, ...CheckTime[]];
@@ -107,8 +110,9 @@ export function describeCheckTimes(times: CheckTimes, locale?: string): string {
   const format = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
   const reference = new Date(2026, 0, 5);
 
-  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" })
-    .format(times.map((time) => format.format(at(reference, time))));
+  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(
+    times.map((time) => format.format(at(reference, time))),
+  );
 }
 
 /**

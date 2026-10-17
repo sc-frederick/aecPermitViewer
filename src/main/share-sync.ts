@@ -74,7 +74,11 @@ export class SharePublisher {
     // Stopping comes before deleting the shared copy, so a publication now would bring back a list being removed.
     if (this.stopped) return null;
     const attempt = this.publish(true);
-    this.running = attempt.then(() => undefined).finally(() => { this.running = null; });
+    this.running = attempt
+      .then(() => undefined)
+      .finally(() => {
+        this.running = null;
+      });
 
     return attempt;
   }
@@ -100,7 +104,11 @@ export class SharePublisher {
         return;
       }
 
-      this.running = this.publish(false).then(() => undefined).finally(() => { this.running = null; });
+      this.running = this.publish(false)
+        .then(() => undefined)
+        .finally(() => {
+          this.running = null;
+        });
     }, delay);
     this.timer.unref();
   }
@@ -146,8 +154,12 @@ export class SharePublisher {
     } catch (cause) {
       if (this.stopped) return null;
       this.report("share:publish", cause);
-      this.setState(this.publishedAt, cause instanceof ListTooLarge
-        ? "The list is too large to share." : "Couldn't reach the sharing service. Retrying.");
+      this.setState(
+        this.publishedAt,
+        cause instanceof ListTooLarge
+          ? "The list is too large to share."
+          : "Couldn't reach the sharing service. Retrying.",
+      );
       this.schedule(RETRY_MS);
 
       return this.problem;
@@ -156,16 +168,17 @@ export class SharePublisher {
 }
 
 /** The last list a follower received, kept so the app shows it at start without waiting for the network. */
-export const cachedListSchema = z.object({ revision: z.number().int().positive(), publishedAt: z.string(), json: z.string() });
+export const cachedListSchema = z.object({
+  revision: z.number().int().positive(),
+  publishedAt: z.string(),
+  json: z.string(),
+});
 
 export type CachedList = z.infer<typeof cachedListSchema>;
 
 /** A first fetch with a new share code: the list it opens, or why it doesn't open one. */
 export type Probe =
-  | { _tag: "ok"; cache: CachedList }
-  | { _tag: "absent" }
-  | { _tag: "undecryptable" }
-  | { _tag: "unreadable" };
+  { _tag: "ok"; cache: CachedList } | { _tag: "absent" } | { _tag: "undecryptable" } | { _tag: "unreadable" };
 
 /** Why a fetched list can't be shown, as Settings says it. */
 const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
@@ -177,7 +190,10 @@ const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
 };
 
 /** Opens and parses a fetched list. */
-function readList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; json: string; list: SharedList } | { _tag: "undecryptable" } | { _tag: "unreadable" } {
+function readList(
+  sealed: Uint8Array,
+  contentKey: Uint8Array,
+): { _tag: "ok"; json: string; list: SharedList } | { _tag: "undecryptable" } | { _tag: "unreadable" } {
   const opened = openList(sealed, contentKey);
 
   if (opened._tag !== "ok") return opened;
@@ -290,8 +306,10 @@ export class ShareFollower {
     const now = new Date();
 
     // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
-    const next = (this.failure === "unreachable" || this.failure === "persistence")
-      ? new Date(now.getTime() + RETRY_MS) : nextFetchAt(this.list?.schedule ?? null, now);
+    const next =
+      this.failure === "unreachable" || this.failure === "persistence"
+        ? new Date(now.getTime() + RETRY_MS)
+        : nextFetchAt(this.list?.schedule ?? null, now);
 
     this.timer = setTimeout(() => {
       this.timer = null;

@@ -31,12 +31,16 @@ export function groupByProject(permits: readonly PermitRow[]): ProjectGroup[] {
   for (const permit of permits) {
     const number = permit.projectNumber?.trim();
 
-    if (!number) { unassigned.push(permit); continue; }
+    if (!number) {
+      unassigned.push(permit);
+      continue;
+    }
 
     const key = projectKey(number);
     const group = groups.get(key);
 
-    if (group) group.permits.push(permit); else groups.set(key, { projectNumber: number, permits: [permit] });
+    if (group) group.permits.push(permit);
+    else groups.set(key, { projectNumber: number, permits: [permit] });
   }
 
   const sorted = [...groups.values()].sort((a, b) => projectOrder.compare(a.projectNumber, b.projectNumber));

@@ -44,14 +44,22 @@ function encryptList(compressed: Uint8Array, contentKey: Uint8Array): Uint8Array
 }
 
 /** Opens a sealed list. Rejects bytes that weren't sealed under this key, or were changed after. */
-export function openList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; json: string } | { _tag: "undecryptable" } {
-  if (sealed.length < NONCE_BYTES + TAG_BYTES + 1 || contentKey.length !== CONTENT_KEY_BYTES) return { _tag: "undecryptable" };
+export function openList(
+  sealed: Uint8Array,
+  contentKey: Uint8Array,
+): { _tag: "ok"; json: string } | { _tag: "undecryptable" } {
+  if (sealed.length < NONCE_BYTES + TAG_BYTES + 1 || contentKey.length !== CONTENT_KEY_BYTES)
+    return { _tag: "undecryptable" };
 
   try {
     const decipher = createDecipheriv("aes-256-gcm", contentKey, sealed.subarray(0, NONCE_BYTES));
     decipher.setAAD(ASSOCIATED_DATA);
     decipher.setAuthTag(sealed.subarray(sealed.length - TAG_BYTES));
-    const compressed = Buffer.concat([decipher.update(sealed.subarray(NONCE_BYTES, sealed.length - TAG_BYTES)), decipher.final()]);
+
+    const compressed = Buffer.concat([
+      decipher.update(sealed.subarray(NONCE_BYTES, sealed.length - TAG_BYTES)),
+      decipher.final(),
+    ]);
 
     return { _tag: "ok", json: gunzipSync(compressed, { maxOutputLength: MAX_LIST_BYTES }).toString("utf8") };
   } catch {
@@ -161,7 +169,12 @@ export class ShareService {
   }
 
   /** Sends one request with the token as its bearer credential, and `body` as octets when there is one. */
-  private request(method: string, token: string, body: Uint8Array<ArrayBuffer> | null, ifNoneMatch: string | null = null): Promise<Response> {
+  private request(
+    method: string,
+    token: string,
+    body: Uint8Array<ArrayBuffer> | null,
+    ifNoneMatch: string | null = null,
+  ): Promise<Response> {
     const headers = new Headers({ authorization: `Bearer ${token}` });
     const init: RequestInit = { method, headers, redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
 
@@ -215,7 +228,12 @@ export class ShareService {
       throw new ShareServiceError(response.status);
     }
 
-    return { _tag: "found", revision: Number(revision), publishedAt: publishedAt.data, sealed: await boundedBytes(response, SHARE_BODY_MAX_BYTES) };
+    return {
+      _tag: "found",
+      revision: Number(revision),
+      publishedAt: publishedAt.data,
+      sealed: await boundedBytes(response, SHARE_BODY_MAX_BYTES),
+    };
   }
 
   /** Deletes the shared copy. Deleting a list that is already gone succeeds. */

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-const plainText = z.string().trim().min(1).max(200).regex(/^\P{Cc}+$/u);
+const plainText = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^\P{Cc}+$/u);
 
 /** One dated workflow entry, including pending rounds whose status and decision date are not yet set. */
 export const reviewEntrySchema = z.object({
@@ -39,27 +44,53 @@ export function latestReviews(entries: readonly ReviewEntry[]): ReviewEntry[] {
     const name = key(entry.process);
     const previous = latest.get(name);
 
-    if (!previous || (entry.date ?? entry.dueDate ?? "") >= (previous.date ?? previous.dueDate ?? "")) latest.set(name, entry);
+    if (!previous || (entry.date ?? entry.dueDate ?? "") >= (previous.date ?? previous.dueDate ?? ""))
+      latest.set(name, entry);
   }
 
   return [...latest.values()];
 }
 
 const REQUESTS = new Set([
-  "corrections required", "revisions required", "requires resubmittal", "resubmittal required", "returned for corrections",
-  "awaiting client reply", "awaiting applicant action", "pending client input", "awaiting plans", "awaiting revisions", "waiting for revisions",
-  "additional info required", "additional information required", "denied - more info required", "deficient", "deficiencies",
-  "not approved", "disapproved", "denied",
+  "corrections required",
+  "revisions required",
+  "requires resubmittal",
+  "resubmittal required",
+  "returned for corrections",
+  "awaiting client reply",
+  "awaiting applicant action",
+  "pending client input",
+  "awaiting plans",
+  "awaiting revisions",
+  "waiting for revisions",
+  "additional info required",
+  "additional information required",
+  "denied - more info required",
+  "deficient",
+  "deficiencies",
+  "not approved",
+  "disapproved",
+  "denied",
 ]);
 
 const SUBMISSIONS = new Set([
-  "plans submitted", "plans received", "resubmitted", "revisions received", "resubmittal received",
-  "routed for electronic review", "routed for review",
+  "plans submitted",
+  "plans received",
+  "resubmitted",
+  "revisions received",
+  "resubmittal received",
+  "routed for electronic review",
+  "routed for review",
 ]);
 
 // Only the portal's intake/coordination tasks establish a submission for the whole record. A resubmittal on one
 // discipline must not clear another discipline's outstanding request.
-const COORDINATION = new Set(["application submittal", "application review", "plans distribution", "plans coordination"]);
+const COORDINATION = new Set([
+  "application submittal",
+  "application review",
+  "plans distribution",
+  "plans coordination",
+]);
 
 /**
  * Current requests for an applicant response. A later explicit resubmittal/routing event starts a new review round,
@@ -70,12 +101,20 @@ export function outstandingReviews(entries: readonly ReviewEntry[]): ReviewEntry
   let submitted: string | null = null;
 
   for (const entry of entries) {
-    if (COORDINATION.has(key(entry.process)) && entry.status && SUBMISSIONS.has(key(entry.status)) &&
-      entry.date && (!submitted || entry.date > submitted)) submitted = entry.date;
+    if (
+      COORDINATION.has(key(entry.process)) &&
+      entry.status &&
+      SUBMISSIONS.has(key(entry.status)) &&
+      entry.date &&
+      (!submitted || entry.date > submitted)
+    )
+      submitted = entry.date;
   }
 
-  return latestReviews(entries).filter((entry) => entry.status && REQUESTS.has(key(entry.status)) &&
-    (!submitted || !entry.date || entry.date >= submitted));
+  return latestReviews(entries).filter(
+    (entry) =>
+      entry.status && REQUESTS.has(key(entry.status)) && (!submitted || !entry.date || entry.date >= submitted),
+  );
 }
 
 /** Stable identity of a request, independent of workflow ordering, whitespace, and reassignment. */

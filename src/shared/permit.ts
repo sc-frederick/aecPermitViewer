@@ -2,7 +2,18 @@ import { z } from "zod";
 import { reviewsSchema, type ReviewEntry } from "./reviews.js";
 import type { KeyState, ShareState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
-import { accelaModules, getAutomatedJurisdiction, getJurisdiction, JURISDICTIONS, numberExample, recordHost, usesGlobalSearch, type AutomatedJurisdictionProfile, type JurisdictionId, type JurisdictionProfile } from "./jurisdictions.js";
+import {
+  accelaModules,
+  getAutomatedJurisdiction,
+  getJurisdiction,
+  JURISDICTIONS,
+  numberExample,
+  recordHost,
+  usesGlobalSearch,
+  type AutomatedJurisdictionProfile,
+  type JurisdictionId,
+  type JurisdictionProfile,
+} from "./jurisdictions.js";
 
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 
@@ -115,16 +126,29 @@ export const MANUAL_STATUS_LABEL = "Status (entered by hand)";
 
 export const manualStatusSchema = z.object({
   permitId: z.uuid(),
-  status: z.string().trim().min(1).max(200).regex(/^\P{Cc}+$/u),
+  status: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^\P{Cc}+$/u),
   recordUrl: z.string().trim().max(2000),
 });
 
-export const permitNumberSchema = z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "Use the full permit number with its hyphens, dots, and zeros.");
+export const permitNumberSchema = z
+  .string()
+  .trim()
+  .min(3)
+  .max(80)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "Use the full permit number with its hyphens, dots, and zeros.");
 
 export const permitIdSchema = z.uuid();
 
 /** An empty value clears the project number. */
-export const projectNumberSchema = z.string().trim().max(PROJECT_NUMBER_MAX)
+export const projectNumberSchema = z
+  .string()
+  .trim()
+  .max(PROJECT_NUMBER_MAX)
   .regex(PROJECT_NUMBER_PATTERN, "Use letters, numbers, spaces, and - . _ / only.");
 
 export const setProjectNumberSchema = z.object({ permitId: permitIdSchema, projectNumber: projectNumberSchema });
@@ -138,7 +162,10 @@ export const addPermitSchema = z.object({
 export function resolveJurisdiction(input: string): JurisdictionId | null {
   const name = input.trim().toLocaleLowerCase("en-US");
 
-  return JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ?? null;
+  return (
+    JURISDICTIONS.find((profile) => profile.id === name || profile.label.toLocaleLowerCase("en-US") === name)?.id ??
+    null
+  );
 }
 
 /** Exact comparison after trimming, for portals that display the number exactly as it is entered. */
@@ -167,19 +194,27 @@ export type WmisNumber =
 export function parseWmisNumber(value: string, module: string): WmisNumber | null {
   const text = value.trim();
 
-  if (module === "WCP") return /^\d{1,7}$/.test(text) && Number(text) > 0 ? { kind: "well", permit: Number(text) } : null;
+  if (module === "WCP")
+    return /^\d{1,7}$/.test(text) && Number(text) > 0 ? { kind: "well", permit: Number(text) } : null;
+
   // An ERP permit is written with its two-digit type prefix and six-digit serial, such as 43047590.008;
   // the search and record page show it without them, such as 47590.008.
-  const [, typePrefix, prefixedPermit, prefixedRevision] = (module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null) ?? [];
+  const [, typePrefix, prefixedPermit, prefixedRevision] =
+    (module === "ERP" ? /^(\d{2})(\d{6})\.(\d{3})$/.exec(text) : null) ?? [];
+
   const [, shortPermit, shortRevision] = /^(\d{1,6})\.(\d{1,3})$/.exec(text) ?? [];
 
-  const parts = typePrefix !== undefined && prefixedPermit !== undefined && prefixedRevision !== undefined
-    ? { prefix: typePrefix, permit: prefixedPermit, revision: prefixedRevision }
-    : shortPermit !== undefined && shortRevision !== undefined ? { prefix: null, permit: shortPermit, revision: shortRevision } : null;
+  const parts =
+    typePrefix !== undefined && prefixedPermit !== undefined && prefixedRevision !== undefined
+      ? { prefix: typePrefix, permit: prefixedPermit, revision: prefixedRevision }
+      : shortPermit !== undefined && shortRevision !== undefined
+        ? { prefix: null, permit: shortPermit, revision: shortRevision }
+        : null;
 
   if (parts) {
     return Number(parts.permit) > 0
-      ? { kind: "permit", prefix: parts.prefix, permit: Number(parts.permit), revision: Number(parts.revision) } : null;
+      ? { kind: "permit", prefix: parts.prefix, permit: Number(parts.permit), revision: Number(parts.revision) }
+      : null;
   }
 
   if (module === "ERP" && /^\d{4,8}$/.test(text) && Number(text) > 0) return { kind: "application", id: Number(text) };
@@ -191,7 +226,10 @@ export function parseWmisNumber(value: string, module: string): WmisNumber | nul
  * The identity a WMIS page displayed. The worker reports ERP's record heading (with " · Prefix NN" when the
  * record has a type prefix), a water use permit's "permit.revision" result cells, and a well permit's heading.
  */
-function parseWmisDisplayed(value: string, module: string): { application: number | null; prefix: string | null; permit: number | null; revision: number | null } | null {
+function parseWmisDisplayed(
+  value: string,
+  module: string,
+): { application: number | null; prefix: string | null; permit: number | null; revision: number | null } | null {
   const text = value.trim();
 
   if (module === "WCP") {
@@ -229,8 +267,11 @@ function sameWmisNumber(requested: string, displayed: string, module: string): b
 
   if (input.kind === "well") return shown.permit === input.permit;
 
-  return shown.permit === input.permit && shown.revision === input.revision &&
-    (input.prefix === null || shown.prefix === input.prefix);
+  return (
+    shown.permit === input.permit &&
+    shown.revision === input.revision &&
+    (input.prefix === null || shown.prefix === input.prefix)
+  );
 }
 
 /**
@@ -242,7 +283,8 @@ export function parseEpermitNumber(value: string): { prefix: string | null; perm
   const parts = /^(?:([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-)?(\d{1,9})-(\d{1,3})$/.exec(value.trim());
 
   return parts && Number(parts[2]) > 0
-    ? { prefix: parts[1]?.toUpperCase() ?? null, permit: Number(parts[2]), sequence: Number(parts[3]) } : null;
+    ? { prefix: parts[1]?.toUpperCase() ?? null, permit: Number(parts[2]), sequence: Number(parts[3]) }
+    : null;
 }
 
 /**
@@ -253,8 +295,13 @@ export function sameEpermitRowNumber(requested: string, shown: string): boolean 
   const input = parseEpermitNumber(requested);
   const row = parseEpermitNumber(shown);
 
-  return Boolean(input && row && (input.prefix === null || row.prefix === input.prefix) && row.permit === input.permit &&
-    row.sequence === input.sequence);
+  return Boolean(
+    input &&
+    row &&
+    (input.prefix === null || row.prefix === input.prefix) &&
+    row.permit === input.permit &&
+    row.sequence === input.sequence,
+  );
 }
 
 /**
@@ -265,8 +312,13 @@ function sameEpermitNumber(requested: string, displayed: string): boolean {
   const input = parseEpermitNumber(requested);
   const [, rowNumber, permit, sequence] = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim()) ?? [];
 
-  return Boolean(input && rowNumber !== undefined && sameEpermitRowNumber(requested, rowNumber) &&
-    Number(permit) === input.permit && Number(sequence) === input.sequence);
+  return Boolean(
+    input &&
+    rowNumber !== undefined &&
+    sameEpermitRowNumber(requested, rowNumber) &&
+    Number(permit) === input.permit &&
+    Number(sequence) === input.sequence,
+  );
 }
 
 /** The ePermit record link the portal's own Copy Link gives, keyed by permit number and sequence. */
@@ -294,7 +346,12 @@ export function parseRegPermittingNumber(value: string): { kind: "application" |
 }
 
 /** RegPermitting's record classes: ERP, water use, well construction, and Works of the District. */
-const REG_RECORD_CLASSES = ["SFWMD-REG-PERMIT-WORK", "SFWMD-REG-WUPERMIT-WORK", "SFWMD-REG-WCPERMIT-WORK", "SFWMD-REG-WODPERMIT-WORK"];
+const REG_RECORD_CLASSES = [
+  "SFWMD-REG-PERMIT-WORK",
+  "SFWMD-REG-WUPERMIT-WORK",
+  "SFWMD-REG-WCPERMIT-WORK",
+  "SFWMD-REG-WODPERMIT-WORK",
+];
 
 const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
 
@@ -305,14 +362,24 @@ const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
 export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string): string | null {
   const [, recordClass, number] = /^(\S+) (\S+)$/.exec(key.trim()) ?? [];
 
-  if (profile.portalFamily !== "regpermitting" || recordClass === undefined || number === undefined ||
-    !REG_RECORD_CLASSES.includes(recordClass) || !parseRegPermittingNumber(number)) return null;
+  if (
+    profile.portalFamily !== "regpermitting" ||
+    recordClass === undefined ||
+    number === undefined ||
+    !REG_RECORD_CLASSES.includes(recordClass) ||
+    !parseRegPermittingNumber(number)
+  )
+    return null;
 
   return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${recordClass} ${number.toUpperCase()}`)}`;
 }
 
 /** Click2Gov removes leading zeros from the displayed application serial, and WMIS from its permit serials. */
-export function sameJurisdictionPermitNumber(requested: string, displayed: string, jurisdictionId: JurisdictionId): boolean {
+export function sameJurisdictionPermitNumber(
+  requested: string,
+  displayed: string,
+  jurisdictionId: JurisdictionId,
+): boolean {
   const profile = getJurisdiction(jurisdictionId);
 
   if (profile?.portalFamily === "wmis") return sameWmisNumber(requested, displayed, profile.module);
@@ -370,9 +437,11 @@ export function permitNumberProblem(jurisdictionId: JurisdictionId, number: stri
     return `Use the ${profile.label} application number as YY-serial, for example 25-05001277.`;
   }
 
-  if ((profile?.portalFamily === "wmis" && !parseWmisNumber(number, profile.module)) ||
+  if (
+    (profile?.portalFamily === "wmis" && !parseWmisNumber(number, profile.module)) ||
     (profile?.portalFamily === "epermit" && !parseEpermitNumber(number)) ||
-    (profile?.portalFamily === "regpermitting" && !parseRegPermittingNumber(number))) {
+    (profile?.portalFamily === "regpermitting" && !parseRegPermittingNumber(number))
+  ) {
     return `Use the number as the district writes it, for example ${numberExample(profile)}.`;
   }
 
@@ -380,7 +449,10 @@ export function permitNumberProblem(jurisdictionId: JurisdictionId, number: stri
 }
 
 /** Each WMIS program's public record page and the numeric parameters that identify a record. */
-const WMIS_RECORD_PAGES: Record<Extract<JurisdictionProfile, { portalFamily: "wmis" }>["module"], { path: string; params: readonly string[] }> = {
+const WMIS_RECORD_PAGES: Record<
+  Extract<JurisdictionProfile, { portalFamily: "wmis" }>["module"],
+  { path: string; params: readonly string[] }
+> = {
   ERP: { path: "/ERP/ERP/Entry/ERP.aspx", params: ["id"] },
   WUP: { path: "/Support/WUP/WupSimple.aspx", params: ["st", "rev"] },
   WCP: { path: "/Support/WCP/WcpDetail.aspx", params: ["permit"] },
@@ -428,7 +500,13 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 
   const start = new URL(profile.startUrl);
 
-  if (url.protocol !== "https:" || ![start.host, recordHost(profile)].includes(url.host) || url.username || url.password) return null;
+  if (
+    url.protocol !== "https:" ||
+    ![start.host, recordHost(profile)].includes(url.host) ||
+    url.username ||
+    url.password
+  )
+    return null;
 
   // A hand-checked portal's pages are whatever the user linked on the official host.
   if (profile.portalFamily === "manual") return url;
@@ -438,15 +516,21 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 
     // The search is one ASP.NET page that posts back to itself; record pages are identified by numbers only.
     if (page === "search") {
-      return url.host === start.host && url.pathname.toLowerCase() === start.pathname.toLowerCase() && !url.search ? url : null;
+      return url.host === start.host && url.pathname.toLowerCase() === start.pathname.toLowerCase() && !url.search
+        ? url
+        : null;
     }
 
     const record = WMIS_RECORD_PAGES[profile.module];
     const names = [...url.searchParams.keys()];
 
-    return record && url.host === recordHost(profile) && url.pathname.toLowerCase() === record.path.toLowerCase() &&
-      names.length === record.params.length && record.params.every((name) => /^\d{1,8}$/.test(url.searchParams.get(name) ?? ""))
-      ? url : null;
+    return record &&
+      url.host === recordHost(profile) &&
+      url.pathname.toLowerCase() === record.path.toLowerCase() &&
+      names.length === record.params.length &&
+      record.params.every((name) => /^\d{1,8}$/.test(url.searchParams.get(name) ?? ""))
+      ? url
+      : null;
   }
 
   if (profile.portalFamily === "regpermitting") {
@@ -457,13 +541,21 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 
     if (page === "search") {
       return (url.pathname === REG_ENTRY_PATH && names.length === 0) ||
-        /^\/prweb\/PRAuth\/app\/(?:RegulationExternal|default)\/[^/]+\/!STANDARD$/.test(url.pathname) ? url : null;
+        /^\/prweb\/PRAuth\/app\/(?:RegulationExternal|default)\/[^/]+\/!STANDARD$/.test(url.pathname)
+        ? url
+        : null;
     }
 
     const key = url.searchParams.get("key");
 
-    return url.pathname === REG_ENTRY_PATH && names.length === 3 && url.searchParams.get("pyActivity") === "@baseclass.doUIAction" &&
-      url.searchParams.get("action") === "openWorkByHandle" && key && regPermittingRecordUrl(profile, key) === url.toString() ? url : null;
+    return url.pathname === REG_ENTRY_PATH &&
+      names.length === 3 &&
+      url.searchParams.get("pyActivity") === "@baseclass.doUIAction" &&
+      url.searchParams.get("action") === "openWorkByHandle" &&
+      key &&
+      regPermittingRecordUrl(profile, key) === url.toString()
+      ? url
+      : null;
   }
 
   if (profile.portalFamily === "epermit") {
@@ -483,17 +575,24 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 
       if (!path.endsWith("/selectpermit.html")) return null;
 
-      const detail = url.searchParams.get("validatePermitView") === "true" &&
-        Boolean(url.searchParams.get("permit.appYear")) && Boolean(url.searchParams.get("permit.appNumber"));
+      const detail =
+        url.searchParams.get("validatePermitView") === "true" &&
+        Boolean(url.searchParams.get("permit.appYear")) &&
+        Boolean(url.searchParams.get("permit.appNumber"));
 
-      return page === "search" ? (!detail ? url : null) : (detail ? url : null);
+      return page === "search" ? (!detail ? url : null) : detail ? url : null;
     }
 
     if (profile.portalFamily === "tyler-civic-access") {
       if (!path.startsWith("/apps/selfservice")) return null;
 
-      return page === "search" ? (url.hash === "" || /home|search/i.test(url.hash) ? url : null)
-        : (/permit|case|plan/i.test(url.hash) ? url : null);
+      return page === "search"
+        ? url.hash === "" || /home|search/i.test(url.hash)
+          ? url
+          : null
+        : /permit|case|plan/i.test(url.hash)
+          ? url
+          : null;
     }
 
     return null;
@@ -505,19 +604,23 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
     const tenantPath = `/${profile.tenant}`.toLowerCase();
     const searchPath = url.pathname.toLowerCase();
 
-    if (searchPath === `${tenantPath}/default.aspx` || searchPath === `${tenantPath}/cap/globalsearchresults.aspx`) return url;
+    if (searchPath === `${tenantPath}/default.aspx` || searchPath === `${tenantPath}/cap/globalsearchresults.aspx`)
+      return url;
   }
 
   const path = page === "search" ? `/${profile.tenant}/Cap/CapHome.aspx` : `/${profile.tenant}/Cap/CapDetail.aspx`;
 
   if (url.pathname.toLowerCase() !== path.toLowerCase()) return null;
 
-  const values = (name: string): string[] => [...url.searchParams.entries()]
-    .flatMap(([key, entry]) => key.toLowerCase() === name.toLowerCase() ? [entry] : []);
+  const values = (name: string): string[] =>
+    [...url.searchParams.entries()].flatMap(([key, entry]) =>
+      key.toLowerCase() === name.toLowerCase() ? [entry] : [],
+    );
 
   const allowedModules = accelaModules(profile).map((module) => module.toLowerCase());
 
-  if (values("TabName").length !== 1 || !allowedModules.includes(values("TabName")[0]?.toLowerCase() ?? "")) return null;
+  if (values("TabName").length !== 1 || !allowedModules.includes(values("TabName")[0]?.toLowerCase() ?? ""))
+    return null;
   const moduleValues = values("Module");
 
   if (moduleValues.length !== 1) return null;
@@ -526,9 +629,11 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
   if (moduleValue?.toLowerCase() !== values("TabName")[0]?.toLowerCase()) return null;
 
   if (page === "detail") {
-    if (values("agencyCode").length !== 1 || values("agencyCode")[0]?.toLowerCase() !== profile.tenant.toLowerCase()) return null;
+    if (values("agencyCode").length !== 1 || values("agencyCode")[0]?.toLowerCase() !== profile.tenant.toLowerCase())
+      return null;
 
-    if (!["capID1", "capID2", "capID3"].every((key) => values(key).length === 1 && Boolean(values(key)[0]))) return null;
+    if (!["capID1", "capID2", "capID3"].every((key) => values(key).length === 1 && Boolean(values(key)[0])))
+      return null;
   }
 
   return url;
@@ -536,8 +641,8 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
 
 /** The record-level status field each portal family labels on its detail page. */
 const STATUS_LABELS = {
-  "accela": "Record Status",
-  "click2gov": "Application Status",
+  accela: "Record Status",
+  click2gov: "Application Status",
   "tyler-civic-access": "Status",
 } as const;
 
@@ -570,20 +675,24 @@ export function parseDisplayedStatus(input: {
   reviews?: ReviewEntry[] | null;
   recordUrl: string;
   observedAt: string;
-}): { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> } | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
+}):
+  | { _tag: "ok"; value: Omit<ObservationRow, "id" | "runId" | "permitId"> }
+  | { _tag: "err"; outcome: Exclude<RunOutcome, "success"> } {
   const { jurisdictionId } = input;
   const profile = getAutomatedJurisdiction(jurisdictionId);
 
   if (!profile) return { _tag: "err", outcome: "unsupported_page" };
 
-  if (!sameJurisdictionPermitNumber(input.requestedNumber, input.displayedNumber, jurisdictionId)) return { _tag: "err", outcome: "identity_mismatch" };
+  if (!sameJurisdictionPermitNumber(input.requestedNumber, input.displayedNumber, jurisdictionId))
+    return { _tag: "err", outcome: "identity_mismatch" };
   const label = input.statusLabel.trim().replace(/:$/, "");
 
   if (!statusLabels(profile).includes(label)) return { _tag: "err", outcome: "status_unavailable" };
   // An SFWMD permit's status is its Permit Status; an application's is its own status, not its permit's.
   const regNumber = profile.portalFamily === "regpermitting" ? parseRegPermittingNumber(input.requestedNumber) : null;
 
-  if (regNumber && (regNumber.kind === "permit") !== (label === "Permit Status")) return { _tag: "err", outcome: "status_unavailable" };
+  if (regNumber && (regNumber.kind === "permit") !== (label === "Permit Status"))
+    return { _tag: "err", outcome: "status_unavailable" };
   const status = input.statusValue.trim();
   const reviews = reviewsSchema.safeParse(input.reviews ?? null);
 
@@ -600,8 +709,10 @@ export function parseDisplayedStatus(input: {
     return { _tag: "err", outcome: "record_link_unavailable" };
   }
 
-  if (profile.portalFamily === "regpermitting" &&
-    recordUrl.searchParams.get("key")?.split(" ")[1] !== parseRegPermittingNumber(input.requestedNumber)?.number) {
+  if (
+    profile.portalFamily === "regpermitting" &&
+    recordUrl.searchParams.get("key")?.split(" ")[1] !== parseRegPermittingNumber(input.requestedNumber)?.number
+  ) {
     return { _tag: "err", outcome: "record_link_unavailable" };
   }
 

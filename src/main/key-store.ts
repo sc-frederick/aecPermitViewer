@@ -43,7 +43,11 @@ export class KeyStore {
   /** Counts saves and removals, so a read that finishes after one doesn't judge the new file by the old one. */
   private generation = 0;
 
-  constructor(dataRoot: string, private readonly encryption: KeyEncryption, private readonly devKey: string | null = null) {
+  constructor(
+    dataRoot: string,
+    private readonly encryption: KeyEncryption,
+    private readonly devKey: string | null = null,
+  ) {
     this.secretPath = path.join(dataRoot, "secrets", "typesafe-key.bin");
   }
 
@@ -145,7 +149,10 @@ export class KeyStore {
   /** Serializes every disk mutation, including migration; rejected work cannot poison the next operation. */
   private mutate<T>(work: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(work);
-    this.mutations = result.then(() => undefined, () => undefined);
+    this.mutations = result.then(
+      () => undefined,
+      () => undefined,
+    );
 
     return result;
   }

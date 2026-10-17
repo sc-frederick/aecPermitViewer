@@ -6,10 +6,16 @@ export function createKeyStore(dataRoot: string): KeyStore {
   const devKey = app.isPackaged ? null : process.env.TYPESAFE_API_KEY?.trim() || null;
   delete process.env.TYPESAFE_API_KEY;
 
-  return new KeyStore(dataRoot, {
-    // Linux's hard-coded fallback password is unsuitable for a saved credential.
-    available: async () => (process.platform === "win32" || process.platform === "darwin") && await safeStorage.isAsyncEncryptionAvailable(),
-    encrypt: (key) => safeStorage.encryptStringAsync(key),
-    decrypt: (encrypted) => safeStorage.decryptStringAsync(encrypted),
-  }, devKey);
+  return new KeyStore(
+    dataRoot,
+    {
+      // Linux's hard-coded fallback password is unsuitable for a saved credential.
+      available: async () =>
+        (process.platform === "win32" || process.platform === "darwin") &&
+        (await safeStorage.isAsyncEncryptionAvailable()),
+      encrypt: (key) => safeStorage.encryptStringAsync(key),
+      decrypt: (encrypted) => safeStorage.decryptStringAsync(encrypted),
+    },
+    devKey,
+  );
 }

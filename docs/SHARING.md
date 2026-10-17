@@ -24,11 +24,11 @@ KV was ruled out: its reads can lag writes by about a minute, and nothing in it 
 
 The publishing app makes three secrets:
 
-| Secret | Size | Who holds it | Sent to the Worker? |
-| --- | --- | --- | --- |
-| Write key | 32 random bytes | Publisher only | Yes, to publish or delete |
-| Read token | 16 bytes, SHA-256 of the write key | Publisher and followers (in the code) | Yes, to fetch |
-| Content key | 32 random bytes | Publisher and followers (in the code) | Never |
+| Secret      | Size                               | Who holds it                          | Sent to the Worker?       |
+| ----------- | ---------------------------------- | ------------------------------------- | ------------------------- |
+| Write key   | 32 random bytes                    | Publisher only                        | Yes, to publish or delete |
+| Read token  | 16 bytes, SHA-256 of the write key | Publisher and followers (in the code) | Yes, to fetch             |
+| Content key | 32 random bytes                    | Publisher and followers (in the code) | Never                     |
 
 - The list is gzipped and sealed with AES-256-GCM under the content key before it leaves the app, so the Worker and Cloudflare only ever store ciphertext.
 - The Worker names a list's Durable Object `SHA-256("permitmon-share-room\0" ‖ read token)`. Given a write key, it derives the read token first, so both sides reach the same object. A follower holds the read token but can't work out the write key, so it can't publish or delete. The Worker stores no key or token. Its admission database stores room hashes and source hashes, never IP addresses, bearer credentials or ciphertext.
@@ -65,11 +65,11 @@ Worker observability samples all requests. Structured `share_admitted` events re
 
 `/v1/list` on the Worker:
 
-| Method | Bearer | Body | Answers |
-| --- | --- | --- | --- |
-| `GET` | read token | — | `200` ciphertext with `ETag: "r<revision>"` and `X-Published-At`; `304` when `If-None-Match` names the current revision; `404` when absent |
-| `PUT` | write key | ciphertext | `200 {"revision","publishedAt"}`; `413` too large; `429` rate, admission or capacity limit, with bounded `Retry-After` |
-| `DELETE` | write key | — | `204`, also when nothing was stored |
+| Method   | Bearer     | Body       | Answers                                                                                                                                    |
+| -------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | read token | —          | `200` ciphertext with `ETag: "r<revision>"` and `X-Published-At`; `304` when `If-None-Match` names the current revision; `404` when absent |
+| `PUT`    | write key  | ciphertext | `200 {"revision","publishedAt"}`; `413` too large; `429` rate, admission or capacity limit, with bounded `Retry-After`                     |
+| `DELETE` | write key  | —          | `204`, also when nothing was stored                                                                                                        |
 
 `401` means a missing or malformed credential, and `503` means the Durable Object failed. `src/shared/share-protocol.ts` holds the token formats and derivations, and both the app and the Worker import it.
 

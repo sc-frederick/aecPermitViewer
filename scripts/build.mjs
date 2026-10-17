@@ -17,7 +17,12 @@ if (existsSync(stagedBrowser)) {
     const relative = `${entry.name}/chrome-headless-shell-win64/debug.log`;
     const diagnostic = path.join(stagedBrowser, ...relative.split("/"));
 
-    if (entry.isDirectory() && isBrowserDiagnosticFile(relative) && existsSync(diagnostic) && (await lstat(diagnostic)).isFile()) {
+    if (
+      entry.isDirectory() &&
+      isBrowserDiagnosticFile(relative) &&
+      existsSync(diagnostic) &&
+      (await lstat(diagnostic)).isFile()
+    ) {
       await unlink(diagnostic);
     }
   }
@@ -52,11 +57,23 @@ await Promise.all([
   build({ ...shared, entryPoints: ["src/main/index.ts"], outfile: "dist/main.cjs" }),
   build({ ...shared, entryPoints: ["src/preload/index.ts"], outfile: "dist/preload.cjs" }),
   build({ ...shared, entryPoints: ["src/worker/index.ts"], outfile: "dist/worker.cjs" }),
-  build({ entryPoints: { renderer: "src/renderer/index.ts" }, outdir: "dist", bundle: true, target: "es2022", platform: "browser",
-    format: "esm", splitting: true, minify: true, chunkNames: "chunks/[name]-[hash]" }),
+  build({
+    entryPoints: { renderer: "src/renderer/index.ts" },
+    outdir: "dist",
+    bundle: true,
+    target: "es2022",
+    platform: "browser",
+    format: "esm",
+    splitting: true,
+    minify: true,
+    chunkNames: "chunks/[name]-[hash]",
+  }),
   copyFile("src/renderer/index.html", "dist/index.html"),
   copyFile("src/renderer/styles.css", "dist/styles.css"),
   copyFile("src/main/authenticode.ps1", "dist/authenticode.ps1"),
   // The icon file and the install animation are for Windows and the installer, not the window.
-  cp("assets", "dist/assets", { recursive: true, filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif") }),
+  cp("assets", "dist/assets", {
+    recursive: true,
+    filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif"),
+  }),
 ]);

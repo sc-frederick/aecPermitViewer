@@ -1,4 +1,9 @@
-
-
-# Generated Cloudflare CLI output
+package-lock.json
+vendor/
+tools/oxlint/anti-slop/
+tests/fixtures/**/*.html
+tests/fixtures/updater/
+infra/*/src/worker-configuration.d.ts
 **/.cloudflare/**
+# The Cloudflare CLI runner refuses to deploy when these differ from the sourceHash in cloudflare-cli/projects.json.
+infra/*/wrangler.jsonc

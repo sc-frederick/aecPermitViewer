@@ -1,20 +1,59 @@
-import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type PermitBridge, type ShareState } from "../shared/bridge.js";
+import {
+  PREFERENCE_KEYS,
+  type BridgeResult,
+  type KeyState,
+  type PermitBridge,
+  type ShareState,
+} from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
-import { DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, formatCheckTime, MAX_CHECK_TIMES, normalizeCheckTimes, parseCheckTime, type CheckTimes } from "../shared/schedule.js";
-import type { AppPreferences, AppSnapshot, PreferenceKey, PermitHistory, PermitRow, RunOutcome } from "../shared/permit.js";
+import {
+  DEFAULT_CHECK_TIMES,
+  describeCheckTimes,
+  effectiveRunTime,
+  formatCheckTime,
+  MAX_CHECK_TIMES,
+  normalizeCheckTimes,
+  parseCheckTime,
+  type CheckTimes,
+} from "../shared/schedule.js";
+import type {
+  AppPreferences,
+  AppSnapshot,
+  PreferenceKey,
+  PermitHistory,
+  PermitRow,
+  RunOutcome,
+} from "../shared/permit.js";
 import { dailyHistory } from "../shared/history.js";
-import { groupByProject, PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN, projectKey, recentProjects, type ProjectGroup } from "../shared/projects.js";
-import { getJurisdiction, isManualJurisdiction, JURISDICTION_GROUPS, JURISDICTIONS, numberExample } from "../shared/jurisdictions.js";
+import {
+  groupByProject,
+  PROJECT_NUMBER_MAX,
+  PROJECT_NUMBER_PATTERN,
+  projectKey,
+  recentProjects,
+  type ProjectGroup,
+} from "../shared/projects.js";
+import {
+  getJurisdiction,
+  isManualJurisdiction,
+  JURISDICTION_GROUPS,
+  JURISDICTIONS,
+  numberExample,
+} from "../shared/jurisdictions.js";
 import { actionLabel, actionReason, permitAction, type StatusAction } from "../shared/action.js";
 import { describeReview, latestReviews, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
 import { mountWarmBackground } from "./warm-background.js";
 
-declare global { interface Window { permitMonitor: PermitBridge } }
+declare global {
+  interface Window {
+    permitMonitor: PermitBridge;
+  }
+}
 
 const FILTERS = ["all", "applicant", "failed", "unverified"] as const;
 
-type Filter = typeof FILTERS[number];
+type Filter = (typeof FILTERS)[number];
 
 type OutcomeKind = "ok" | "failed" | "checking" | "none";
 
@@ -83,9 +122,20 @@ function preferenceKey(value: string | undefined): PreferenceKey | null {
   return PREFERENCE_KEYS.find((key) => key === value) ?? null;
 }
 
-const stampFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const stampFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
-const stampFormatWithYear = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const stampFormatWithYear = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 const fullFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" });
 
@@ -126,7 +176,11 @@ function outcomeKind(outcome: RunOutcome | null, checking = false): OutcomeKind 
   return outcome === "cancelled" ? "none" : "failed";
 }
 
-function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+function make<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
 
   if (className) node.className = className;
@@ -154,7 +208,9 @@ function icon(name: string, className = "icon"): SVGSVGElement {
  */
 function placeNotice(): void {
   const node = element("notice", HTMLDivElement);
-  const host = document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
+
+  const host =
+    document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
 
   if (node.parentElement !== host) host.append(node);
 }
@@ -168,7 +224,12 @@ function notice(message: string, kind: "info" | "error" = "error"): void {
   node.hidden = false;
 
   if (noticeTimer !== null) window.clearTimeout(noticeTimer);
-  noticeTimer = window.setTimeout(() => { node.hidden = true; }, kind === "error" ? 9000 : 5000);
+  noticeTimer = window.setTimeout(
+    () => {
+      node.hidden = true;
+    },
+    kind === "error" ? 9000 : 5000,
+  );
 }
 
 let settleConfirm: ((accepted: boolean) => void) | null = null;
@@ -182,7 +243,9 @@ function confirmAction(title: string, body: string, accept: string, cancel = "Ca
   settleConfirm?.(false);
   dialog.showModal();
 
-  return new Promise((resolve) => { settleConfirm = resolve; });
+  return new Promise((resolve) => {
+    settleConfirm = resolve;
+  });
 }
 
 function finishConfirm(accepted: boolean): void {
@@ -215,8 +278,10 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   if (permit.checking) {
     text.append(make("span", "outcome-label", "Checking…"));
   } else if (permit.latestOutcome) {
-    const label = permit.latestOutcome === "success" && isManualJurisdiction(permit.jurisdictionId)
-      ? "Checked by hand" : outcomeText[permit.latestOutcome];
+    const label =
+      permit.latestOutcome === "success" && isManualJurisdiction(permit.jurisdictionId)
+        ? "Checked by hand"
+        : outcomeText[permit.latestOutcome];
 
     text.append(make("span", "outcome-label", label));
     const when = timeNode(permit.latestAttemptAt);
@@ -291,7 +356,8 @@ function nextCheckSummary(snapshot: AppSnapshot): string {
   const now = new Date();
   const schedule = checkTimes(snapshot);
 
-  const times = snapshot.permits.filter((permit) => permit.monitoringEnabled && !permit.checking)
+  const times = snapshot.permits
+    .filter((permit) => permit.monitoringEnabled && !permit.checking)
     .map((permit) => effectiveRunTime(new Date(permit.nextDueAt ?? now.toISOString()), now, schedule).getTime());
 
   if (times.length === 0) return "";
@@ -355,7 +421,12 @@ function createRow(permit: PermitRow): PermitRowView {
 }
 
 /** Brings a row up to date, touching only the cells and controls whose content changed. */
-function updateRow(view: PermitRowView, permit: PermitRow, classified: StatusAction | null, monitoring: AppSnapshot["monitoring"]): void {
+function updateRow(
+  view: PermitRowView,
+  permit: PermitRow,
+  classified: StatusAction | null,
+  monitoring: AppSnapshot["monitoring"],
+): void {
   // The year matters because timestamps only show a year when it isn't the current one.
   const year = new Date().getFullYear();
   const source = JSON.stringify([permit, monitoring, year]);
@@ -364,10 +435,18 @@ function updateRow(view: PermitRowView, permit: PermitRow, classified: StatusAct
   view.source = source;
   const label = getJurisdiction(permit.jurisdictionId)?.label ?? permit.jurisdictionId;
   view.open.textContent = permit.permitNumber;
-  view.open.setAttribute("aria-label", [permit.permitNumber, label,
-    permit.projectNumber ? `project ${permit.projectNumber}` : null, "details"].filter(Boolean).join(", "));
+  view.open.setAttribute(
+    "aria-label",
+    [permit.permitNumber, label, permit.projectNumber ? `project ${permit.projectNumber}` : null, "details"]
+      .filter(Boolean)
+      .join(", "),
+  );
   view.jurisdiction.textContent = label;
-  view.unscheduled.hidden = !(monitoring === "scheduled" && !permit.monitoringEnabled && !isManualJurisdiction(permit.jurisdictionId));
+  view.unscheduled.hidden = !(
+    monitoring === "scheduled" &&
+    !permit.monitoringEnabled &&
+    !isManualJurisdiction(permit.jurisdictionId)
+  );
 
   setCell(view.status, JSON.stringify([permit.lastStatus, classified]), () => {
     const nodes = [permit.lastStatus ? make("span", "status-value", permit.lastStatus) : make("span", "muted", "—")];
@@ -381,11 +460,15 @@ function updateRow(view: PermitRowView, permit: PermitRow, classified: StatusAct
 
   if (classified) view.row.dataset.actionOn = classified.action;
   else delete view.row.dataset.actionOn;
-  view.action.title = !classified && permit.lastStatus ? "Water management district statuses aren't classified yet." : "";
+  view.action.title =
+    !classified && permit.lastStatus ? "Water management district statuses aren't classified yet." : "";
 
   setCell(view.observed, JSON.stringify([permit.lastObservedAt, year]), () => [timeNode(permit.lastObservedAt)]);
-  setCell(view.attempt, JSON.stringify([permit.checking, permit.latestOutcome, permit.latestAttemptAt, permit.jurisdictionId, year]),
-    () => [outcomeCell(permit)]);
+  setCell(
+    view.attempt,
+    JSON.stringify([permit.checking, permit.latestOutcome, permit.latestAttemptAt, permit.jurisdictionId, year]),
+    () => [outcomeCell(permit)],
+  );
 
   const control = permit.checking ? "cancel" : "check";
 
@@ -438,7 +521,11 @@ function syncGroupHead(body: HTMLTableSectionElement, group: ProjectGroup | null
  * Brings the table to `visible` without rebuilding it: rows are kept by permit id and moved only when the order or
  * grouping changes, so a focused link or button in an unchanged row keeps its focus.
  */
-function renderTable(visible: readonly PermitRow[], classified: ReadonlyMap<string, StatusAction | null>, monitoring: AppSnapshot["monitoring"]): void {
+function renderTable(
+  visible: readonly PermitRow[],
+  classified: ReadonlyMap<string, StatusAction | null>,
+  monitoring: AppSnapshot["monitoring"],
+): void {
   const table = element("permit-table", HTMLTableElement);
   const shown = new Set(visible.map((permit) => permit.id));
 
@@ -451,9 +538,17 @@ function renderTable(visible: readonly PermitRow[], classified: ReadonlyMap<stri
   }
 
   // Group only once a project number is in use; until then the table stays one plain list.
-  const groups: Array<{ key: string; group: ProjectGroup | null; permits: readonly PermitRow[] }> = visible.some((permit) => permit.projectNumber)
-    ? groupByProject(visible).map((group) => ({ key: group.projectNumber ? `project:${projectKey(group.projectNumber)}` : "unassigned", group, permits: group.permits }))
-    : visible.length > 0 ? [{ key: "list", group: null, permits: visible }] : [];
+  const groups: Array<{ key: string; group: ProjectGroup | null; permits: readonly PermitRow[] }> = visible.some(
+    (permit) => permit.projectNumber,
+  )
+    ? groupByProject(visible).map((group) => ({
+        key: group.projectNumber ? `project:${projectKey(group.projectNumber)}` : "unassigned",
+        group,
+        permits: group.permits,
+      }))
+    : visible.length > 0
+      ? [{ key: "list", group: null, permits: visible }]
+      : [];
 
   const keys = new Set(groups.map((entry) => entry.key));
 
@@ -473,7 +568,7 @@ function renderTable(visible: readonly PermitRow[], classified: ReadonlyMap<stri
     if (previous?.nextElementSibling !== body) table.insertBefore(body, previous?.nextElementSibling ?? null);
     previous = body;
     syncGroupHead(body, entry.group, entry.permits.length);
-    let cursor = entry.group ? body.rows[0]?.nextElementSibling ?? null : body.firstElementChild;
+    let cursor = entry.group ? (body.rows[0]?.nextElementSibling ?? null) : body.firstElementChild;
 
     for (const permit of entry.permits) {
       let view = rowViews.get(permit.id);
@@ -513,12 +608,26 @@ interface KeyStateCopy {
 
 function keyStateCopy(state: Exclude<KeyState, "configured">): KeyStateCopy {
   switch (state) {
-    case "missing": return { banner: "Add your TypeSafe key to run checks.", action: "Add key", settings: null };
-    case "unavailable": return { banner: "Key storage isn't available on this computer.", action: null, settings: "Key storage isn't available on this computer." };
-    case "unreadable": return { banner: "Your saved TypeSafe key can't be read. Checks are paused.", action: "Save key again",
-      settings: "The saved key can't be read. Paste it again to keep checking." };
-    case "rejected": return { banner: "TypeSafe turned down your key. Scheduled checks are paused.", action: "Replace key",
-      settings: "TypeSafe turned down the saved key. Paste a working key to resume scheduled checks." };
+    case "missing":
+      return { banner: "Add your TypeSafe key to run checks.", action: "Add key", settings: null };
+    case "unavailable":
+      return {
+        banner: "Key storage isn't available on this computer.",
+        action: null,
+        settings: "Key storage isn't available on this computer.",
+      };
+    case "unreadable":
+      return {
+        banner: "Your saved TypeSafe key can't be read. Checks are paused.",
+        action: "Save key again",
+        settings: "The saved key can't be read. Paste it again to keep checking.",
+      };
+    case "rejected":
+      return {
+        banner: "TypeSafe turned down your key. Scheduled checks are paused.",
+        action: "Replace key",
+        settings: "TypeSafe turned down the saved key. Paste a working key to resume scheduled checks.",
+      };
   }
 }
 
@@ -536,7 +645,8 @@ function renderKey(state: KeyState): void {
   element("key-form", HTMLFormElement).hidden = state === "unavailable";
   // A saved key that doesn't work is still saved: it can be replaced or removed.
   const saved = state === "configured" || state === "unreadable" || state === "rejected";
-  element("key-input", HTMLInputElement).placeholder = state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
+  element("key-input", HTMLInputElement).placeholder =
+    state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
   const save = element("key-save", HTMLButtonElement);
   save.textContent = saved ? "Replace" : "Save";
   save.className = `btn btn-sm ${state === "configured" ? "btn-secondary" : "btn-primary"}`;
@@ -587,7 +697,10 @@ function renderCheckTimeRows(times: readonly string[]): void {
     remove.type = "button";
     remove.dataset.removeTime = "";
     const time = parseCheckTime(value);
-    remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time");
+    remove.setAttribute(
+      "aria-label",
+      time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time",
+    );
     remove.append(icon("close"));
     row.append(input, remove);
 
@@ -630,7 +743,9 @@ function editedCheckTimes(): string[] {
 
 /** The first row without a full time. It has to be filled in or removed before the rows can be saved. */
 function incompleteCheckTime(): HTMLInputElement | null {
-  return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].find((input) => !input.value) ?? null;
+  return (
+    [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].find((input) => !input.value) ?? null
+  );
 }
 
 function renderSchedule(snapshot: AppSnapshot): void {
@@ -682,22 +797,25 @@ function renderShare(share: ShareState): void {
   switch (share.mode) {
     case "off":
       status.textContent = share.available
-        ? "Share a read-only copy of this list, or follow a list someone shares with you." : "Sharing isn't available in this build.";
+        ? "Share a read-only copy of this list, or follow a list someone shares with you."
+        : "Sharing isn't available in this build.";
       break;
     case "sharing": {
       const code = element("share-code", HTMLInputElement);
 
       if (code.value !== share.code) code.value = share.code;
-      status.textContent = share.problem
-        ?? (share.publishedAt
+      status.textContent =
+        share.problem ??
+        (share.publishedAt
           ? `Anyone with this code can view this list. It's sent after each round of checks; last sent ${stamp(share.publishedAt)}.`
           : "Anyone with this code can view this list. It's sent after each round of checks.");
       break;
     }
 
     case "following":
-      status.textContent = share.problem
-        ?? (share.publishedAt
+      status.textContent =
+        share.problem ??
+        (share.publishedAt
           ? `Viewing a shared list, sent ${stamp(share.publishedAt)}. A newer copy is fetched after each of the owner's check times.`
           : "Viewing a shared list.");
       break;
@@ -709,7 +827,14 @@ let desktopShortcutAsked = false;
 /** The installer can't ask, so the first launch after installing does. Either answer is saved as the setting. */
 async function askDesktopShortcut(): Promise<void> {
   desktopShortcutAsked = true;
-  const wanted = await confirmAction("Add a desktop shortcut?", "Permit Monitor is in the Start menu. You can change this later in Settings.", "Add shortcut", "Not now");
+
+  const wanted = await confirmAction(
+    "Add a desktop shortcut?",
+    "Permit Monitor is in the Start menu. You can change this later in Settings.",
+    "Add shortcut",
+    "Not now",
+  );
+
   const result = await api.setPreference("desktopShortcut", wanted);
 
   if (!result.ok) notice(result.error);
@@ -734,13 +859,17 @@ function render(snapshot: AppSnapshot): void {
   const classified = new Map(snapshot.permits.map((permit) => [permit.id, permitAction(permit)]));
   const failed = snapshot.permits.filter((permit) => matchesFilter(permit, "failed", null)).length;
   const unverified = snapshot.permits.filter((permit) => matchesFilter(permit, "unverified", null)).length;
-  const applicant = snapshot.permits.filter((permit) => matchesFilter(permit, "applicant", classified.get(permit.id) ?? null)).length;
+
+  const applicant = snapshot.permits.filter((permit) =>
+    matchesFilter(permit, "applicant", classified.get(permit.id) ?? null),
+  ).length;
+
   const counts: Record<Filter, number> = { all: total, applicant, failed, unverified };
 
   for (const option of element("permit-filter", HTMLSelectElement).options) {
     const key = filterValue(option.value);
     const count = key ? counts[key] : 0;
-    option.textContent = count > 0 ? `${option.dataset.label} (${count})` : option.dataset.label ?? "";
+    option.textContent = count > 0 ? `${option.dataset.label} (${count})` : (option.dataset.label ?? "");
   }
 
   const visible = snapshot.permits.filter((permit) => matchesFilter(permit, filter, classified.get(permit.id) ?? null));
@@ -759,7 +888,8 @@ function render(snapshot: AppSnapshot): void {
   if (detailsPermitId) {
     const permit = snapshot.permits.find((entry) => entry.id === detailsPermitId);
 
-    if (permit) renderDetailsSummary(permit); else closeSheet(element("details-sheet", HTMLDialogElement));
+    if (permit) renderDetailsSummary(permit);
+    else closeSheet(element("details-sheet", HTMLDialogElement));
   }
 }
 
@@ -787,24 +917,28 @@ function renderDetailsSummary(permit: PermitRow): void {
     return leftRequired ? (right.date ?? "").localeCompare(left.date ?? "") : 0;
   });
 
-  element("details-review-list").replaceChildren(...reviews.map((review) => {
-    const item = make("li");
-    const required = requests.has(reviewRequestKey(review));
-    item.append(make("strong", "", review.process));
-    item.append(make("span", "", review.status ?? "Pending"));
+  element("details-review-list").replaceChildren(
+    ...reviews.map((review) => {
+      const item = make("li");
+      const required = requests.has(reviewRequestKey(review));
+      item.append(make("strong", "", review.process));
+      item.append(make("span", "", review.status ?? "Pending"));
 
-    if (review.date) item.append(make("span", "detail-meta", `Updated ${review.date}`));
-    else if (review.dueDate) item.append(make("span", "detail-meta", `Due ${review.dueDate}`));
+      if (review.date) item.append(make("span", "detail-meta", `Updated ${review.date}`));
+      else if (review.dueDate) item.append(make("span", "detail-meta", `Due ${review.dueDate}`));
 
-    if (required) item.append(make("span", "review-request", "AEC response required"));
-    else if (outstandingReviews([review]).length > 0) item.append(make("span", "detail-meta", "Superseded by a later submission"));
+      if (required) item.append(make("span", "review-request", "AEC response required"));
+      else if (outstandingReviews([review]).length > 0)
+        item.append(make("span", "detail-meta", "Superseded by a later submission"));
 
-    return item;
-  }));
+      return item;
+    }),
+  );
   element("details-review-empty").hidden = reviews.length > 0;
   const manual = isManualJurisdiction(permit.jurisdictionId);
   element("details-observed").textContent = permit.lastObservedAt
-    ? `${manual ? "Entered" : "Verified"} ${stamp(permit.lastObservedAt)}` : "";
+    ? `${manual ? "Entered" : "Verified"} ${stamp(permit.lastObservedAt)}`
+    : "";
   const failure = element("details-failure");
   const failed = !permit.checking && permit.latestOutcome !== null && outcomeKind(permit.latestOutcome) === "failed";
   failure.hidden = !failed;
@@ -819,8 +953,12 @@ function renderDetailsSummary(permit: PermitRow): void {
   // Scheduled checks can't read a hand-checked portal, so the option isn't offered.
   element("details-daily-option").hidden = manual;
 
-  const next = currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
-    ? relativeTime(effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot))) : null;
+  const next =
+    currentSnapshot?.monitoring === "scheduled" && permit.monitoringEnabled && !permit.checking
+      ? relativeTime(
+          effectiveRunTime(new Date(permit.nextDueAt ?? Date.now()), new Date(), checkTimes(currentSnapshot)),
+        )
+      : null;
 
   element("details-daily-help").textContent = next ? `Next: ${next}` : "";
   element("details-remove", HTMLButtonElement).disabled = permit.checking;
@@ -828,23 +966,28 @@ function renderDetailsSummary(permit: PermitRow): void {
   const project = element("details-project", HTMLInputElement);
   project.readOnly = currentSnapshot?.share.mode === "following";
 
-  if (document.activeElement !== project && project.getAttribute("aria-invalid") !== "true") project.value = permit.projectNumber ?? "";
+  if (document.activeElement !== project && project.getAttribute("aria-invalid") !== "true")
+    project.value = permit.projectNumber ?? "";
 }
 
 function renderJurisdictionOptions(): void {
   const select = element("jurisdiction", HTMLSelectElement);
-  select.replaceChildren(...JURISDICTION_GROUPS.map((group) => {
-    const optgroup = make("optgroup");
-    optgroup.label = group.label;
-    optgroup.append(...JURISDICTIONS.filter(group.includes).map((profile) => {
-      const option = make("option", "", profile.label);
-      option.value = profile.id;
+  select.replaceChildren(
+    ...JURISDICTION_GROUPS.map((group) => {
+      const optgroup = make("optgroup");
+      optgroup.label = group.label;
+      optgroup.append(
+        ...JURISDICTIONS.filter(group.includes).map((profile) => {
+          const option = make("option", "", profile.label);
+          option.value = profile.id;
 
-      return option;
-    }));
+          return option;
+        }),
+      );
 
-    return optgroup;
-  }));
+      return optgroup;
+    }),
+  );
   renderJurisdictionHelp();
 }
 
@@ -933,7 +1076,8 @@ async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   historyLoading = key;
 
   // A rejected call never got an answer from main. It is shown like a failure main reported, so it can be retried.
-  const result = await api.history(permit.id, before)
+  const result = await api
+    .history(permit.id, before)
     .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: "The app didn't answer." }));
 
   if (generation !== historyGeneration) return;
@@ -942,10 +1086,14 @@ async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   if (detailsPermitId !== permit.id) return;
 
   if (result.ok) {
-    loadedHistory = before && loadedHistory
-      ? { runs: [...loadedHistory.runs, ...result.value.runs], observations: [...loadedHistory.observations, ...result.value.observations],
-        nextBefore: result.value.nextBefore ?? null }
-      : result.value;
+    loadedHistory =
+      before && loadedHistory
+        ? {
+            runs: [...loadedHistory.runs, ...result.value.runs],
+            observations: [...loadedHistory.observations, ...result.value.observations],
+            nextBefore: result.value.nextBefore ?? null,
+          }
+        : result.value;
     renderHistory(loadedHistory);
     historyShown = key;
     historyFailed = null;
@@ -996,9 +1144,14 @@ async function runPermitAction(action: string, permitId: string): Promise<void> 
     return;
   }
 
-  const result = action === "check" ? await api.checkNow(permitId)
-    : action === "cancel" ? await api.cancel(permitId)
-      : action === "open" ? await api.openRecord(permitId) : null;
+  const result =
+    action === "check"
+      ? await api.checkNow(permitId)
+      : action === "cancel"
+        ? await api.cancel(permitId)
+        : action === "open"
+          ? await api.openRecord(permitId)
+          : null;
 
   if (result && !result.ok) notice(result.error);
 }
@@ -1023,8 +1176,8 @@ async function startManualCheck(permit: PermitRow): Promise<void> {
   element("manual-title").textContent = permit.permitNumber;
   const status = element("manual-status", HTMLInputElement);
   status.value = permit.lastStatus ?? "";
-  element("manual-link", HTMLInputElement).value = permit.lastRecordUrl && permit.lastRecordUrl !== profile?.startUrl
-    ? permit.lastRecordUrl : "";
+  element("manual-link", HTMLInputElement).value =
+    permit.lastRecordUrl && permit.lastRecordUrl !== profile?.startUrl ? permit.lastRecordUrl : "";
   setInlineError("manual-status", "manual-error", null);
 
   if (!manualDialog.open) manualDialog.showModal();
@@ -1038,11 +1191,16 @@ function closeManual(): void {
   if (manualDialog.open) manualDialog.close();
 }
 
-element("manual-status", HTMLInputElement).addEventListener("input", () => setInlineError("manual-status", "manual-error", null));
+element("manual-status", HTMLInputElement).addEventListener("input", () =>
+  setInlineError("manual-status", "manual-error", null),
+);
 
 element("manual-cancel", HTMLButtonElement).addEventListener("click", closeManual);
 
-manualDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeManual(); });
+manualDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeManual();
+});
 
 element("manual-reopen", HTMLButtonElement).addEventListener("click", async () => {
   if (!manualPermitId) return;
@@ -1066,7 +1224,10 @@ element("manual-form", HTMLFormElement).addEventListener("submit", async (event)
   }
 
   const recordUrl = element("manual-link", HTMLInputElement).value.trim();
-  const result = await busy(element("manual-save", HTMLButtonElement), () => api.recordManualStatus({ permitId, status, recordUrl }));
+
+  const result = await busy(element("manual-save", HTMLButtonElement), () =>
+    api.recordManualStatus({ permitId, status, recordUrl }),
+  );
 
   if (!result.ok) {
     setInlineError("manual-status", "manual-error", result.error);
@@ -1084,7 +1245,8 @@ function setInlineError(inputId: string, errorId: string, message: string | null
   error.textContent = message ?? "";
   const input = element(inputId, HTMLInputElement);
 
-  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+  if (message) input.setAttribute("aria-invalid", "true");
+  else input.removeAttribute("aria-invalid");
 }
 
 function projectProblem(value: string): string | null {
@@ -1110,21 +1272,25 @@ function askProjectNumber(permit: PermitRow): Promise<string | null> {
   // Permits tend to arrive a project at a time, so offer the last one used, selected so typing replaces it.
   input.value = recent[0] ?? "";
   element("project-recent").hidden = recent.length < 2;
-  element("project-recent-list", HTMLUListElement).replaceChildren(...recent.map((number) => {
-    const item = make("li");
-    const chip = make("button", "project-chip", number);
-    chip.type = "button";
-    chip.dataset.project = number;
-    item.append(chip);
+  element("project-recent-list", HTMLUListElement).replaceChildren(
+    ...recent.map((number) => {
+      const item = make("li");
+      const chip = make("button", "project-chip", number);
+      chip.type = "button";
+      chip.dataset.project = number;
+      item.append(chip);
 
-    return item;
-  }));
+      return item;
+    }),
+  );
   setInlineError("project-input", "project-error", null);
   projectDialog.showModal();
   input.focus();
   input.select();
 
-  return new Promise((resolve) => { settleProject = resolve; });
+  return new Promise((resolve) => {
+    settleProject = resolve;
+  });
 }
 
 function finishProject(saved: string | null): void {
@@ -1136,7 +1302,9 @@ function finishProject(saved: string | null): void {
   settle?.(saved);
 }
 
-element("project-input", HTMLInputElement).addEventListener("input", () => setInlineError("project-input", "project-error", null));
+element("project-input", HTMLInputElement).addEventListener("input", () =>
+  setInlineError("project-input", "project-error", null),
+);
 
 element("project-recent-list", HTMLUListElement).addEventListener("click", (event) => {
   const chip = eventButton(event, "button[data-project]");
@@ -1150,9 +1318,14 @@ element("project-recent-list", HTMLUListElement).addEventListener("click", (even
 
 element("project-skip", HTMLButtonElement).addEventListener("click", () => finishProject(null));
 
-projectDialog.addEventListener("cancel", (event) => { event.preventDefault(); finishProject(null); });
+projectDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  finishProject(null);
+});
 
-projectDialog.addEventListener("click", (event) => { if (event.target === projectDialog) finishProject(null); });
+projectDialog.addEventListener("click", (event) => {
+  if (event.target === projectDialog) finishProject(null);
+});
 
 element("project-form", HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1190,7 +1363,9 @@ element("project-form", HTMLFormElement).addEventListener("submit", async (event
 });
 
 // Add form
-element("permit-number", HTMLInputElement).addEventListener("input", () => setInlineError("permit-number", "permit-number-error", null));
+element("permit-number", HTMLInputElement).addEventListener("input", () =>
+  setInlineError("permit-number", "permit-number-error", null),
+);
 
 element("add-form", HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1212,7 +1387,10 @@ element("add-form", HTMLFormElement).addEventListener("submit", async (event) =>
   }
 
   const jurisdiction = element("jurisdiction", HTMLSelectElement).value;
-  const result = await busy(element("add-button", HTMLButtonElement), () => api.addAndCheck({ jurisdiction, permitNumber: number }));
+
+  const result = await busy(element("add-button", HTMLButtonElement), () =>
+    api.addAndCheck({ jurisdiction, permitNumber: number }),
+  );
 
   if (!result.ok) {
     setInlineError("permit-number", "permit-number-error", result.error);
@@ -1473,7 +1651,10 @@ element("details-remove", HTMLButtonElement).addEventListener("click", async () 
 
   if (!permit || !permitId) return;
 
-  if (!(await confirmAction(`Remove ${permit.permitNumber}?`, "Its history on this computer will be deleted.", "Remove"))) return;
+  if (
+    !(await confirmAction(`Remove ${permit.permitNumber}?`, "Its history on this computer will be deleted.", "Remove"))
+  )
+    return;
   const result = await api.removePermit(permitId);
 
   if (!result.ok) {
@@ -1508,8 +1689,13 @@ element("history-list", HTMLOListElement).addEventListener("click", async (event
 // Dialogs close on Escape, backdrop click, and their own buttons. State is reset here rather
 // than in a "close" listener so it never depends on that event being delivered.
 for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet")) {
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) closeSheet(dialog); });
-  dialog.addEventListener("cancel", (event) => { event.preventDefault(); closeSheet(dialog); });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeSheet(dialog);
+  });
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSheet(dialog);
+  });
   dialog.querySelector<HTMLButtonElement>("[data-close]")?.addEventListener("click", () => closeSheet(dialog));
 }
 
@@ -1518,7 +1704,10 @@ for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListene
 
 const confirmDialog = element("confirm-dialog", HTMLDialogElement);
 
-confirmDialog.addEventListener("cancel", (event) => { event.preventDefault(); finishConfirm(false); });
+confirmDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  finishConfirm(false);
+});
 
 confirmDialog.addEventListener("click", (event) => {
   if (event.target === confirmDialog) {
@@ -1529,10 +1718,15 @@ confirmDialog.addEventListener("click", (event) => {
 
   const choice = eventButton(event, "button[value]")?.value;
 
-  if (choice) { event.preventDefault(); finishConfirm(choice === "accept"); }
+  if (choice) {
+    event.preventDefault();
+    finishConfirm(choice === "accept");
+  }
 });
 
-element("open-settings", HTMLButtonElement).addEventListener("click", () => element("settings-sheet", HTMLDialogElement).showModal());
+element("open-settings", HTMLButtonElement).addEventListener("click", () =>
+  element("settings-sheet", HTMLDialogElement).showModal(),
+);
 
 // Updates
 const checkUpdate = element("check-update", HTMLButtonElement);
@@ -1576,7 +1770,10 @@ element("download-update", HTMLButtonElement).addEventListener("click", async ()
   element("update-status").textContent = "Downloading… This can take a few minutes.";
   // A check during the download could replace the update being downloaded.
   checkUpdate.disabled = true;
-  const result = await busy(control, () => api.downloadUpdate()).finally(() => { checkUpdate.disabled = false; });
+
+  const result = await busy(control, () => api.downloadUpdate()).finally(() => {
+    checkUpdate.disabled = false;
+  });
 
   if (!result.ok) {
     element("update-status").textContent = result.error;
@@ -1597,7 +1794,14 @@ element("install-update", HTMLButtonElement).addEventListener("click", async () 
 });
 
 element("delete-local-data", HTMLButtonElement).addEventListener("click", async () => {
-  if (!(await confirmAction("Delete all data?", "Permits, history, and your key will be deleted and the app will close. This can't be undone.", "Delete"))) return;
+  if (
+    !(await confirmAction(
+      "Delete all data?",
+      "Permits, history, and your key will be deleted and the app will close. This can't be undone.",
+      "Delete",
+    ))
+  )
+    return;
   const result = await api.deleteLocalData("DELETE LOCAL DATA");
 
   if (!result.ok) notice(result.error);
@@ -1613,17 +1817,27 @@ element("share-start", HTMLButtonElement).addEventListener("click", async () => 
 element("share-copy", HTMLButtonElement).addEventListener("click", async () => {
   const result = await api.copyShareCode();
 
-  if (result.ok) notice("Share code copied.", "info"); else notice(result.error);
+  if (result.ok) notice("Share code copied.", "info");
+  else notice(result.error);
 });
 
 element("share-stop", HTMLButtonElement).addEventListener("click", async () => {
-  if (!(await confirmAction("Stop sharing this list?", "The code stops working, and people following it keep only the copy they last received.", "Stop sharing"))) return;
+  if (
+    !(await confirmAction(
+      "Stop sharing this list?",
+      "The code stops working, and people following it keep only the copy they last received.",
+      "Stop sharing",
+    ))
+  )
+    return;
   const result = await busy(element("share-stop", HTMLButtonElement), () => api.stopSharing());
 
   if (!result.ok) notice(result.error);
 });
 
-element("follow-input", HTMLInputElement).addEventListener("input", () => setInlineError("follow-input", "follow-error", null));
+element("follow-input", HTMLInputElement).addEventListener("input", () =>
+  setInlineError("follow-input", "follow-error", null),
+);
 
 element("follow-form", HTMLFormElement).addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1639,8 +1853,15 @@ element("follow-form", HTMLFormElement).addEventListener("submit", async (event)
 
   const own = currentSnapshot?.share.mode === "off" ? currentSnapshot.permits.length : 0;
 
-  if (own > 0 && !(await confirmAction("Follow this shared list?",
-    `Your own ${permitCount(own)} stay on this computer but aren't shown or checked until you stop following.`, "Follow"))) return;
+  if (
+    own > 0 &&
+    !(await confirmAction(
+      "Follow this shared list?",
+      `Your own ${permitCount(own)} stay on this computer but aren't shown or checked until you stop following.`,
+      "Follow",
+    ))
+  )
+    return;
   const result = await busy(element("follow-save", HTMLButtonElement), () => api.follow(code));
 
   if (!result.ok) {
@@ -1663,11 +1884,19 @@ shareSync.addEventListener("click", async () => {
   const sharing = currentSnapshot?.share.mode === "sharing";
   const result = await busy(shareSync, () => api.syncShared());
 
-  if (result.ok) notice(sharing ? "Shared list sent." : "Shared list is up to date.", "info"); else notice(result.error);
+  if (result.ok) notice(sharing ? "Shared list sent." : "Shared list is up to date.", "info");
+  else notice(result.error);
 });
 
 element("follow-stop", HTMLButtonElement).addEventListener("click", async () => {
-  if (!(await confirmAction("Stop following?", "Your own list comes back. You'll need the code to follow this list again.", "Stop following"))) return;
+  if (
+    !(await confirmAction(
+      "Stop following?",
+      "Your own list comes back. You'll need the code to follow this list again.",
+      "Stop following",
+    ))
+  )
+    return;
   const result = await api.stopFollowing();
 
   if (!result.ok) notice(result.error);
@@ -1683,12 +1912,17 @@ api.onSnapshot((snapshot) => {
 api.onLocalError((message) => notice(message));
 
 api.onOpenDetails((permitId) => {
-  for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet:not(#details-sheet)")) closeSheet(dialog);
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet:not(#details-sheet)"))
+    closeSheet(dialog);
   finishConfirm(false);
   finishProject(null);
 
   if (currentSnapshot?.permits.some((permit) => permit.id === permitId)) openDetails(permitId);
-  else void api.snapshot().then((snapshot) => { applySnapshot(snapshot); openDetails(permitId); });
+  else
+    void api.snapshot().then((snapshot) => {
+      applySnapshot(snapshot);
+      openDetails(permitId);
+    });
 });
 
 api.onAppEvent((event) => notice(`${event.title}: ${event.body}`, event.tone));
@@ -1700,11 +1934,16 @@ for (const input of document.querySelectorAll<HTMLInputElement>("input[data-pref
   input.addEventListener("change", async () => {
     const result = await api.setPreference(key, input.checked);
 
-    if (!result.ok) { input.checked = !input.checked; notice(result.error); }
+    if (!result.ok) {
+      input.checked = !input.checked;
+      notice(result.error);
+    }
   });
 }
 
 // Keeps the "Next check" time current between snapshots.
-setInterval(() => { if (currentSnapshot) element("next-check").textContent = nextCheckSummary(currentSnapshot); }, 60_000);
+setInterval(() => {
+  if (currentSnapshot) element("next-check").textContent = nextCheckSummary(currentSnapshot);
+}, 60_000);
 
 void api.snapshot().then(applySnapshot);

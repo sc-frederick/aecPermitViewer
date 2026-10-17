@@ -27,14 +27,23 @@ async function serve(rooms: MemoryRooms, responses: number[]): Promise<ShareServ
       const headers = new Headers({ "cf-connecting-ip": "192.0.2.1" });
 
       for (let index = 0; index + 1 < incoming.rawHeaders.length; index += 2) {
-        headers.append(defined(incoming.rawHeaders[index], "header name"), defined(incoming.rawHeaders[index + 1], "header value"));
+        headers.append(
+          defined(incoming.rawHeaders[index], "header name"),
+          defined(incoming.rawHeaders[index + 1], "header value"),
+        );
       }
 
       const init: RequestInit = { method: incoming.method ?? "GET", headers };
       const body = Buffer.concat(chunks);
 
       if (body.length > 0) init.body = body;
-      const response = await route(new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init), rooms.directory, rooms.admission);
+
+      const response = await route(
+        new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init),
+        rooms.directory,
+        rooms.admission,
+      );
+
       responses.push(response.status);
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       outgoing.end(Buffer.from(await response.arrayBuffer()));
@@ -65,7 +74,10 @@ describe("sharing admission over real HTTP", () => {
     const service = await serve(rooms, responses);
     const sealed = sealList("first", CONTENT_KEY);
     expect((await service.publish(WRITE_KEY, sealed))._tag).toBe("published");
-    expect(await service.publish(toBase64Url(new Uint8Array(32).fill(12)), sealed)).toEqual({ _tag: "retry", afterSeconds: 3600 });
+    expect(await service.publish(toBase64Url(new Uint8Array(32).fill(12)), sealed)).toEqual({
+      _tag: "retry",
+      afterSeconds: 3600,
+    });
     expect(responses).toEqual([200, 429]);
   });
 
@@ -77,12 +89,26 @@ describe("sharing admission over real HTTP", () => {
     let json = "first";
 
     let notifyPublished = (): void => undefined;
-    const recovered = new Promise<void>((resolve) => { notifyPublished = resolve; });
+
+    const recovered = new Promise<void>((resolve) => {
+      notifyPublished = resolve;
+    });
+
     const reports: string[] = [];
 
-    const publisher = new SharePublisher(service, WRITE_KEY, CONTENT_KEY, () => json, () => false, () => {
-      if (publisher.publishedAt === "2026-09-28T12:01:00.000Z") notifyPublished();
-    }, (operation) => { reports.push(operation); });
+    const publisher = new SharePublisher(
+      service,
+      WRITE_KEY,
+      CONTENT_KEY,
+      () => json,
+      () => false,
+      () => {
+        if (publisher.publishedAt === "2026-09-28T12:01:00.000Z") notifyPublished();
+      },
+      (operation) => {
+        reports.push(operation);
+      },
+    );
 
     publishers.push(publisher);
     expect(await publisher.syncNow()).toBeNull();

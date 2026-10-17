@@ -19,7 +19,8 @@ const html = readFileSync("tests/fixtures/hillsborough/processing-status.html", 
 
 const number = "HC-SITECON-26-0000004";
 
-const url = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=LandDevelopment&TabName=LandDevelopment&capID1=26CAP&capID2=00000&capID3=00CKN&agencyCode=HCFL";
+const url =
+  "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=LandDevelopment&TabName=LandDevelopment&capID1=26CAP&capID2=00000&capID3=00CKN&agencyCode=HCFL";
 
 const profile = defined(getAutomatedJurisdiction("hillsborough-county-building"), "Hillsborough profile");
 
@@ -27,11 +28,17 @@ let browser: Browser;
 
 let page: Page;
 
-beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 60_000);
+beforeAll(async () => {
+  browser = await chromium.launch({ headless: true });
+}, 60_000);
 
-afterEach(async () => { await page?.close(); });
+afterEach(async () => {
+  await page?.close();
+});
 
-afterAll(async () => { await browser?.close(); });
+afterAll(async () => {
+  await browser?.close();
+});
 
 async function serve(body: string): Promise<void> {
   page = await browser.newPage();
@@ -45,16 +52,33 @@ describe("Accela Processing Status", () => {
     const record = await readDetail(page, profile, number);
     expect(record.statusValue).toBe("In Process");
     const reviews = defined(record.reviews, "workflow history");
-    expect(outstandingReviews(reviews)).toEqual(expect.arrayContaining([
-      { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" },
-      { process: "Site Engineer Review", status: "Corrections Required", date: "2026-09-22", dueDate: "2026-09-22" },
-    ]));
+    expect(outstandingReviews(reviews)).toEqual(
+      expect.arrayContaining([
+        {
+          process: "Natural Resources Review",
+          status: "Corrections Required",
+          date: "2026-09-24",
+          dueDate: "2026-09-22",
+        },
+        { process: "Site Engineer Review", status: "Corrections Required", date: "2026-09-22", dueDate: "2026-09-22" },
+      ]),
+    );
     expect(outstandingReviews(reviews).some((review) => review.process === "Stormwater Review")).toBe(false);
     expect(outstandingReviews(reviews).some((review) => review.process === "Plans Coordination")).toBe(false);
-    expect(latestReviews(reviews).find((review) => review.process === "Stormwater Review"))
-      .toEqual({ process: "Stormwater Review", status: null, date: null, dueDate: "2026-09-22" });
+    expect(latestReviews(reviews).find((review) => review.process === "Stormwater Review")).toEqual({
+      process: "Stormwater Review",
+      status: null,
+      date: null,
+      dueDate: "2026-09-22",
+    });
 
-    const message = workerToMainSchema.parse({ ...record, kind: "verified", runId: "test", browserVersion: "test", observedAt: "2026-09-28T12:00:00.000Z" });
+    const message = workerToMainSchema.parse({
+      ...record,
+      kind: "verified",
+      runId: "test",
+      browserVersion: "test",
+      observedAt: "2026-09-28T12:00:00.000Z",
+    });
 
     if (message.kind !== "verified") throw new Error("Expected verified message");
     const parsed = parseDisplayedStatus({ ...message, jurisdictionId: profile.id, requestedNumber: number });
@@ -71,9 +95,24 @@ describe("Accela Processing Status", () => {
       const before = defined(store.getPermit(permitId), "new permit");
 
       const finish = (outcome: "success" | "status_unavailable") => {
-        const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test", requestedModel: "test", promptVersion: "test" });
-        store.finishRun({ runId, permitId, outcome, actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null,
-          observation: parsed.value });
+        const runId = store.startRun({
+          permitId,
+          appVersion: "test",
+          playwrightVersion: "test",
+          requestedModel: "test",
+          promptVersion: "test",
+        });
+
+        store.finishRun({
+          runId,
+          permitId,
+          outcome,
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+          observation: parsed.value,
+        });
 
         return defined(store.getPermit(permitId), "saved permit");
       };
@@ -81,8 +120,10 @@ describe("Accela Processing Status", () => {
       const after = finish("success");
       expect(after.reviews).toEqual(reviews);
       expect(permitAction(after)).toMatchObject({ action: "applicant", basis: "review" });
-      expect(describeCheckEvent({ ...before, lastStatus: "In Process" }, after, "success"))
-        .toMatchObject({ kind: "review-action", body: expect.stringContaining("Natural Resources Review: “Corrections Required” (2026-09-24)") });
+      expect(describeCheckEvent({ ...before, lastStatus: "In Process" }, after, "success")).toMatchObject({
+        kind: "review-action",
+        body: expect.stringContaining("Natural Resources Review: “Corrections Required” (2026-09-24)"),
+      });
       expect(describeCheckEvent(after, finish("success"), "success")).toBeNull();
       const failed = finish("status_unavailable");
       expect(failed.reviews).toEqual(reviews);
@@ -100,8 +141,14 @@ describe("Accela Processing Status", () => {
     const table = /<div id="divProcessingTable"[\s\S]*<\/div>/.exec(html)?.[0];
     expect(table).toBeTruthy();
     const encoded = JSON.stringify(table).replaceAll("<", "\\u003c");
-    await serve(html.replace(table ?? "", '<div id="divProcessingTable"></div>')
-      .replace("</body>", `<a data-control="tab-processing_status" onclick='setTimeout(() => document.querySelector("#divProcessingTable").outerHTML = ${encoded}, 50)'>Processing Status</a></body>`));
+    await serve(
+      html
+        .replace(table ?? "", '<div id="divProcessingTable"></div>')
+        .replace(
+          "</body>",
+          `<a data-control="tab-processing_status" onclick='setTimeout(() => document.querySelector("#divProcessingTable").outerHTML = ${encoded}, 50)'>Processing Status</a></body>`,
+        ),
+    );
     expect(outstandingReviews((await readDetail(page, profile, number)).reviews ?? [])).toHaveLength(3);
   });
 

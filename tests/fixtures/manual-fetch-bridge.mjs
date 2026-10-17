@@ -4,7 +4,8 @@ const originalFetch = globalThis.fetch;
 
 const localOrigin = process.env.FAKE_UPDATE_ORIGIN;
 
-if (!localOrigin || !/^http:\/\/127\.0\.0\.1:\d+$/.test(localOrigin)) throw new Error("Missing local test Worker origin");
+if (!localOrigin || !/^http:\/\/127\.0\.0\.1:\d+$/.test(localOrigin))
+  throw new Error("Missing local test Worker origin");
 
 globalThis.fetch = (input, init) => {
   const url = new URL(input);

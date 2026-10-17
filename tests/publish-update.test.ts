@@ -1,6 +1,15 @@
 import { spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -38,18 +47,36 @@ function sha256(value: string): string {
 }
 
 function manifest(version: string, body: string): string {
-  const signed = Buffer.from(JSON.stringify({ version, url: `${ORIGIN}/PermitMonitorSetup-${version}.exe`,
-    sha256: sha256(body), size: Buffer.byteLength(body), publisher: "" }));
+  const signed = Buffer.from(
+    JSON.stringify({
+      version,
+      url: `${ORIGIN}/PermitMonitorSetup-${version}.exe`,
+      sha256: sha256(body),
+      size: Buffer.byteLength(body),
+      publisher: "",
+    }),
+  );
 
-  return JSON.stringify({ signed: signed.toString("base64"), signature: sign(null, signed, keys.privateKey).toString("base64") });
+  return JSON.stringify({
+    signed: signed.toString("base64"),
+    signature: sign(null, signed, keys.privateKey).toString("base64"),
+  });
 }
 
 function run(script: string, cwd: string, env: NodeJS.ProcessEnv, loader?: string) {
   return new Promise<{ readonly status: number | null; readonly output: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [...loader ? ["--import", pathToFileURL(loader).href] : [], script], { cwd, env });
+    const child = spawn(process.execPath, [...(loader ? ["--import", pathToFileURL(loader).href] : []), script], {
+      cwd,
+      env,
+    });
+
     let output = "";
-    child.stdout.on("data", (bytes: Buffer) => { output += bytes.toString(); });
-    child.stderr.on("data", (bytes: Buffer) => { output += bytes.toString(); });
+    child.stdout.on("data", (bytes: Buffer) => {
+      output += bytes.toString();
+    });
+    child.stderr.on("data", (bytes: Buffer) => {
+      output += bytes.toString();
+    });
     child.on("error", reject);
     child.on("close", (status) => resolve({ status, output }));
   });
@@ -118,7 +145,9 @@ describe("actual release publishers against local storage", () => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
     });
-    cleanup.push(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+    cleanup.push(
+      () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    );
     const address = z.object({ port: z.number().int().positive() }).safeParse(server.address());
 
     if (!address.success) throw new Error("No local Worker address");
@@ -127,7 +156,12 @@ describe("actual release publishers against local storage", () => {
   }
 
   function manualEnv(origin: string): NodeJS.ProcessEnv {
-    return { ...process.env, UPDATE_SERVER_URL: ORIGIN, UPDATE_UPLOAD_TOKEN: "local-token", FAKE_UPDATE_ORIGIN: origin };
+    return {
+      ...process.env,
+      UPDATE_SERVER_URL: ORIGIN,
+      UPDATE_UPLOAD_TOKEN: "local-token",
+      FAKE_UPDATE_ORIGIN: origin,
+    };
   }
 
   it("publishes both platforms through the actual manual script and safely retries", async () => {
@@ -151,7 +185,14 @@ describe("actual release publishers against local storage", () => {
     unlinkSync(work.macFile);
     const bucket = new MemoryBucket();
     const local = await serve(bucket);
-    const result = await run(script, work.cwd, { ...manualEnv(local.origin), R2_ENDPOINT: "https://r2.example.test" }, script === MANUAL ? BRIDGE : undefined);
+
+    const result = await run(
+      script,
+      work.cwd,
+      { ...manualEnv(local.origin), R2_ENDPOINT: "https://r2.example.test" },
+      script === MANUAL ? BRIDGE : undefined,
+    );
+
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("matching Mac archive is missing");
     expect(local.requests).toEqual([]);
@@ -170,88 +211,141 @@ describe("actual release publishers against local storage", () => {
     expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.7.0", "old"));
     const redirect = await worker.fetch(new Request(`${ORIGIN}/mac`), local.env);
     expect(redirect.headers.get("location")).toBe(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
-    expect((await worker.fetch(new Request(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`), local.env)).status).toBe(200);
+    expect((await worker.fetch(new Request(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`), local.env)).status).toBe(
+      200,
+    );
   });
 
-  it.skipIf(process.platform === "win32").each([false, true])("arbitrates actual CI/manual publishers at a barrier (identical=%s)", async (identical) => {
-    const work = workspace();
-    const bucket = new FileFeedBucket(path.join(work.store, BUCKET));
-    const local = await serve(bucket);
-    const gate = path.join(work.root, "gate");
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "arbitrates actual CI/manual publishers at a barrier (identical=%s)",
+    async (identical) => {
+      const work = workspace();
+      const bucket = new FileFeedBucket(path.join(work.store, BUCKET));
+      const local = await serve(bucket);
+      const gate = path.join(work.root, "gate");
 
-    const publishing = run(CI, work.cwd, { ...process.env, PATH: `${work.bin}${path.delimiter}${process.env.PATH ?? ""}`,
-      R2_ENDPOINT: "https://r2.example.test", FAKE_AWS_ROOT: work.store, FAKE_AWS_GATE_DIR: gate });
+      const publishing = run(CI, work.cwd, {
+        ...process.env,
+        PATH: `${work.bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        R2_ENDPOINT: "https://r2.example.test",
+        FAKE_AWS_ROOT: work.store,
+        FAKE_AWS_GATE_DIR: gate,
+      });
 
-    const deadline = Date.now() + 8_000;
+      const deadline = Date.now() + 8_000;
 
-    while (!existsSync(path.join(gate, "ready"))) {
-      if (Date.now() >= deadline) throw new Error("CI publisher never reached its conditional artifact write");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    const winner = identical ? "AAAA" : "BBBB";
-    // The CI process has checked an absent key and is paused immediately before its final conditional write.
-    const claim = { sha256: sha256(winner), size: 4 };
-
-    const response = await worker.fetch(new Request(`${ORIGIN}/upload/PermitMonitorSetup-0.8.0.exe`, {
-      method: "POST", headers: { authorization: "Bearer local-token" }, body: JSON.stringify(claim),
-    }), local.env);
-
-    const start = startSchema.parse(await response.json());
-    const session = new URLSearchParams({ uploadId: start.uploadId, stagingKey: start.stagingKey });
-    const url = `${ORIGIN}/upload/PermitMonitorSetup-0.8.0.exe?${session}`;
-
-    const part = partSchema.parse(await (await worker.fetch(new Request(`${url}&partNumber=1`, {
-      method: "PUT", headers: { authorization: "Bearer local-token" }, body: winner,
-    }), local.env)).json());
-
-    expect((await worker.fetch(new Request(url, { method: "POST", headers: { authorization: "Bearer local-token" },
-      body: JSON.stringify({ ...claim, parts: [part] }) }), local.env)).status).toBe(200);
-    writeFileSync(path.join(gate, "continue"), "continue");
-    const result = await publishing;
-    expect(result.status, result.output).toBe(identical ? 0 : 1);
-    expect(readFileSync(path.join(work.store, BUCKET, "PermitMonitorSetup-0.8.0.exe"), "utf8")).toBe(winner);
-
-    if (identical) expect(readFileSync(path.join(work.store, BUCKET, "release-manifest.json"), "utf8")).toBe(manifest("0.8.0", winner));
-    else expect(existsSync(path.join(work.store, BUCKET, "release-manifest.json"))).toBe(false);
-    expect(local.failures).toEqual([]);
-  }, 20_000);
-
-  it.skipIf(process.platform === "win32").each([false, true])("preserves a CI winner while the actual manual publisher is paused (identical=%s)", async (identical) => {
-    const ciWork = workspace("AAAA");
-    const manualWork = workspace(identical ? "AAAA" : "BBBB");
-    let reached: () => void = () => {};
-
-    let release: () => void = () => {};
-
-    const ready = new Promise<void>((resolve) => { reached = resolve; });
-    const barrier = new Promise<void>((resolve) => { release = resolve; });
-
-    class PausedWorkerBucket extends FileFeedBucket {
-      override async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
-        if (key.endsWith(".exe")) {
-          reached();
-          await barrier;
-        }
-
-        return super.put(key, value, options);
+      while (!existsSync(path.join(gate, "ready"))) {
+        if (Date.now() >= deadline) throw new Error("CI publisher never reached its conditional artifact write");
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-    }
 
-    const bucket = new PausedWorkerBucket(path.join(ciWork.store, BUCKET));
-    const local = await serve(bucket);
-    const manual = run(MANUAL, manualWork.cwd, manualEnv(local.origin), BRIDGE);
-    await ready;
+      const winner = identical ? "AAAA" : "BBBB";
+      // The CI process has checked an absent key and is paused immediately before its final conditional write.
+      const claim = { sha256: sha256(winner), size: 4 };
 
-    const ci = await run(CI, ciWork.cwd, { ...process.env, PATH: `${ciWork.bin}${path.delimiter}${process.env.PATH ?? ""}`,
-      R2_ENDPOINT: "https://r2.example.test", FAKE_AWS_ROOT: ciWork.store });
+      const response = await worker.fetch(
+        new Request(`${ORIGIN}/upload/PermitMonitorSetup-0.8.0.exe`, {
+          method: "POST",
+          headers: { authorization: "Bearer local-token" },
+          body: JSON.stringify(claim),
+        }),
+        local.env,
+      );
 
-    expect(ci.status, ci.output).toBe(0);
-    release();
-    const result = await manual;
-    expect(result.status, result.output).toBe(identical ? 0 : 1);
-    expect(readFileSync(path.join(ciWork.store, BUCKET, "PermitMonitorSetup-0.8.0.exe"), "utf8")).toBe("AAAA");
-    expect(readFileSync(path.join(ciWork.store, BUCKET, "release-manifest.json"), "utf8")).toBe(manifest("0.8.0", "AAAA"));
-    expect(local.failures).toEqual([]);
-  }, 20_000);
+      const start = startSchema.parse(await response.json());
+      const session = new URLSearchParams({ uploadId: start.uploadId, stagingKey: start.stagingKey });
+      const url = `${ORIGIN}/upload/PermitMonitorSetup-0.8.0.exe?${session}`;
+
+      const part = partSchema.parse(
+        await (
+          await worker.fetch(
+            new Request(`${url}&partNumber=1`, {
+              method: "PUT",
+              headers: { authorization: "Bearer local-token" },
+              body: winner,
+            }),
+            local.env,
+          )
+        ).json(),
+      );
+
+      expect(
+        (
+          await worker.fetch(
+            new Request(url, {
+              method: "POST",
+              headers: { authorization: "Bearer local-token" },
+              body: JSON.stringify({ ...claim, parts: [part] }),
+            }),
+            local.env,
+          )
+        ).status,
+      ).toBe(200);
+      writeFileSync(path.join(gate, "continue"), "continue");
+      const result = await publishing;
+      expect(result.status, result.output).toBe(identical ? 0 : 1);
+      expect(readFileSync(path.join(work.store, BUCKET, "PermitMonitorSetup-0.8.0.exe"), "utf8")).toBe(winner);
+
+      if (identical)
+        expect(readFileSync(path.join(work.store, BUCKET, "release-manifest.json"), "utf8")).toBe(
+          manifest("0.8.0", winner),
+        );
+      else expect(existsSync(path.join(work.store, BUCKET, "release-manifest.json"))).toBe(false);
+      expect(local.failures).toEqual([]);
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "preserves a CI winner while the actual manual publisher is paused (identical=%s)",
+    async (identical) => {
+      const ciWork = workspace("AAAA");
+      const manualWork = workspace(identical ? "AAAA" : "BBBB");
+      let reached: () => void = () => {};
+
+      let release: () => void = () => {};
+
+      const ready = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      class PausedWorkerBucket extends FileFeedBucket {
+        override async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
+          if (key.endsWith(".exe")) {
+            reached();
+            await barrier;
+          }
+
+          return super.put(key, value, options);
+        }
+      }
+
+      const bucket = new PausedWorkerBucket(path.join(ciWork.store, BUCKET));
+      const local = await serve(bucket);
+      const manual = run(MANUAL, manualWork.cwd, manualEnv(local.origin), BRIDGE);
+      await ready;
+
+      const ci = await run(CI, ciWork.cwd, {
+        ...process.env,
+        PATH: `${ciWork.bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        R2_ENDPOINT: "https://r2.example.test",
+        FAKE_AWS_ROOT: ciWork.store,
+      });
+
+      expect(ci.status, ci.output).toBe(0);
+      release();
+      const result = await manual;
+      expect(result.status, result.output).toBe(identical ? 0 : 1);
+      expect(readFileSync(path.join(ciWork.store, BUCKET, "PermitMonitorSetup-0.8.0.exe"), "utf8")).toBe("AAAA");
+      expect(readFileSync(path.join(ciWork.store, BUCKET, "release-manifest.json"), "utf8")).toBe(
+        manifest("0.8.0", "AAAA"),
+      );
+      expect(local.failures).toEqual([]);
+    },
+    20_000,
+  );
 });

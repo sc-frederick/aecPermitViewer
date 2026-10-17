@@ -40,7 +40,10 @@ export class Background {
   private shownState = "";
   private readonly live = new Set<Notification>();
 
-  constructor(private readonly assetDir: string, private readonly hooks: BackgroundHooks) {}
+  constructor(
+    private readonly assetDir: string,
+    private readonly hooks: BackgroundHooks,
+  ) {}
 
   /** Windows gets a tray icon and macOS a menu bar icon; other platforms keep ordinary close-to-quit behavior. */
   start(): boolean {
@@ -71,11 +74,16 @@ export class Background {
     if (shown === this.shownState) return;
     this.shownState = shown;
 
-    const summary = state.checking > 0 ? `${state.checking} check${state.checking === 1 ? "" : "s"} running`
-      : state.failing > 0 ? `${state.failing} latest check${state.failing === 1 ? "" : "s"} failed`
-        : `${state.permits} permit${state.permits === 1 ? "" : "s"} tracked`;
+    const summary =
+      state.checking > 0
+        ? `${state.checking} check${state.checking === 1 ? "" : "s"} running`
+        : state.failing > 0
+          ? `${state.failing} latest check${state.failing === 1 ? "" : "s"} failed`
+          : `${state.permits} permit${state.permits === 1 ? "" : "s"} tracked`;
 
-    this.tray.setToolTip(`Permit Monitor\n${summary}\nScheduled checks ${state.scheduled ? `at ${state.checkTimes}` : "off"}`);
+    this.tray.setToolTip(
+      `Permit Monitor\n${summary}\nScheduled checks ${state.scheduled ? `at ${state.checkTimes}` : "off"}`,
+    );
     const attention = state.failing > 0;
 
     if (attention !== this.attention) {
@@ -83,20 +91,29 @@ export class Background {
       this.tray.setImage(this.image(attention ? "tray-attention" : "tray"));
     }
 
-    this.tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Open Permit Monitor", click: () => this.hooks.showWindow() },
-      { label: "Check all permits now", enabled: state.permits > 0, click: () => this.hooks.checkAll() },
-      { type: "separator" },
-      { label: `Scheduled checks (${state.checkTimes})`, type: "checkbox", checked: state.scheduled, click: (item) => this.hooks.setScheduled(item.checked) },
-      { type: "separator" },
-      { label: "Quit Permit Monitor", click: () => this.hooks.quit() },
-    ]));
+    this.tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "Open Permit Monitor", click: () => this.hooks.showWindow() },
+        { label: "Check all permits now", enabled: state.permits > 0, click: () => this.hooks.checkAll() },
+        { type: "separator" },
+        {
+          label: `Scheduled checks (${state.checkTimes})`,
+          type: "checkbox",
+          checked: state.scheduled,
+          click: (item) => this.hooks.setScheduled(item.checked),
+        },
+        { type: "separator" },
+        { label: "Quit Permit Monitor", click: () => this.hooks.quit() },
+      ]),
+    );
   }
 
   /** Resolve only when Electron reports display or failure, so callers can keep an undelivered notice visible in-app. */
   notify(input: { title: string; body: string; permitId?: string }): Promise<DesktopDelivery> {
     return new Promise((resolve) => {
-      const fail = (code: DesktopNotificationFailed["code"]) => resolve({ _tag: "failed", error: new DesktopNotificationFailed(code) });
+      const fail = (code: DesktopNotificationFailed["code"]) =>
+        resolve({ _tag: "failed", error: new DesktopNotificationFailed(code) });
+
       let cleanup = () => {};
 
       try {
@@ -110,16 +127,32 @@ export class Background {
         // Keep timed-out banners alive too: they can still be clicked in Notification Center.
         this.live.add(notification);
         const release = () => this.live.delete(notification);
-        const timeout = setTimeout(() => { release(); fail("not_shown"); }, 10_000);
-        cleanup = () => { clearTimeout(timeout); release(); };
+
+        const timeout = setTimeout(() => {
+          release();
+          fail("not_shown");
+        }, 10_000);
+
+        cleanup = () => {
+          clearTimeout(timeout);
+          release();
+        };
 
         timeout.unref();
-        notification.on("show", () => { clearTimeout(timeout); resolve({ _tag: "shown" }); });
-        notification.on("failed", () => { clearTimeout(timeout); release(); fail("failed"); });
+        notification.on("show", () => {
+          clearTimeout(timeout);
+          resolve({ _tag: "shown" });
+        });
+        notification.on("failed", () => {
+          clearTimeout(timeout);
+          release();
+          fail("failed");
+        });
         notification.on("click", () => {
           release();
 
-          if (input.permitId) this.hooks.openPermit(input.permitId); else this.hooks.showWindow();
+          if (input.permitId) this.hooks.openPermit(input.permitId);
+          else this.hooks.showWindow();
         });
         notification.on("close", (details) => {
           if (details.reason !== "timedOut") release();
@@ -145,7 +178,10 @@ export class Background {
 
 function loginItemTarget() {
   // Launch through Squirrel's Update.exe so the login item survives app updates.
-  return { path: updateExePath(), args: ["--processStart", `"${path.basename(process.execPath)}"`, "--process-start-args", `"${HIDDEN_LAUNCH_ARG}"`] };
+  return {
+    path: updateExePath(),
+    args: ["--processStart", `"${path.basename(process.execPath)}"`, "--process-start-args", `"${HIDDEN_LAUNCH_ARG}"`],
+  };
 }
 
 export function getOpenAtLogin(): boolean {

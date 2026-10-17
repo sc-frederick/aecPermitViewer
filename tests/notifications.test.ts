@@ -3,29 +3,52 @@ import { describeCheckEvent, describeSharedUpdate } from "../src/main/notificati
 import type { PermitRow } from "../src/shared/permit.js";
 
 const base: PermitRow = {
-  id: "00000000-0000-4000-8000-000000000001", jurisdictionId: "hillsborough-county-building",
-  permitNumber: "HC-BLD-26-0087599", projectNumber: null, reviews: null, monitoringEnabled: true, lastStatus: null, lastObservedAt: null,
-  lastRecordUrl: null, latestAttemptAt: null, latestOutcome: null, nextDueAt: null, checking: false,
+  id: "00000000-0000-4000-8000-000000000001",
+  jurisdictionId: "hillsborough-county-building",
+  permitNumber: "HC-BLD-26-0087599",
+  projectNumber: null,
+  reviews: null,
+  monitoringEnabled: true,
+  lastStatus: null,
+  lastObservedAt: null,
+  lastRecordUrl: null,
+  latestAttemptAt: null,
+  latestOutcome: null,
+  nextDueAt: null,
+  checking: false,
 };
 
-const verified: PermitRow = { ...base, lastStatus: "In Process", lastObservedAt: "2026-09-23T12:00:00.000Z", latestOutcome: "success" };
+const verified: PermitRow = {
+  ...base,
+  lastStatus: "In Process",
+  lastObservedAt: "2026-09-23T12:00:00.000Z",
+  latestOutcome: "success",
+};
 
 describe("check notifications", () => {
   it("announces the first verified status", () => {
-    expect(describeCheckEvent(base, { ...verified }, "success"))
-      .toMatchObject({ kind: "first-status", title: "HC-BLD-26-0087599", body: "“In Process”" });
+    expect(describeCheckEvent(base, { ...verified }, "success")).toMatchObject({
+      kind: "first-status",
+      title: "HC-BLD-26-0087599",
+      body: "“In Process”",
+    });
   });
 
   it("quotes both statuses exactly when the portal wording changes", () => {
-    expect(describeCheckEvent(verified, { ...verified, lastStatus: "Issued" }, "success"))
-      .toMatchObject({ kind: "status-changed", body: "“In Process” → “Issued”" });
+    expect(describeCheckEvent(verified, { ...verified, lastStatus: "Issued" }, "success")).toMatchObject({
+      kind: "status-changed",
+      body: "“In Process” → “Issued”",
+    });
   });
 
   it("says when the new status waits on the applicant", () => {
-    expect(describeCheckEvent(verified, { ...verified, lastStatus: "Awaiting Client Reply" }, "success"))
-      .toMatchObject({ kind: "status-changed", body: "“In Process” → “Awaiting Client Reply” · Action: AEC" });
-    expect(describeCheckEvent(base, { ...verified, lastStatus: "Awaiting Client Reply" }, "success"))
-      .toMatchObject({ kind: "first-status", body: "“Awaiting Client Reply” · Action: AEC" });
+    expect(describeCheckEvent(verified, { ...verified, lastStatus: "Awaiting Client Reply" }, "success")).toMatchObject(
+      { kind: "status-changed", body: "“In Process” → “Awaiting Client Reply” · Action: AEC" },
+    );
+    expect(describeCheckEvent(base, { ...verified, lastStatus: "Awaiting Client Reply" }, "success")).toMatchObject({
+      kind: "first-status",
+      body: "“Awaiting Client Reply” · Action: AEC",
+    });
   });
 
   it("stays quiet when the status is unchanged", () => {
@@ -33,35 +56,79 @@ describe("check notifications", () => {
   });
 
   it("announces additional disciplines and new correction rounds even when the record status stays unchanged", () => {
-    const review = { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" };
+    const review = {
+      process: "Natural Resources Review",
+      status: "Corrections Required",
+      date: "2026-09-24",
+      dueDate: "2026-09-22",
+    };
+
     const before = { ...verified, reviews: [review] };
     const additional = { ...review, process: "Site Engineer Review", date: "2026-09-28" };
     const event = describeCheckEvent(before, { ...before, reviews: [review, additional] }, "success");
     expect(event).toMatchObject({ kind: "review-action", body: expect.stringContaining("Site Engineer Review") });
     expect(event?.body).not.toContain("Natural Resources Review");
-    expect(describeCheckEvent(before, { ...before, reviews: [review, { ...review, date: "2026-10-20", dueDate: "2026-10-20" }] }, "success"))
-      .toMatchObject({ kind: "review-action", body: expect.stringContaining("2026-10-20") });
+    expect(
+      describeCheckEvent(
+        before,
+        { ...before, reviews: [review, { ...review, date: "2026-10-20", dueDate: "2026-10-20" }] },
+        "success",
+      ),
+    ).toMatchObject({ kind: "review-action", body: expect.stringContaining("2026-10-20") });
   });
 
   it("does not repeat requests after reordered history, case changes, or failed checks", () => {
-    const review = { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" };
+    const review = {
+      process: "Natural Resources Review",
+      status: "Corrections Required",
+      date: "2026-09-24",
+      dueDate: "2026-09-22",
+    };
+
     const before = { ...verified, reviews: [review, { ...review, date: "2026-07-16", dueDate: "2026-07-14" }] };
-    const after = { ...before, reviews: [...before.reviews].reverse().map((entry) => ({ ...entry, status: " corrections  required " })) };
+
+    const after = {
+      ...before,
+      reviews: [...before.reviews].reverse().map((entry) => ({ ...entry, status: " corrections  required " })),
+    };
+
     expect(describeCheckEvent(before, after, "success")).toBeNull();
-    expect(describeCheckEvent(before, { ...before, reviews: [{ ...review, dueDate: "2026-09-30" }] }, "success")).toBeNull();
+    expect(
+      describeCheckEvent(before, { ...before, reviews: [{ ...review, dueDate: "2026-09-30" }] }, "success"),
+    ).toBeNull();
     expect(describeCheckEvent({ ...before, latestOutcome: "status_unavailable" }, after, "success")).toBeNull();
     expect(describeCheckEvent(verified, before, "status_unavailable")?.kind).toBe("check-failed");
   });
 
   it("does not announce superseded corrections or a newly pending review round", () => {
-    const old = { process: "Stormwater Review", status: "Corrections Required", date: "2026-07-16", dueDate: "2026-07-14" };
-    expect(describeCheckEvent(verified, { ...verified, reviews: [old, { ...old, date: null, status: null, dueDate: "2026-09-22" }] }, "success")).toBeNull();
-    expect(describeCheckEvent(verified, { ...verified, reviews: [old, { ...old, status: "Approved", date: "2026-09-22" }] }, "success")).toBeNull();
+    const old = {
+      process: "Stormwater Review",
+      status: "Corrections Required",
+      date: "2026-07-16",
+      dueDate: "2026-07-14",
+    };
+
+    expect(
+      describeCheckEvent(
+        verified,
+        { ...verified, reviews: [old, { ...old, date: null, status: null, dueDate: "2026-09-22" }] },
+        "success",
+      ),
+    ).toBeNull();
+    expect(
+      describeCheckEvent(
+        verified,
+        { ...verified, reviews: [old, { ...old, status: "Approved", date: "2026-09-22" }] },
+        "success",
+      ),
+    ).toBeNull();
   });
 
   it("reports the first failure", () => {
-    expect(describeCheckEvent(verified, { ...verified, latestOutcome: "blocked" }, "blocked"))
-      .toMatchObject({ kind: "check-failed", body: "Portal blocked access" });
+    expect(describeCheckEvent(verified, { ...verified, latestOutcome: "blocked" }, "blocked")).toMatchObject({
+      kind: "check-failed",
+      body: "Portal blocked access",
+    });
   });
 
   it("does not repeat failure notices while failures continue", () => {
@@ -81,7 +148,9 @@ describe("shared list notifications", () => {
   it("announces a check that finished since the list before, and stays quiet otherwise", () => {
     const issued = { ...checked, lastStatus: "Issued", latestAttemptAt: "2026-09-28T16:00:00.000Z" };
 
-    expect(describeSharedUpdate([checked], [issued])).toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
+    expect(describeSharedUpdate([checked], [issued])).toMatchObject([
+      { kind: "status-changed", body: "“In Process” → “Issued”" },
+    ]);
     expect(describeSharedUpdate([checked], [checked])).toEqual([]);
     expect(describeSharedUpdate([], [issued])).toEqual([]);
   });
@@ -91,6 +160,8 @@ describe("shared list notifications", () => {
     const finished = { ...running, lastStatus: "Issued", latestOutcome: "success" as const };
 
     expect(describeSharedUpdate([checked], [running])).toEqual([]);
-    expect(describeSharedUpdate([running], [finished])).toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
+    expect(describeSharedUpdate([running], [finished])).toMatchObject([
+      { kind: "status-changed", body: "“In Process” → “Issued”" },
+    ]);
   });
 });

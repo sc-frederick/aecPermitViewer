@@ -8,7 +8,7 @@ import { decodeUtf8, jsonText, parseManifest, sha256Hex } from "./manifest.js";
 import { decideInstallerUpload, decideManifestReplacement, type VersionedManifest } from "./release-policy.js";
 
 // Workers provides this global. Keep its runtime surface narrow so the same router can run with a local bucket.
-declare const FixedLengthStream: { new(length: number): TransformStream<Uint8Array, Uint8Array> };
+declare const FixedLengthStream: { new (length: number): TransformStream<Uint8Array, Uint8Array> };
 
 /** Bindings from wrangler.jsonc. `UPLOAD_TOKEN` is a secret; without it every upload is refused. */
 export interface FeedEnv {
@@ -38,11 +38,17 @@ type InstallerClaim = z.infer<typeof installerClaimSchema>;
 
 const installerClaimText = jsonText.pipe(installerClaimSchema);
 
-const completionText = jsonText.pipe(installerClaimSchema.extend({
-  parts: z.array(z.object({ partNumber: z.number().int().min(1).max(10_000), etag: z.string().min(1).max(200) })).min(1).max(10_000),
-}));
+const completionText = jsonText.pipe(
+  installerClaimSchema.extend({
+    parts: z
+      .array(z.object({ partNumber: z.number().int().min(1).max(10_000), etag: z.string().min(1).max(200) }))
+      .min(1)
+      .max(10_000),
+  }),
+);
 
-type StorageOperation = "head" | "get" | "put" | "delete" | "create_multipart" | "upload_part" | "complete_multipart" | "abort_multipart";
+type StorageOperation =
+  "head" | "get" | "put" | "delete" | "create_multipart" | "upload_part" | "complete_multipart" | "abort_multipart";
 
 /** An R2 rejection. Every one is answered with 503 and a retry hint; the cause is logged, not returned. */
 interface StorageFailure {
@@ -54,9 +60,7 @@ interface StorageFailure {
 type Stored<T> = { readonly _tag: "ok"; readonly value: T } | StorageFailure;
 
 type BodyRead =
-  | { readonly _tag: "ok"; readonly text: string }
-  | { readonly _tag: "too_large" }
-  | { readonly _tag: "malformed" };
+  { readonly _tag: "ok"; readonly text: string } | { readonly _tag: "too_large" } | { readonly _tag: "malformed" };
 
 /** The published manifest as the version rule needs it, or the response that ends the upload. */
 type PublishedRead =
@@ -76,13 +80,15 @@ export default {
 
     if (request.method !== "GET" && request.method !== "HEAD") return text("Method not allowed", 405);
 
-    if (name === "" || name === "PermitMonitorSetup.exe") return latest(env, url, (version) => `PermitMonitorSetup-${version}.exe`);
+    if (name === "" || name === "PermitMonitorSetup.exe")
+      return latest(env, url, (version) => `PermitMonitorSetup-${version}.exe`);
 
     if (name === "mac") return latest(env, url, (version) => `PermitMonitor-${version}-mac-arm64.zip`);
 
     if (name === MANIFEST) return serve(request, env, name, "no-cache");
 
-    if (INSTALLER.test(name) || MAC_ZIP.test(name)) return serve(request, env, name, "public, max-age=31536000, immutable");
+    if (INSTALLER.test(name) || MAC_ZIP.test(name))
+      return serve(request, env, name, "public, max-age=31536000, immutable");
 
     return text("Not found", 404);
   },
@@ -282,7 +288,11 @@ async function serve(request: Request, env: FeedEnv, key: string, cacheControl: 
 async function authorized(request: Request, env: FeedEnv): Promise<boolean> {
   if (!env.UPLOAD_TOKEN) return false;
   const encoder = new TextEncoder();
-  const given = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(request.headers.get("authorization") ?? "")));
+
+  const given = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", encoder.encode(request.headers.get("authorization") ?? "")),
+  );
+
   const expected = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(`Bearer ${env.UPLOAD_TOKEN}`)));
   // Both digests are 32 bytes, so the loop takes the same time wherever they differ.
   let difference = 0;
@@ -307,14 +317,19 @@ async function upload(request: Request, env: FeedEnv, url: URL, key: string): Pr
   if (!uploadId) return text("Missing uploadId", 400);
   const stagingKey = url.searchParams.get("stagingKey");
 
-  if (!stagingKey || !stagingKey.startsWith(`_uploads/${key}/`) ||
-    !z.uuid().safeParse(stagingKey.slice(`_uploads/${key}/`.length)).success) return text("Bad staging key", 400);
+  if (
+    !stagingKey ||
+    !stagingKey.startsWith(`_uploads/${key}/`) ||
+    !z.uuid().safeParse(stagingKey.slice(`_uploads/${key}/`.length)).success
+  )
+    return text("Bad staging key", 400);
   const multipart = env.BUCKET.resumeMultipartUpload(stagingKey, uploadId);
 
   if (request.method === "PUT") {
     const partNumber = Number(url.searchParams.get("partNumber"));
 
-    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10_000 || !request.body) return text("Bad part", 400);
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10_000 || !request.body)
+      return text("Bad part", 400);
     const body = request.body;
     const part = await stored("upload_part", key, () => multipart.uploadPart(partNumber, body));
 
@@ -362,19 +377,29 @@ async function startInstaller(request: Request, env: FeedEnv, key: string): Prom
 
   const stagingKey = `_uploads/${key}/${crypto.randomUUID()}`;
 
-  const multipart = await stored("create_multipart", stagingKey, () => env.BUCKET.createMultipartUpload(stagingKey, {
-    httpMetadata: { contentType: artifactContentType(key) },
-    customMetadata: { sha256: claim.data.sha256 },
-  }));
+  const multipart = await stored("create_multipart", stagingKey, () =>
+    env.BUCKET.createMultipartUpload(stagingKey, {
+      httpMetadata: { contentType: artifactContentType(key) },
+      customMetadata: { sha256: claim.data.sha256 },
+    }),
+  );
 
-  return multipart._tag === "ok" ? Response.json({ status: "created", uploadId: multipart.value.uploadId, stagingKey }) : unavailable(multipart);
+  return multipart._tag === "ok"
+    ? Response.json({ status: "created", uploadId: multipart.value.uploadId, stagingKey })
+    : unavailable(multipart);
 }
 
 function artifactContentType(key: string): string {
   return MAC_ZIP.test(key) ? "application/zip" : INSTALLER_TYPE;
 }
 
-async function completeInstaller(request: Request, env: FeedEnv, key: string, stagingKey: string, uploadId: string): Promise<Response> {
+async function completeInstaller(
+  request: Request,
+  env: FeedEnv,
+  key: string,
+  stagingKey: string,
+  uploadId: string,
+): Promise<Response> {
   const read = await readBounded(request, UPLOAD_REQUEST_MAX_BYTES);
 
   if (read._tag !== "ok") return bodyRejection(read);
@@ -395,7 +420,10 @@ async function completeInstaller(request: Request, env: FeedEnv, key: string, st
   const staged = await stored("head", stagingKey, () => env.BUCKET.head(stagingKey));
 
   if (staged._tag !== "ok") return unavailable(staged);
-  const object = staged.value ? staged : await stored("complete_multipart", stagingKey, () => multipart.complete(completion.data.parts));
+
+  const object = staged.value
+    ? staged
+    : await stored("complete_multipart", stagingKey, () => multipart.complete(completion.data.parts));
 
   if (object._tag !== "ok") return unavailable(object);
 
@@ -429,7 +457,8 @@ async function completeInstaller(request: Request, env: FeedEnv, key: string, st
 
   if (digest._tag !== "ok") return unavailable(digest);
 
-  if (digest.value !== completion.data.sha256) return removeStaging(env, stagingKey, text("Completed artifact SHA-256 does not match its bytes", 409));
+  if (digest.value !== completion.data.sha256)
+    return removeStaging(env, stagingKey, text("Completed artifact SHA-256 does not match its bytes", 409));
   const source = await stored("get", stagingKey, () => env.BUCKET.get(stagingKey));
 
   if (source._tag !== "ok") return unavailable(source);
@@ -439,14 +468,20 @@ async function completeInstaller(request: Request, env: FeedEnv, key: string, st
   // gives R2 put an exact byte count. Abort the producer if a precondition rejects without consuming it.
   const stream = new FixedLengthStream(completion.data.size);
   const controller = new AbortController();
-  const transfer = source.value.body.pipeTo(stream.writable, { signal: controller.signal }).then(() => undefined, () => undefined);
 
-  const put = await stored("put", key, () => env.BUCKET.put(key, stream.readable, {
-    httpMetadata: { contentType: artifactContentType(key) },
-    customMetadata: { sha256: completion.data.sha256 },
-    sha256: completion.data.sha256,
-    onlyIf: new Headers({ "if-none-match": "*" }),
-  }));
+  const transfer = source.value.body.pipeTo(stream.writable, { signal: controller.signal }).then(
+    () => undefined,
+    () => undefined,
+  );
+
+  const put = await stored("put", key, () =>
+    env.BUCKET.put(key, stream.readable, {
+      httpMetadata: { contentType: artifactContentType(key) },
+      customMetadata: { sha256: completion.data.sha256 },
+      sha256: completion.data.sha256,
+      onlyIf: new Headers({ "if-none-match": "*" }),
+    }),
+  );
 
   controller.abort();
   // A pending transform write may be waiting for a reader that storage never acquired. Cancelling the
@@ -456,8 +491,9 @@ async function completeInstaller(request: Request, env: FeedEnv, key: string, st
 
   if (put._tag !== "ok") return unavailable(put);
 
-  const result = put.value ? Response.json({ status: "published", size: put.value.size })
-    : await installerGuard(env, key, completion.data) ?? text("Artifact publication changed; retry", 409);
+  const result = put.value
+    ? Response.json({ status: "published", size: put.value.size })
+    : ((await installerGuard(env, key, completion.data)) ?? text("Artifact publication changed; retry", 409));
 
   return removeStaging(env, stagingKey, result);
 }
@@ -479,7 +515,8 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
 
   if (!payload || key === null) return text("Malformed manifest", 400);
 
-  if (key !== `PermitMonitorSetup-${payload.version.text}.exe`) return text("Manifest does not match a published installer", 409);
+  if (key !== `PermitMonitorSetup-${payload.version.text}.exe`)
+    return text("Manifest does not match a published installer", 409);
   const installer = await stored("head", key, () => env.BUCKET.head(key));
 
   if (installer._tag !== "ok") return unavailable(installer);
@@ -507,14 +544,18 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
 
   if (decision._tag === "unchanged") return Response.json({ version: payload.version.text, status: "unchanged" });
 
-  if (decision._tag === "stale") return text(`Version ${payload.version.text} is older than published ${decision.published}`, 409);
+  if (decision._tag === "stale")
+    return text(`Version ${payload.version.text} is older than published ${decision.published}`, 409);
 
-  if (decision._tag === "conflict") return text(`A different manifest for ${decision.published} is already published`, 409);
+  if (decision._tag === "conflict")
+    return text(`A different manifest for ${decision.published} is already published`, 409);
   const httpMetadata = { contentType: "application/json" };
 
-  const put = await stored("put", MANIFEST, () => current._tag === "found"
-    ? env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: { etagMatches: current.etag } })
-    : env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: new Headers({ "if-none-match": "*" }) }));
+  const put = await stored("put", MANIFEST, () =>
+    current._tag === "found"
+      ? env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: { etagMatches: current.etag } })
+      : env.BUCKET.put(MANIFEST, read.text, { httpMetadata, onlyIf: new Headers({ "if-none-match": "*" }) }),
+  );
 
   if (put._tag !== "ok") return unavailable(put);
 

@@ -1,6 +1,11 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
-import { ShareAdmission, DEFAULT_ADMISSION_LIMITS, type AdmissionApi, type AdmissionLimits } from "../../infra/sync-server/src/admission.js";
+import {
+  ShareAdmission,
+  DEFAULT_ADMISSION_LIMITS,
+  type AdmissionApi,
+  type AdmissionLimits,
+} from "../../infra/sync-server/src/admission.js";
 import { ShareRoom, type RoomStorage, type SqlRow, type SqlValue } from "../../infra/sync-server/src/room.js";
 import type { RoomApi, RoomDirectory } from "../../infra/sync-server/src/router.js";
 
@@ -29,7 +34,12 @@ export class MemoryRoomStorage implements RoomStorage {
     exec: (query, ...bindings) => {
       const rows = this.db.prepare(query).all(...bindings.map(toSqlite));
 
-      return { toArray: () => rows.map((row): SqlRow => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, fromSqlite(value)]))) };
+      return {
+        toArray: () =>
+          rows.map((row): SqlRow =>
+            Object.fromEntries(Object.entries(row).map(([column, value]) => [column, fromSqlite(value)])),
+          ),
+      };
     },
   };
 

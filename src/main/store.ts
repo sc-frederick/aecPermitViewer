@@ -15,8 +15,21 @@ import {
   type PermitRow,
   type RunOutcome,
 } from "../shared/permit.js";
-import { getJurisdiction, isManualJurisdiction, JURISDICTIONS, type JurisdictionId, type JurisdictionProfile } from "../shared/jurisdictions.js";
-import { DEFAULT_CHECK_TIMES, formatCheckTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
+import {
+  getJurisdiction,
+  isManualJurisdiction,
+  JURISDICTIONS,
+  type JurisdictionId,
+  type JurisdictionProfile,
+} from "../shared/jurisdictions.js";
+import {
+  DEFAULT_CHECK_TIMES,
+  formatCheckTime,
+  nextDueAfter,
+  nextSlotAfter,
+  normalizeCheckTimes,
+  type CheckTimes,
+} from "../shared/schedule.js";
 
 const userVersionSchema = z.object({ user_version: z.number() });
 
@@ -28,7 +41,12 @@ const dueSchema = z.object({ id: z.string(), jurisdictionId: z.string() });
 
 const previousAttemptSchema = z.object({ latestAttemptAt: z.string(), latestOutcome: runOutcomeSchema });
 
-const scheduleDeadlineSchema = z.object({ id: z.string(), nextDueAt: z.string(), finishedAt: z.string().nullable(), outcome: runOutcomeSchema.nullable() });
+const scheduleDeadlineSchema = z.object({
+  id: z.string(),
+  nextDueAt: z.string(),
+  finishedAt: z.string().nullable(),
+  outcome: runOutcomeSchema.nullable(),
+});
 
 const startedSchema = z.object({ startedAt: z.string() });
 
@@ -36,7 +54,10 @@ const settingSchema = z.object({ value: z.string() });
 
 const changeCountSchema = z.object({ changes: z.number() });
 
-const storedReviewsSchema = z.string().transform((value) => JSON.parse(value)).pipe(reviewsSchema);
+const storedReviewsSchema = z
+  .string()
+  .transform((value) => JSON.parse(value))
+  .pipe(reviewsSchema);
 
 const storedPermitSchema = z.object({
   id: z.string(),
@@ -177,8 +198,9 @@ export class PermitStore {
     // permits.interval_hours is retired: scheduling now uses the check times in settings, and nothing reads or writes
     // the column. It stays in the schema because dropping a column rewrites every permit row, which isn't worth the
     // risk on its own. Remove it in a future migration that has another reason to rewrite permits.
-    if (version === 0) this.transaction(() => {
-      this.db.exec(`
+    if (version === 0)
+      this.transaction(() => {
+        this.db.exec(`
         CREATE TABLE jurisdiction_profiles (
           id TEXT PRIMARY KEY,
           display_name TEXT NOT NULL,
@@ -239,31 +261,42 @@ export class PermitStore {
         CREATE INDEX idx_runs_permit_started ON check_runs(permit_id, started_at DESC);
         CREATE INDEX idx_observations_permit_observed ON status_observations(permit_id, observed_at DESC);
       `);
-      this.db.exec("PRAGMA user_version = 1");
-    });
+        this.db.exec("PRAGMA user_version = 1");
+      });
 
     // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
-    // Version 3 added the user's project number for grouping permits.
-    const columns = this.db.prepare("PRAGMA table_info(permits)").all().map((column) => columnSchema.parse(column));
 
-    if (!columns.some((column) => column.name === "project_number")) this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
+    // Version 3 added the user's project number for grouping permits.
+    const columns = this.db
+      .prepare("PRAGMA table_info(permits)")
+      .all()
+      .map((column) => columnSchema.parse(column));
+
+    if (!columns.some((column) => column.name === "project_number"))
+      this.db.exec("ALTER TABLE permits ADD COLUMN project_number TEXT");
 
     if (version < 3) this.db.exec("PRAGMA user_version = 3");
 
-    if (version < 4) this.transaction(() => {
-      const observationColumns = this.db.prepare("PRAGMA table_info(status_observations)").all().map((column) => columnSchema.parse(column));
+    if (version < 4)
+      this.transaction(() => {
+        const observationColumns = this.db
+          .prepare("PRAGMA table_info(status_observations)")
+          .all()
+          .map((column) => columnSchema.parse(column));
 
-      if (!observationColumns.some((column) => column.name === "reviews")) {
-        this.db.exec("ALTER TABLE status_observations ADD COLUMN reviews TEXT NOT NULL DEFAULT 'null'");
-      }
+        if (!observationColumns.some((column) => column.name === "reviews")) {
+          this.db.exec("ALTER TABLE status_observations ADD COLUMN reviews TEXT NOT NULL DEFAULT 'null'");
+        }
 
-      this.db.exec("PRAGMA user_version = 4");
-    });
+        this.db.exec("PRAGMA user_version = 4");
+      });
     // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
     // kept rather than dropped by a migration of its own. Older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
-    this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_success_permit_started ON check_runs(permit_id, started_at DESC) WHERE outcome = 'success'");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_runs_success_permit_started ON check_runs(permit_id, started_at DESC) WHERE outcome = 'success'",
+    );
   }
 
   /**
@@ -274,10 +307,10 @@ export class PermitStore {
   private syncProfiles(): void {
     /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
     const MATCHING_RULES: Partial<Record<JurisdictionProfile["portalFamily"], string>> = {
-      "click2gov": "click2gov-serial-1",
-      "wmis": "wmis-serial-1",
-      "epermit": "epermit-number-sequence-1",
-      "regpermitting": "exact-uppercase-1",
+      click2gov: "click2gov-serial-1",
+      wmis: "wmis-serial-1",
+      epermit: "epermit-number-sequence-1",
+      regpermitting: "exact-uppercase-1",
     };
 
     const seed = this.db.prepare(`INSERT INTO jurisdiction_profiles
@@ -291,9 +324,19 @@ export class PermitStore {
         adapter_version = excluded.adapter_version, matching_rule_version = excluded.matching_rule_version`);
 
     this.transaction(() => {
-      for (const profile of JURISDICTIONS) seed.run(profile.id, profile.label, profile.authorityType,
-        profile.portalFamily, profile.startUrl, profile.tenant, profile.module, profile.coverageNote, profile.adapterVersion,
-        MATCHING_RULES[profile.portalFamily] ?? "exact-1");
+      for (const profile of JURISDICTIONS)
+        seed.run(
+          profile.id,
+          profile.label,
+          profile.authorityType,
+          profile.portalFamily,
+          profile.startUrl,
+          profile.tenant,
+          profile.module,
+          profile.coverageNote,
+          profile.adapterVersion,
+          MATCHING_RULES[profile.portalFamily] ?? "exact-1",
+        );
     });
   }
 
@@ -328,7 +371,9 @@ export class PermitStore {
   }
 
   private rows<T>(schema: z.ZodType<T>, source: string, ...params: SQLInputValue[]): T[] {
-    return this.sql(source).all(...params).map((row) => schema.parse(row));
+    return this.sql(source)
+      .all(...params)
+      .map((row) => schema.parse(row));
   }
 
   private transaction(work: () => void): void {
@@ -344,9 +389,10 @@ export class PermitStore {
   }
 
   private recoverInterruptedRuns(): void {
-    this.sql(`UPDATE check_runs SET finished_at = ?, outcome = 'browser_error',
-      safe_error_code = 'interrupted' WHERE finished_at IS NULL AND outcome IS NULL`)
-      .run(new Date().toISOString());
+    this.sql(
+      `UPDATE check_runs SET finished_at = ?, outcome = 'browser_error',
+      safe_error_code = 'interrupted' WHERE finished_at IS NULL AND outcome IS NULL`,
+    ).run(new Date().toISOString());
   }
 
   /**
@@ -360,10 +406,17 @@ export class PermitStore {
     try {
       // New permits join the scheduled checks by default; each can be excluded from its details.
       // Hand-checked permits never do, because a scheduled check can't read their portal.
-      this.sql(`INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
-        VALUES (?, ?, ?, ?, ?, ?)`).run(id, jurisdictionId, permitNumber,
-          permitComparisonValue(permitNumber, jurisdictionId), new Date().toISOString(),
-          isManualJurisdiction(jurisdictionId) ? 0 : 1);
+      this.sql(
+        `INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        jurisdictionId,
+        permitNumber,
+        permitComparisonValue(permitNumber, jurisdictionId),
+        new Date().toISOString(),
+        isManualJurisdiction(jurisdictionId) ? 0 : 1,
+      );
     } catch (cause) {
       // The only UNIQUE constraint on permits is (jurisdiction_id, comparison_value). A clash on the fresh UUID
       // primary key would report SQLITE_CONSTRAINT_PRIMARYKEY instead and still throw.
@@ -383,8 +436,9 @@ export class PermitStore {
    * @param checkingIds - Permits with a check in progress, reported with `checking: true`.
    */
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
-    return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`)
-      .flatMap((row) => mapPermit(row, checkingIds.has(row.id)) ?? []);
+    return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`).flatMap(
+      (row) => mapPermit(row, checkingIds.has(row.id)) ?? [],
+    );
   }
 
   /** The permit, or null when it doesn't exist or its jurisdiction is no longer supported. `checking` is always false. */
@@ -400,11 +454,20 @@ export class PermitStore {
 
     if (!permit) return null;
 
-    const previous = this.row(previousAttemptSchema, `SELECT started_at AS latestAttemptAt, outcome AS latestOutcome
+    const previous = this.row(
+      previousAttemptSchema,
+      `SELECT started_at AS latestAttemptAt, outcome AS latestOutcome
       FROM check_runs WHERE permit_id = ? AND id <> ? AND outcome IS NOT NULL
-      ORDER BY started_at DESC, rowid DESC LIMIT 1`, permitId, runId);
+      ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+      permitId,
+      runId,
+    );
 
-    return { ...permit, latestAttemptAt: previous?.latestAttemptAt ?? null, latestOutcome: previous?.latestOutcome ?? null };
+    return {
+      ...permit,
+      latestAttemptAt: previous?.latestAttemptAt ?? null,
+      latestOutcome: previous?.latestOutcome ?? null,
+    };
   }
 
   /** Records a started check with the versions and model configuration it runs under. */
@@ -415,18 +478,31 @@ export class PermitStore {
     requestedModel: string;
     promptVersion: string;
   }): string {
-    const permit = this.row(jurisdictionRefSchema, "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?", input.permitId);
+    const permit = this.row(
+      jurisdictionRefSchema,
+      "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?",
+      input.permitId,
+    );
 
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
     if (!profile) throw new Error("Permit jurisdiction is not configured");
     const id = randomUUID();
     this.transaction(() => {
-      this.sql(`INSERT INTO check_runs
+      this.sql(
+        `INSERT INTO check_runs
         (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.permitId, new Date().toISOString(), input.appVersion, profile.adapterVersion, input.promptVersion,
-          input.requestedModel, input.playwrightVersion);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        input.permitId,
+        new Date().toISOString(),
+        input.appVersion,
+        profile.adapterVersion,
+        input.promptVersion,
+        input.requestedModel,
+        input.playwrightVersion,
+      );
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(id, input.permitId);
     });
 
@@ -452,31 +528,61 @@ export class PermitStore {
     this.transaction(() => {
       const finishedAt = new Date().toISOString();
 
-      const started = this.row(startedSchema, "SELECT started_at AS startedAt FROM check_runs WHERE id = ?", input.runId);
+      const started = this.row(
+        startedSchema,
+        "SELECT started_at AS startedAt FROM check_runs WHERE id = ?",
+        input.runId,
+      );
 
       if (!started) throw new Error("Check run not found");
-      this.sql(`UPDATE check_runs SET finished_at = ?, outcome = ?, safe_error_code = ?,
-        action_count = ?, request_count = ?, duration_ms = ?, actual_model = ?, browser_version = ? WHERE id = ?`)
-        .run(finishedAt, input.outcome,
-          input.outcome === "success" ? null : input.outcome,
-          input.actionCount, input.requestCount, Date.parse(finishedAt) - Date.parse(started.startedAt),
-          input.actualModel, input.browserVersion, input.runId);
+      this.sql(
+        `UPDATE check_runs SET finished_at = ?, outcome = ?, safe_error_code = ?,
+        action_count = ?, request_count = ?, duration_ms = ?, actual_model = ?, browser_version = ? WHERE id = ?`,
+      ).run(
+        finishedAt,
+        input.outcome,
+        input.outcome === "success" ? null : input.outcome,
+        input.actionCount,
+        input.requestCount,
+        Date.parse(finishedAt) - Date.parse(started.startedAt),
+        input.actualModel,
+        input.browserVersion,
+        input.runId,
+      );
 
       if (input.outcome === "success" && input.observation) {
         const observationId = randomUUID();
         const observation = input.observation;
-        this.sql(`INSERT INTO status_observations
+        this.sql(
+          `INSERT INTO status_observations
           (id, run_id, permit_id, verified_permit_number, status_label, status_value, observed_at, record_url, extractor_version, reviews)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(observationId, input.runId, input.permitId, observation.verifiedPermitNumber,
-            observation.statusLabel, observation.statusValue, observation.observedAt, observation.recordUrl,
-            this.jurisdictionAdapterVersion(input.permitId), JSON.stringify(observation.reviews));
-        this.sql(`UPDATE permits SET last_observation_id = ?, last_record_url = ?,
-          next_due_at = ? WHERE id = ?`).run(observationId, observation.recordUrl,
-            nextDueAfter(new Date(), "success", this.getCheckTimes()).toISOString(), input.permitId);
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          observationId,
+          input.runId,
+          input.permitId,
+          observation.verifiedPermitNumber,
+          observation.statusLabel,
+          observation.statusValue,
+          observation.observedAt,
+          observation.recordUrl,
+          this.jurisdictionAdapterVersion(input.permitId),
+          JSON.stringify(observation.reviews),
+        );
+        this.sql(
+          `UPDATE permits SET last_observation_id = ?, last_record_url = ?,
+          next_due_at = ? WHERE id = ?`,
+        ).run(
+          observationId,
+          observation.recordUrl,
+          nextDueAfter(new Date(), "success", this.getCheckTimes()).toISOString(),
+          input.permitId,
+        );
       } else {
-        this.sql("UPDATE permits SET next_due_at = ? WHERE id = ?")
-          .run(nextDueAfter(new Date(), input.outcome, this.getCheckTimes()).toISOString(), input.permitId);
+        this.sql("UPDATE permits SET next_due_at = ? WHERE id = ?").run(
+          nextDueAfter(new Date(), input.outcome, this.getCheckTimes()).toISOString(),
+          input.permitId,
+        );
       }
     });
   }
@@ -489,30 +595,50 @@ export class PermitStore {
     const runId = randomUUID();
     const now = new Date().toISOString();
     this.transaction(() => {
-      this.sql(`INSERT INTO check_runs
+      this.sql(
+        `INSERT INTO check_runs
         (id, permit_id, started_at, app_version, adapter_version, prompt_version, requested_model, playwright_version)
-        VALUES (?, ?, ?, ?, 'manual-1', 'manual', 'manual', 'none')`)
-        .run(runId, input.permitId, now, input.appVersion);
+        VALUES (?, ?, ?, ?, 'manual-1', 'manual', 'manual', 'none')`,
+      ).run(runId, input.permitId, now, input.appVersion);
       this.sql("UPDATE permits SET last_attempt_id = ? WHERE id = ?").run(runId, input.permitId);
     });
     this.finishRun({
-      runId, permitId: input.permitId, outcome: "success", actionCount: 0, requestCount: 0,
-      actualModel: null, browserVersion: null,
-      observation: { verifiedPermitNumber: permit.permitNumber, statusLabel: MANUAL_STATUS_LABEL,
-        statusValue: input.status, reviews: null, observedAt: now, recordUrl: input.recordUrl },
+      runId,
+      permitId: input.permitId,
+      outcome: "success",
+      actionCount: 0,
+      requestCount: 0,
+      actualModel: null,
+      browserVersion: null,
+      observation: {
+        verifiedPermitNumber: permit.permitNumber,
+        statusLabel: MANUAL_STATUS_LABEL,
+        statusValue: input.status,
+        reviews: null,
+        observedAt: now,
+        recordUrl: input.recordUrl,
+      },
     });
   }
 
   /** The permit's check runs, newest start first, and its saved observations, newest observation first. */
   history(permitId: string): PermitHistory {
-    const runs = this.rows(checkRunSchema, `SELECT id, permit_id AS permitId, started_at AS startedAt,
+    const runs = this.rows(
+      checkRunSchema,
+      `SELECT id, permit_id AS permitId, started_at AS startedAt,
       finished_at AS finishedAt, outcome, action_count AS actionCount,
-      request_count AS requestCount FROM check_runs WHERE permit_id = ? ORDER BY started_at DESC`, permitId);
+      request_count AS requestCount FROM check_runs WHERE permit_id = ? ORDER BY started_at DESC`,
+      permitId,
+    );
 
-    const observations = this.rows(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
+    const observations = this.rows(
+      observationSchema,
+      `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
       status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl, reviews
-      FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`, permitId);
+      FROM status_observations WHERE permit_id = ? ORDER BY observed_at DESC`,
+      permitId,
+    );
 
     return { runs, observations };
   }
@@ -535,8 +661,13 @@ export class PermitStore {
       observed_at AS observedAt, record_url AS recordUrl, reviews FROM status_observations WHERE run_id = ?`;
 
     for (let index = 0; index < days; index += 1) {
-      const latest = this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at < ?
-        ORDER BY r.started_at DESC LIMIT 1`, permitId, cursor);
+      const latest = this.row(
+        checkRunSchema,
+        `${runSelect} WHERE r.permit_id = ? AND r.started_at < ?
+        ORDER BY r.started_at DESC LIMIT 1`,
+        permitId,
+        cursor,
+      );
 
       if (!latest) break;
       const date = new Date(latest.startedAt);
@@ -545,12 +676,21 @@ export class PermitStore {
       // A verified latest success is already the daily pick. Reuse it rather
       // than seeking and parsing the same run again; other outcomes and missing
       // observations still use the indexed successful-run fallback.
-      const latestObservation = latest.outcome === "success" ? this.row(observationSchema, observationSelect, latest.id) : null;
+      const latestObservation =
+        latest.outcome === "success" ? this.row(observationSchema, observationSelect, latest.id) : null;
 
-      const chosen = latestObservation ? latest : this.row(checkRunSchema, `${runSelect} WHERE r.permit_id = ? AND r.started_at >= ?
+      const chosen = latestObservation
+        ? latest
+        : (this.row(
+            checkRunSchema,
+            `${runSelect} WHERE r.permit_id = ? AND r.started_at >= ?
         AND r.started_at < ? AND r.outcome = 'success'
         AND EXISTS (SELECT 1 FROM status_observations o WHERE o.run_id = r.id)
-        ORDER BY r.started_at DESC LIMIT 1`, permitId, start, cursor) ?? latest;
+        ORDER BY r.started_at DESC LIMIT 1`,
+            permitId,
+            start,
+            cursor,
+          ) ?? latest);
 
       runs.push(chosen);
 
@@ -560,29 +700,46 @@ export class PermitStore {
       cursor = start;
     }
 
-    const older = this.row(startedSchema, `SELECT started_at AS startedAt FROM check_runs
-      WHERE permit_id = ? AND started_at < ? ORDER BY started_at DESC LIMIT 1`, permitId, cursor);
+    const older = this.row(
+      startedSchema,
+      `SELECT started_at AS startedAt FROM check_runs
+      WHERE permit_id = ? AND started_at < ? ORDER BY started_at DESC LIMIT 1`,
+      permitId,
+      cursor,
+    );
 
     return { runs, observations, nextBefore: older ? cursor : null };
   }
 
   getObservation(id: string): ObservationRow | null {
-    return this.row(observationSchema, `SELECT id, run_id AS runId, permit_id AS permitId,
+    return this.row(
+      observationSchema,
+      `SELECT id, run_id AS runId, permit_id AS permitId,
       verified_permit_number AS verifiedPermitNumber, status_label AS statusLabel,
       status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl, reviews
-      FROM status_observations WHERE id = ?`, id);
+      FROM status_observations WHERE id = ?`,
+      id,
+    );
   }
 
   /** The jurisdiction of the permit an observation belongs to, or null when either is gone or no longer supported. */
   getObservationJurisdictionId(id: string): JurisdictionId | null {
-    const row = this.row(jurisdictionRefSchema, `SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
-      JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`, id);
+    const row = this.row(
+      jurisdictionRefSchema,
+      `SELECT p.jurisdiction_id AS jurisdictionId FROM status_observations o
+      JOIN permits p ON p.id = o.permit_id WHERE o.id = ?`,
+      id,
+    );
 
-    return row ? getJurisdiction(row.jurisdictionId)?.id ?? null : null;
+    return row ? (getJurisdiction(row.jurisdictionId)?.id ?? null) : null;
   }
 
   private jurisdictionAdapterVersion(permitId: string): string {
-    const row = this.row(jurisdictionRefSchema, "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?", permitId);
+    const row = this.row(
+      jurisdictionRefSchema,
+      "SELECT jurisdiction_id AS jurisdictionId FROM permits WHERE id = ?",
+      permitId,
+    );
 
     const profile = row ? getJurisdiction(row.jurisdictionId) : null;
 
@@ -592,7 +749,9 @@ export class PermitStore {
   }
 
   setMonitoring(mode: "manual" | "scheduled"): void {
-    this.sql("INSERT INTO settings(key, value) VALUES ('monitoring', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(mode);
+    this.sql(
+      "INSERT INTO settings(key, value) VALUES ('monitoring', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(mode);
   }
 
   /** Whether scheduled checks run. Defaults to scheduled when never set. */
@@ -615,19 +774,27 @@ export class PermitStore {
   setCheckTimes(times: CheckTimes, now: Date): void {
     this.transaction(() => {
       const previousTimes = this.getCheckTimes();
-      this.sql("INSERT INTO settings(key, value) VALUES ('check_times', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .run(times.map(formatCheckTime).join(","));
+      this.sql(
+        "INSERT INTO settings(key, value) VALUES ('check_times', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      ).run(times.map(formatCheckTime).join(","));
 
-      const future = this.rows(scheduleDeadlineSchema, `SELECT p.id, p.next_due_at AS nextDueAt, r.finished_at AS finishedAt, r.outcome
-        FROM permits p LEFT JOIN check_runs r ON r.id = p.last_attempt_id WHERE p.next_due_at > ?`, now.toISOString());
+      const future = this.rows(
+        scheduleDeadlineSchema,
+        `SELECT p.id, p.next_due_at AS nextDueAt, r.finished_at AS finishedAt, r.outcome
+        FROM permits p LEFT JOIN check_runs r ON r.id = p.last_attempt_id WHERE p.next_due_at > ?`,
+        now.toISOString(),
+      );
 
       const next = nextSlotAfter(now, times);
 
       for (const permit of future) {
         // Transient retries retain their original one-hour deadline, capped by the next newly selected slot.
-        const retry = permit.outcome === "api_unavailable" && permit.finishedAt
-          && permit.nextDueAt === nextDueAfter(new Date(permit.finishedAt), "api_unavailable", previousTimes).toISOString()
-          ? new Date(Date.parse(permit.finishedAt) + 3_600_000) : next;
+        const retry =
+          permit.outcome === "api_unavailable" &&
+          permit.finishedAt &&
+          permit.nextDueAt === nextDueAfter(new Date(permit.finishedAt), "api_unavailable", previousTimes).toISOString()
+            ? new Date(Date.parse(permit.finishedAt) + 3_600_000)
+            : next;
 
         const due = retry > now && retry < next ? retry : next;
         this.sql("UPDATE permits SET next_due_at = ? WHERE id = ?").run(due.toISOString(), permit.id);
@@ -643,8 +810,9 @@ export class PermitStore {
   }
 
   setFlag(key: string, value: boolean): void {
-    this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-      .run(key, value ? "1" : "0");
+    this.sql(
+      "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(key, value ? "1" : "0");
   }
 
   /** A text setting, or null when it has never been saved or was cleared. */
@@ -655,7 +823,10 @@ export class PermitStore {
   /** Saves a text setting; null clears it. */
   setText(key: string, value: string | null): void {
     if (value === null) this.sql("DELETE FROM settings WHERE key = ?").run(key);
-    else this.sql("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+    else
+      this.sql(
+        "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      ).run(key, value);
   }
 
   /**
@@ -665,15 +836,22 @@ export class PermitStore {
    * @param now - An ISO timestamp, compared as text with the stored ISO due times.
    */
   duePermitIds(now: string): string[] {
-    return this.rows(dueSchema, `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
-      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`, now)
-      .flatMap((row) => isManualJurisdiction(row.jurisdictionId) ? [] : [row.id]);
+    return this.rows(
+      dueSchema,
+      `SELECT id, jurisdiction_id AS jurisdictionId FROM permits WHERE monitoring_enabled = 1
+      AND (next_due_at IS NULL OR next_due_at <= ?) ORDER BY next_due_at`,
+      now,
+    ).flatMap((row) => (isManualJurisdiction(row.jurisdictionId) ? [] : [row.id]));
   }
 
   /** Moves a permit's due time to `slot` unless it is already due later, so a cancelled check isn't picked up again. */
   deferDue(id: string, slot: Date): void {
     const value = slot.toISOString();
-    this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(value, id, value);
+    this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(
+      value,
+      id,
+      value,
+    );
   }
 
   /** Delete the permit with its runs and observations. Returns false when no permit had that id. */
@@ -689,8 +867,10 @@ export class PermitStore {
 
   /** Saves the permit's project number; null or blank clears it. */
   setProjectNumber(id: string, projectNumber: string | null): boolean {
-    return this.sql("UPDATE permits SET project_number = ? WHERE id = ?")
-      .run(projectNumber?.trim() || null, id).changes === 1;
+    return (
+      this.sql("UPDATE permits SET project_number = ? WHERE id = ?").run(projectNumber?.trim() || null, id).changes ===
+      1
+    );
   }
 
   /**
@@ -702,7 +882,10 @@ export class PermitStore {
     const permit = this.getPermit(id);
 
     if (enabled && permit && isManualJurisdiction(permit.jurisdictionId)) throw new Error("Permit is checked by hand");
-    this.sql("UPDATE permits SET monitoring_enabled = ?, next_due_at = ? WHERE id = ?")
-      .run(enabled ? 1 : 0, enabled ? new Date().toISOString() : null, id);
+    this.sql("UPDATE permits SET monitoring_enabled = ?, next_due_at = ? WHERE id = ?").run(
+      enabled ? 1 : 0,
+      enabled ? new Date().toISOString() : null,
+      id,
+    );
   }
 }

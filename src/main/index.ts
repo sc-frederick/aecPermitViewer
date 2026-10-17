@@ -18,14 +18,50 @@ import { NAVIGATION_MODEL } from "./jev.js";
 import { runPackagedBrowserSmoke } from "./packaged-smoke.js";
 import { UpdateManager } from "./updater.js";
 import { verifyBrowserPayload } from "./browser-integrity.js";
-import { APP_USER_MODEL_ID, Background, desktopPlatform, getOpenAtLogin, HIDDEN_LAUNCH_ARG, setOpenAtLogin, TRAY_PLACE } from "./background.js";
-import { FIRST_RUN_ARG, handleSquirrelEvent, hasDesktopShortcut, installedApp, setDesktopShortcut } from "./squirrel.js";
+import {
+  APP_USER_MODEL_ID,
+  Background,
+  desktopPlatform,
+  getOpenAtLogin,
+  HIDDEN_LAUNCH_ARG,
+  setOpenAtLogin,
+  TRAY_PLACE,
+} from "./background.js";
+import {
+  FIRST_RUN_ARG,
+  handleSquirrelEvent,
+  hasDesktopShortcut,
+  installedApp,
+  setDesktopShortcut,
+} from "./squirrel.js";
 import { recordCheckEvent, describeSharedUpdate, keyNotice, type CheckEvent } from "./notifications.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import { isFailure } from "../shared/outcomes.js";
-import { describeCheckTimes, formatCheckTime, MAX_CHECK_TIMES, nextSlotAfter, normalizeCheckTimes, withinCheckWindow } from "../shared/schedule.js";
-import { addPermitSchema, manualStatusSchema, setProjectNumberSchema, parsePortalUrl, permitIdSchema, permitNumberProblem, resolveJurisdiction, type AppSnapshot, type RunOutcome } from "../shared/permit.js";
-import { checkScope, getAutomatedJurisdiction, getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
+import {
+  describeCheckTimes,
+  formatCheckTime,
+  MAX_CHECK_TIMES,
+  nextSlotAfter,
+  normalizeCheckTimes,
+  withinCheckWindow,
+} from "../shared/schedule.js";
+import {
+  addPermitSchema,
+  manualStatusSchema,
+  setProjectNumberSchema,
+  parsePortalUrl,
+  permitIdSchema,
+  permitNumberProblem,
+  resolveJurisdiction,
+  type AppSnapshot,
+  type RunOutcome,
+} from "../shared/permit.js";
+import {
+  checkScope,
+  getAutomatedJurisdiction,
+  getJurisdiction,
+  isManualJurisdiction,
+} from "../shared/jurisdictions.js";
 import { PREFERENCE_KEYS, type BridgeResult, type KeyState, type StoredKeyState } from "../shared/bridge.js";
 import { PROJECT_NUMBER_MAX } from "../shared/projects.js";
 import { loadShareService, type ShareService } from "./share-service.js";
@@ -55,7 +91,10 @@ function failStartup(): void {
   startupFailed = true;
 
   if (!process.argv.includes("--smoke-browser")) {
-    dialog.showErrorBox("Permit Monitor could not start", "The local application or bundled browser could not be verified. Reinstall the app from a trusted release.");
+    dialog.showErrorBox(
+      "Permit Monitor could not start",
+      "The local application or bundled browser could not be verified. Reinstall the app from a trusted release.",
+    );
   }
 
   app.exit(1);
@@ -111,7 +150,10 @@ let offerDesktopShortcut = installedApp() && process.argv.includes(FIRST_RUN_ARG
 const PLAYWRIGHT_VERSION = "1.63.0";
 
 /** The answer to a change to this app's own permits while the window shows a followed list instead. */
-const FOLLOWING: BridgeResult<never> = { ok: false, error: "You're viewing a shared list. Stop following it in Settings to change permits." };
+const FOLLOWING: BridgeResult<never> = {
+  ok: false,
+  error: "You're viewing a shared list. Stop following it in Settings to change permits.",
+};
 
 function showWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -141,7 +183,12 @@ function finishAndAnnounce(input: Parameters<PermitStore["finishRun"]>[0]): void
 
   // A notification problem must never stop the result from reaching the window.
   // The queue announces current-key rejection after checking its generation; obsolete checks stay quiet.
-  if (event && input.outcome !== "authentication_error") try { announce(event); } catch { /* the saved result and window update still proceed */ }
+  if (event && input.outcome !== "authentication_error")
+    try {
+      announce(event);
+    } catch {
+      /* the saved result and window update still proceed */
+    }
 }
 
 function dataRoot(): string {
@@ -162,10 +209,14 @@ async function storedKeyState(operation: string): Promise<StoredKeyState> {
 /** Why a check someone asked for can't run with the saved key, or null when it can. */
 function keyStateProblem(state: StoredKeyState): string | null {
   switch (state) {
-    case "configured": return null;
-    case "missing": return "Add your TypeSafe key in Settings first.";
-    case "unreadable": return "Your saved key can't be read. Save it again in Settings.";
-    case "unavailable": return "Key storage isn't available on this computer.";
+    case "configured":
+      return null;
+    case "missing":
+      return "Add your TypeSafe key in Settings first.";
+    case "unreadable":
+      return "Your saved key can't be read. Save it again in Settings.";
+    case "unavailable":
+      return "Key storage isn't available on this computer.";
   }
 }
 
@@ -234,7 +285,8 @@ async function sendSnapshot(): Promise<void> {
 }
 
 function safeSender(event: Electron.IpcMainInvokeEvent): boolean {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return false;
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame)
+    return false;
 
   return event.senderFrame.url === pathToFileURL(path.join(__dirname, "index.html")).href;
 }
@@ -245,8 +297,12 @@ const NO_INPUT = z.undefined();
  * Answers a window request once its input parses; otherwise answers with `invalid`. A failure the callback didn't
  * answer itself gets a generic reply, and its classified cause is recorded under the channel's name.
  */
-function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
-  callback: (input: I) => Promise<BridgeResult<T>> | BridgeResult<T>): void {
+function handle<I, T>(
+  channel: string,
+  schema: z.ZodType<I>,
+  invalid: string,
+  callback: (input: I) => Promise<BridgeResult<T>> | BridgeResult<T>,
+): void {
   ipcMain.handle(channel, async (event, ...args) => {
     if (!safeSender(event)) return { ok: false, error: "Unauthorized request." };
     const parsed = schema.safeParse(args[0]);
@@ -265,7 +321,13 @@ function handle<I, T>(channel: string, schema: z.ZodType<I>, invalid: string,
 
 /** Whether a scheduled check may start now: scheduling on, inside the check window, and the permit included. */
 function scheduledEligible(permitId: string): boolean {
-  if (shuttingDown || sharing.following || store.getMonitoring() !== "scheduled" || !withinCheckWindow(new Date(), store.getCheckTimes())) return false;
+  if (
+    shuttingDown ||
+    sharing.following ||
+    store.getMonitoring() !== "scheduled" ||
+    !withinCheckWindow(new Date(), store.getCheckTimes())
+  )
+    return false;
 
   return store.getPermit(permitId)?.monitoringEnabled === true;
 }
@@ -294,8 +356,13 @@ function startCheck(permitId: string, key: string, stillWanted: () => boolean): 
     // Verification can take a while; scheduled work that stopped qualifying meanwhile doesn't start.
     if (!stillWanted()) return null;
 
-    const runId = store.startRun({ permitId, appVersion: app.getVersion(), playwrightVersion: PLAYWRIGHT_VERSION,
-      requestedModel: NAVIGATION_MODEL.model, promptVersion: NAVIGATION_MODEL.promptVersion });
+    const runId = store.startRun({
+      permitId,
+      appVersion: app.getVersion(),
+      playwrightVersion: PLAYWRIGHT_VERSION,
+      requestedModel: NAVIGATION_MODEL.model,
+      promptVersion: NAVIGATION_MODEL.promptVersion,
+    });
 
     const browserPath = app.isPackaged
       ? path.join(process.resourcesPath, "playwright-browsers")
@@ -304,13 +371,26 @@ function startCheck(permitId: string, key: string, stillWanted: () => boolean): 
     const workerPath = path.join(__dirname, "worker.cjs");
 
     try {
-      running = runCheck({ runId, permit, key, browserPath, cacheRoot: path.join(dataRoot(), "cache"),
+      running = runCheck({
+        runId,
+        permit,
+        key,
+        browserPath,
+        cacheRoot: path.join(dataRoot(), "cache"),
         startWorker: (environment) => startUtilityWorker(workerPath, environment),
-        report: (operation, cause) => diagnostics.record(`check:${operation}`, runId, cause) });
+        report: (operation, cause) => diagnostics.record(`check:${operation}`, runId, cause),
+      });
     } catch (cause) {
       diagnostics.record("check:create-cache", runId, cause);
-      finishAndAnnounce({ runId, permitId, outcome: "browser_error", actionCount: 0,
-        requestCount: 0, actualModel: null, browserVersion: null });
+      finishAndAnnounce({
+        runId,
+        permitId,
+        outcome: "browser_error",
+        actionCount: 0,
+        requestCount: 0,
+        actualModel: null,
+        browserVersion: null,
+      });
 
       return "browser_error";
     }
@@ -325,7 +405,13 @@ function startCheck(permitId: string, key: string, stillWanted: () => boolean): 
     return result.outcome;
   })();
 
-  return { finished, cancel: () => { cancelled = true; running?.cancel(); } };
+  return {
+    finished,
+    cancel: () => {
+      cancelled = true;
+      running?.cancel();
+    },
+  };
 }
 
 function createQueue(): CheckQueue {
@@ -340,13 +426,20 @@ function createQueue(): CheckQueue {
       if (requested) notifier.resetKeyNotice();
 
       // A notification problem must never stop the queue.
-      try { announce(keyNotice(problem)); } catch { /* the key banner still shows in the window */ }
+      try {
+        announce(keyNotice(problem));
+      } catch {
+        /* the key banner still shows in the window */
+      }
     },
     saveFailed: () => {
       // Persistence failures cannot be represented as a portal status.
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("permit:local-error", "Couldn't save locally. Restart the app.");
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("permit:local-error", "Couldn't save locally. Restart the app.");
     },
-    changed: () => { void broadcast(); },
+    changed: () => {
+      void broadcast();
+    },
   });
 }
 
@@ -356,7 +449,10 @@ async function stopChecks(): Promise<boolean> {
 
   const completed = await Promise.race([
     checks.stop().then(() => true),
-    new Promise<boolean>((resolve) => { const timer = setTimeout(() => resolve(false), 10_000); timer.unref(); }),
+    new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 10_000);
+      timer.unref();
+    }),
   ]);
 
   return completed && !checks.busy;
@@ -404,14 +500,20 @@ function scheduleChanged(): void {
 /** Sharing over the current store. Recreated when the store is reopened after a failed update or deletion. */
 function createSharing(): Sharing {
   return new Sharing(store, shareService, {
-    changed: () => { void broadcast(); },
+    changed: () => {
+      void broadcast();
+    },
     checking: () => checks.checkingIds().size > 0,
     listUpdated: (before, after) => {
       // The first list after following is just what there is; only later lists bring news.
       if (!before) return;
 
       for (const event of describeSharedUpdate(before.permits, after.permits)) {
-        try { announce(event); } catch { /* the list still reaches the window */ }
+        try {
+          announce(event);
+        } catch {
+          /* the list still reaches the window */
+        }
       }
     },
     report: (operation, cause) => diagnostics.record(operation, null, cause),
@@ -419,7 +521,9 @@ function createSharing(): Sharing {
 }
 
 async function startApp(): Promise<void> {
-  const payload = app.isPackaged ? verifyBrowserPayload(path.join(process.resourcesPath, "playwright-browsers")) : Promise.resolve();
+  const payload = app.isPackaged
+    ? verifyBrowserPayload(path.join(process.resourcesPath, "playwright-browsers"))
+    : Promise.resolve();
 
   if (process.argv.includes("--smoke-browser")) {
     await payload;
@@ -430,11 +534,14 @@ async function startApp(): Promise<void> {
 
   // Hashing the browser payload takes a while, so the window opens meanwhile. Checks wait for it,
   // and a mismatch still ends the app before the browser is ever launched.
-  browserVerified = payload.then(() => true, () => {
-    failStartup();
+  browserVerified = payload.then(
+    () => true,
+    () => {
+      failStartup();
 
-    return false;
-  });
+      return false;
+    },
+  );
 
   diagnostics = new DiagnosticLog(path.join(dataRoot(), "logs", "diagnostics.jsonl"));
   store = new PermitStore(path.join(dataRoot(), "data", "permits.sqlite"));
@@ -443,12 +550,16 @@ async function startApp(): Promise<void> {
       statusChanges: store.getFlag(PREF_FLAGS.notifyStatusChanges, true),
       failures: store.getFlag(PREF_FLAGS.notifyFailures, true),
       desktop: desktopPlatform(),
-      windowInFront: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+      windowInFront: Boolean(
+        mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused(),
+      ),
     }),
     inApp: (notice) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("permit:app-event", notice);
     },
-    desktop: (notice) => background?.notify(notice) ?? Promise.resolve({ _tag: "failed", error: new DesktopNotificationFailed("unsupported") }),
+    desktop: (notice) =>
+      background?.notify(notice) ??
+      Promise.resolve({ _tag: "failed", error: new DesktopNotificationFailed("unsupported") }),
     failed: (error) => diagnostics.record("notification:desktop", null, error),
   });
   store.alignSchedule(new Date());
@@ -458,9 +569,12 @@ async function startApp(): Promise<void> {
   shareService = loadShareService(path.join(__dirname, "sync-config.json"));
   sharing = createSharing();
   await sharing.start();
-  updates = new UpdateManager(dataRoot(), app.getVersion(),
+  updates = new UpdateManager(
+    dataRoot(),
+    app.getVersion(),
     app.isPackaged ? path.join(process.resourcesPath, "authenticode.ps1") : path.join(__dirname, "authenticode.ps1"),
-    path.join(__dirname, "update-config.json"));
+    path.join(__dirname, "update-config.json"),
+  );
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   background = new Background(path.join(__dirname, "assets"), {
     showWindow,
@@ -479,9 +593,11 @@ async function startApp(): Promise<void> {
   background.start();
   // macOS takes Copy, Paste, and Quit from the application menu, so without one the key and share code fields can't be
   // pasted into. Windows shows no menu bar.
-  Menu.setApplicationMenu(process.platform === "darwin"
-    ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
-    : null);
+  Menu.setApplicationMenu(
+    process.platform === "darwin"
+      ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
+      : null,
+  );
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -509,8 +625,13 @@ async function startApp(): Promise<void> {
 
     if (!store.getFlag(BACKGROUND_HINT_SHOWN, false)) {
       store.setFlag(BACKGROUND_HINT_SHOWN, true);
-      void background?.notify({ title: `Still running in the ${TRAY_PLACE}`,
-        body: process.platform === "darwin" ? "Quit from its menu bar icon or with Command-Q." : "Right-click the icon to quit." });
+      void background?.notify({
+        title: `Still running in the ${TRAY_PLACE}`,
+        body:
+          process.platform === "darwin"
+            ? "Quit from its menu bar icon or with Command-Q."
+            : "Right-click the icon to quit.",
+      });
     }
   });
 
@@ -535,7 +656,15 @@ async function startApp(): Promise<void> {
 
     if (problem) return { ok: false, error: problem };
 
-    const added = addAndCheck(store, checks, () => { void broadcast(); }, input.permitNumber, jurisdictionId);
+    const added = addAndCheck(
+      store,
+      checks,
+      () => {
+        void broadcast();
+      },
+      input.permitNumber,
+      jurisdictionId,
+    );
 
     if (added._tag === "err") return { ok: false, error: "That permit is already in the list." };
 
@@ -592,17 +721,22 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:history", z.object({ permitId: permitIdSchema, before: z.iso.datetime().nullable() }), "Permit not found.", ({ permitId: id, before }) => {
-    if (sharing.following) {
-      const history = sharing.history(id);
+  handle(
+    "permit:history",
+    z.object({ permitId: permitIdSchema, before: z.iso.datetime().nullable() }),
+    "Permit not found.",
+    ({ permitId: id, before }) => {
+      if (sharing.following) {
+        const history = sharing.history(id);
 
-      return history ? { ok: true, value: history } : { ok: false, error: "Permit not found." };
-    }
+        return history ? { ok: true, value: history } : { ok: false, error: "Permit not found." };
+      }
 
-    if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
+      if (!store.getPermit(id)) return { ok: false, error: "Permit not found." };
 
-    return { ok: true, value: store.dailyHistory(id, 120, before) };
-  });
+      return { ok: true, value: store.dailyHistory(id, 120, before) };
+    },
+  );
   // The key arrives once from the settings field and is encrypted immediately. It is never
   // echoed back to the window, logged, stored in the database, or given to the browser worker.
   handle("permit:save-key", z.string(), "Enter your API key.", async (raw) => {
@@ -614,7 +748,8 @@ async function startApp(): Promise<void> {
     const saved = await keys.save(key);
 
     if (saved._tag === "failed") {
-      if (saved.error._tag === "KeyStorageUnavailable") return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
+      if (saved.error._tag === "KeyStorageUnavailable")
+        return { ok: false, error: "Key storage isn't available, so the key wasn't saved." };
       diagnostics.record("permit:save-key", null, saved.error.cause);
 
       return { ok: false, error: "The key couldn't be saved. Try again." };
@@ -688,52 +823,68 @@ async function startApp(): Promise<void> {
 
     return { ok: true, value: null };
   });
-  handle("permit:set-permit-monitoring", z.object({ permitId: permitIdSchema, enabled: z.boolean() }), "Permit not found.", (input) => {
-    if (sharing.following) return FOLLOWING;
+  handle(
+    "permit:set-permit-monitoring",
+    z.object({ permitId: permitIdSchema, enabled: z.boolean() }),
+    "Permit not found.",
+    (input) => {
+      if (sharing.following) return FOLLOWING;
 
-    if (!store.getPermit(input.permitId)) return { ok: false, error: "Permit not found." };
-    store.setPermitMonitoring(input.permitId, input.enabled);
-    scheduleChanged();
+      if (!store.getPermit(input.permitId)) return { ok: false, error: "Permit not found." };
+      store.setPermitMonitoring(input.permitId, input.enabled);
+      scheduleChanged();
 
-    return { ok: true, value: null };
-  });
+      return { ok: true, value: null };
+    },
+  );
   // Any other permit ID is simply not found, so only the project number can be invalid.
-  handle("permit:set-project-number", setProjectNumberSchema.extend({ permitId: z.string() }),
-    `Use letters, numbers, spaces, and - . _ / only (${PROJECT_NUMBER_MAX} at most).`, (input) => {
-    if (sharing.following) return FOLLOWING;
+  handle(
+    "permit:set-project-number",
+    setProjectNumberSchema.extend({ permitId: z.string() }),
+    `Use letters, numbers, spaces, and - . _ / only (${PROJECT_NUMBER_MAX} at most).`,
+    (input) => {
+      if (sharing.following) return FOLLOWING;
 
-    if (!store.setProjectNumber(input.permitId, input.projectNumber)) return { ok: false, error: "Permit not found." };
-    void broadcast();
+      if (!store.setProjectNumber(input.permitId, input.projectNumber))
+        return { ok: false, error: "Permit not found." };
+      void broadcast();
 
-    return { ok: true, value: null };
-  });
-  handle("permit:set-preference", z.object({
-    key: z.enum(PREFERENCE_KEYS),
-    value: z.boolean(),
-  }), "Invalid setting.", async ({ key, value }) => {
-    if ((key === "openAtLogin" || key === "desktopShortcut") && !installedApp()) return { ok: false, error: "Available in the installed app." };
+      return { ok: true, value: null };
+    },
+  );
+  handle(
+    "permit:set-preference",
+    z.object({
+      key: z.enum(PREFERENCE_KEYS),
+      value: z.boolean(),
+    }),
+    "Invalid setting.",
+    async ({ key, value }) => {
+      if ((key === "openAtLogin" || key === "desktopShortcut") && !installedApp())
+        return { ok: false, error: "Available in the installed app." };
 
-    if (key === "openAtLogin") {
-      setOpenAtLogin(value);
-    } else if (key === "desktopShortcut") {
-      offerDesktopShortcut = false;
+      if (key === "openAtLogin") {
+        setOpenAtLogin(value);
+      } else if (key === "desktopShortcut") {
+        offerDesktopShortcut = false;
 
-      try {
-        await setDesktopShortcut(value);
-      } catch (cause) {
-        diagnostics.record("permit:desktop-shortcut", null, cause);
-        void broadcast();
+        try {
+          await setDesktopShortcut(value);
+        } catch (cause) {
+          diagnostics.record("permit:desktop-shortcut", null, cause);
+          void broadcast();
 
-        return { ok: false, error: "The desktop shortcut couldn't be changed." };
+          return { ok: false, error: "The desktop shortcut couldn't be changed." };
+        }
+      } else {
+        store.setFlag(PREF_FLAGS[key], value);
       }
-    } else {
-      store.setFlag(PREF_FLAGS[key], value);
-    }
 
-    void broadcast();
+      void broadcast();
 
-    return { ok: true, value: null };
-  });
+      return { ok: true, value: null };
+    },
+  );
   handle("permit:check-update", NO_INPUT, "Invalid request.", async () => {
     try {
       return { ok: true, value: await updates.check() };
@@ -787,7 +938,10 @@ async function startApp(): Promise<void> {
       await new Promise<void>((resolve, reject) => {
         const child = spawn(installer, [], { detached: true, stdio: "ignore", windowsHide: true });
         child.once("error", reject);
-        child.once("spawn", () => { child.unref(); resolve(); });
+        child.once("spawn", () => {
+          child.unref();
+          resolve();
+        });
       });
       quitAllowed = true;
       app.quit();
@@ -827,7 +981,11 @@ async function startApp(): Promise<void> {
     // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.
     diagnostics.stop();
 
-    try { setOpenAtLogin(false); } catch { /* local data deletion continues */ }
+    try {
+      setOpenAtLogin(false);
+    } catch {
+      /* local data deletion continues */
+    }
 
     try {
       await rm(dataRoot(), { recursive: true, force: true });

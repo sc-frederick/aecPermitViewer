@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_CHECK_TIMES, describeCheckTimes, effectiveRunTime, nextDueAfter, nextSlotAfter, normalizeCheckTimes, withinCheckWindow,
+  DEFAULT_CHECK_TIMES,
+  describeCheckTimes,
+  effectiveRunTime,
+  nextDueAfter,
+  nextSlotAfter,
+  normalizeCheckTimes,
+  withinCheckWindow,
   type CheckTimes,
 } from "../src/shared/schedule.js";
 
@@ -55,7 +61,10 @@ describe("default check schedule", () => {
 
 describe("custom check times", () => {
   it("sorts, de-duplicates, and bounds the list", () => {
-    expect(normalizeCheckTimes(["14:00", "07:15", "14:00"])).toEqual([{ hour: 7, minute: 15 }, { hour: 14, minute: 0 }]);
+    expect(normalizeCheckTimes(["14:00", "07:15", "14:00"])).toEqual([
+      { hour: 7, minute: 15 },
+      { hour: 14, minute: 0 },
+    ]);
     expect(normalizeCheckTimes([])).toBeNull();
     expect(normalizeCheckTimes(["7:15"])).toBeNull();
     expect(normalizeCheckTimes(["24:00"])).toBeNull();

@@ -10,6 +10,8 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p infra/sync-server",
     "lint": "oxlint --deny-warnings",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
     "smoke:portal": "npm run build && node scripts/smoke-portal.mjs",
     "browser:stage": "node scripts/stage-browsers.mjs",
@@ -38,6 +40,7 @@
     "electron": "44.4.5",
     "esbuild": "0.25.12",
     "oxlint": "1.85.0",
+    "prettier": "3.9.9",
     "typescript": "5.9.3",
     "vite": "7.3.6",
     "vitest": "4.1.11"

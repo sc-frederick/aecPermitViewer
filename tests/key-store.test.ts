@@ -12,7 +12,10 @@ afterEach(async () => {
 
 function gate() {
   let open: () => void = () => undefined;
-  const promise = new Promise<void>((resolve) => { open = resolve; });
+
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
 
   return { promise, open };
 }
@@ -25,7 +28,9 @@ class Encryption implements KeyEncryption {
   failDecrypt = false;
   migrate = false;
 
-  async available(): Promise<boolean> { return true; }
+  async available(): Promise<boolean> {
+    return true;
+  }
 
   async encrypt(key: string): Promise<Buffer> {
     await this.encryptWait;
@@ -81,7 +86,9 @@ describe("encrypted key mutation ordering", () => {
     expect(await store.save("replacement-fixture-key")).toEqual({ _tag: "saved" });
     wait.open();
     expect(await reading).toBe("replacement-fixture-key");
-    expect(await readFile(path.join(directory, "secrets/typesafe-key.bin"), "utf8")).toBe("sealed:replacement-fixture-key");
+    expect(await readFile(path.join(directory, "secrets/typesafe-key.bin"), "utf8")).toBe(
+      "sealed:replacement-fixture-key",
+    );
     expect(await readdir(path.join(directory, "secrets"))).toEqual(["typesafe-key.bin"]);
   });
 

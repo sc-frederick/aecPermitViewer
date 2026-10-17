@@ -57,6 +57,9 @@ const publicKey = createPublicKey({ key: Buffer.from(publicKeyBase64, "base64"),
 
 if (!verify(null, signed, publicKey, signature)) throw new Error("Release manifest key pair does not match.");
 
-await writeFile(outputPath, JSON.stringify({ signed: signed.toString("base64"), signature: signature.toString("base64") }));
+await writeFile(
+  outputPath,
+  JSON.stringify({ signed: signed.toString("base64"), signature: signature.toString("base64") }),
+);
 
 process.stdout.write(`Signed update manifest for ${version}.\n`);

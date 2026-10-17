@@ -7,19 +7,33 @@ import path from "node:path";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { saveDownload, UpdateManager, UpdateNotReady, UpdateSuperseded, verifyReleaseEnvelope } from "../src/main/updater.js";
+import {
+  saveDownload,
+  UpdateManager,
+  UpdateNotReady,
+  UpdateSuperseded,
+  verifyReleaseEnvelope,
+} from "../src/main/updater.js";
 
 describe("signed update metadata", () => {
   const keys = generateKeyPairSync("ed25519");
   const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64");
 
-  const payload = { version: "0.2.0", url: "https://updates.example.test/PermitMonitorSetup.exe",
-    sha256: "a".repeat(64), size: 250_000_000, publisher: "Permit Monitor LLC" };
+  const payload = {
+    version: "0.2.0",
+    url: "https://updates.example.test/PermitMonitorSetup.exe",
+    sha256: "a".repeat(64),
+    size: 250_000_000,
+    publisher: "Permit Monitor LLC",
+  };
 
   function envelope(value: typeof payload): string {
     const signed = Buffer.from(JSON.stringify(value));
 
-    return JSON.stringify({ signed: signed.toString("base64"), signature: sign(null, signed, keys.privateKey).toString("base64") });
+    return JSON.stringify({
+      signed: signed.toString("base64"),
+      signature: sign(null, signed, keys.privateKey).toString("base64"),
+    });
   }
 
   it("accepts a signed installer hash and expected publisher", () => {
@@ -43,7 +57,13 @@ describe("signed update metadata", () => {
     valid.signed = Buffer.from(JSON.stringify({ ...payload, sha256: "b".repeat(64) })).toString("base64");
     expect(() => verifyReleaseEnvelope(JSON.stringify(valid), publicKey, "Permit Monitor LLC")).toThrow();
     expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "Other Publisher")).toThrow();
-    expect(() => verifyReleaseEnvelope(envelope({ ...payload, url: "http://updates.example.test/app.exe" }), publicKey, "Permit Monitor LLC")).toThrow();
+    expect(() =>
+      verifyReleaseEnvelope(
+        envelope({ ...payload, url: "http://updates.example.test/app.exe" }),
+        publicKey,
+        "Permit Monitor LLC",
+      ),
+    ).toThrow();
   });
 });
 
@@ -136,7 +156,11 @@ const tlsKey = readFileSync(path.resolve("tests/fixtures/updater/localhost-key.p
 
 const tlsCert = readFileSync(path.resolve("tests/fixtures/updater/localhost-cert.pem"), "utf8");
 
-interface Installer { bytes: Buffer; release: Promise<void>; drop: boolean }
+interface Installer {
+  bytes: Buffer;
+  release: Promise<void>;
+  drop: boolean;
+}
 
 /**
  * Serves a signed release feed and its installers over local HTTPS. Each installer sends its first half, then waits for
@@ -183,20 +207,39 @@ async function updateServer(signingKey: KeyObject) {
   const origin = `https://127.0.0.1:${port}`;
 
   return {
-    origin, requests, hungUp,
+    origin,
+    requests,
+    hungUp,
     /** Publishes a signed manifest for `bytes` as `version`, served in full unless held. */
     publish(version: string, bytes: Buffer): void {
       installers.set(version, { bytes, release: Promise.resolve(), drop: false });
 
-      const signed = Buffer.from(JSON.stringify({ version, url: `${origin}/installer/${version}`,
-        sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, publisher: "" }));
+      const signed = Buffer.from(
+        JSON.stringify({
+          version,
+          url: `${origin}/installer/${version}`,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          size: bytes.length,
+          publisher: "",
+        }),
+      );
 
-      feed = { status: 200, body: JSON.stringify({ signed: signed.toString("base64"), signature: sign(null, signed, signingKey).toString("base64") }) };
+      feed = {
+        status: 200,
+        body: JSON.stringify({
+          signed: signed.toString("base64"),
+          signature: sign(null, signed, signingKey).toString("base64"),
+        }),
+      };
     },
     /** Holds `version`'s installer after its first half until the returned function is called. */
     hold(version: string): () => void {
       let open: () => void = () => undefined;
-      const released = new Promise<void>((resolve) => { open = resolve; });
+
+      const released = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+
       const installer = installers.get(version);
 
       if (installer) installer.release = released;
@@ -244,8 +287,14 @@ describe("update operations", () => {
     const dataRoot = mkdtempSync(path.join(tmpdir(), "permit-monitor-updates-"));
     directories.push(dataRoot);
     const config = path.join(dataRoot, "update-config.json");
-    writeFileSync(config, JSON.stringify({ feedUrl: `${server.origin}/feed`, expectedPublisher: "",
-      publicKeySpkiBase64: keys.publicKey.export({ format: "der", type: "spki" }).toString("base64") }));
+    writeFileSync(
+      config,
+      JSON.stringify({
+        feedUrl: `${server.origin}/feed`,
+        expectedPublisher: "",
+        publicKeySpkiBase64: keys.publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+      }),
+    );
     const updates = new UpdateManager(dataRoot, "1.0.0", "unused-authenticode.ps1", config);
 
     const updateFiles = async (): Promise<string[]> => {

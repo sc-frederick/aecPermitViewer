@@ -1,4 +1,13 @@
-import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -37,14 +46,21 @@ function etag(file) {
   return `"${createHash("md5").update(readFileSync(file)).digest("hex")}"`;
 }
 
-if (process.env.FAKE_AWS_FAIL === args[1]) exit("An error occurred (InternalError) when calling the operation: We encountered an internal error.", 255);
+if (process.env.FAKE_AWS_FAIL === args[1])
+  exit("An error occurred (InternalError) when calling the operation: We encountered an internal error.", 255);
 
 if (args[0] === "s3api" && args[1] === "head-object") {
   const file = path.join(root, option("--bucket") ?? "", option("--key") ?? "");
   requireObject(file);
   const meta = JSON.parse(readFileSync(`${file}.meta.json`, "utf8"));
-  process.stdout.write(JSON.stringify({ ContentLength: statSync(file).size, ContentType: meta.contentType,
-    Metadata: meta.metadata, ETag: etag(file) }));
+  process.stdout.write(
+    JSON.stringify({
+      ContentLength: statSync(file).size,
+      ContentType: meta.contentType,
+      Metadata: meta.metadata,
+      ETag: etag(file),
+    }),
+  );
 } else if (args[0] === "s3api" && args[1] === "put-object") {
   const key = option("--key") ?? "";
   const file = path.join(root, option("--bucket") ?? "", key);
@@ -69,8 +85,10 @@ if (args[0] === "s3api" && args[1] === "head-object") {
     }
   }
 
-  if ((option("--if-none-match") === "*" && existsSync(file)) ||
-    (option("--if-match") && (!existsSync(file) || etag(file) !== option("--if-match")))) {
+  if (
+    (option("--if-none-match") === "*" && existsSync(file)) ||
+    (option("--if-match") && (!existsSync(file) || etag(file) !== option("--if-match")))
+  ) {
     exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
   }
 
@@ -90,7 +108,8 @@ if (args[0] === "s3api" && args[1] === "head-object") {
     // Exclusive create models the destination condition at commit, including across CLI processes.
     writeFileSync(file, bytes, option("--if-none-match") === "*" ? { flag: "wx" } : {});
   } catch (cause) {
-    if (cause.code === "EEXIST") exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
+    if (cause.code === "EEXIST")
+      exit("An error occurred (PreconditionFailed) when calling the PutObject operation: 412", 254);
     throw cause;
   }
 
