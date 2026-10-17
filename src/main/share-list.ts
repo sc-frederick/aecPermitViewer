@@ -116,11 +116,10 @@ export function buildSharedList(
   historyOf: (permitId: string) => PermitHistory,
   schedule: readonly string[] | null,
 ): string {
-  return JSON.stringify({
-    format: 1,
-    schedule: schedule ? [...schedule] : null,
-    permits: permits.map((permit) => sharedEntry(permit, historyOf(permit.id))),
-  } satisfies z.input<typeof sharedListSchema>);
+  return sharedListJson(
+    schedule,
+    permits.map((permit) => JSON.stringify(sharedEntry(permit, historyOf(permit.id)))),
+  );
 }
 
 /**
@@ -169,6 +168,14 @@ function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof 
 }
 
 /**
+ * The list's JSON, in `sharedListSchema`'s shape, from the publisher's check times and each permit's serialized
+ * entry. Both builders write the envelope here, so the sync and async lists are byte-identical.
+ */
+function sharedListJson(schedule: readonly string[] | null, entries: readonly string[]): string {
+  return `{"format":1,"schedule":${JSON.stringify(schedule)},"permits":[${entries.join(",")}]}`;
+}
+
+/**
  * Builds the same JSON as `buildSharedList`, yielding to the event loop before each history read and each entry's
  * serialization so a long list doesn't block the main process.
  */
@@ -189,7 +196,5 @@ export async function buildSharedListAsync(
     entries.push(JSON.stringify(sharedEntry(permit, history)));
   }
 
-  const prefix = JSON.stringify({ format: 1, schedule: schedule ? [...schedule] : null, permits: [] }).slice(0, -2);
-
-  return `${prefix}${entries.join(",")}]}`;
+  return sharedListJson(schedule, entries);
 }

@@ -227,10 +227,16 @@ describe("shared list format", () => {
       })),
     };
 
-    for (const permits of [[], [permit]]) {
+    // A permit never checked has no history to share, and a second entry exercises the separator between entries.
+    const unchecked = permitRow({ id: "00000000-0000-4000-8000-000000000002", permitNumber: "HC-BLD-26-0087600" });
+
+    const historyOf = (permitId: string): PermitHistory =>
+      permitId === permit.id ? reviewHistory : { runs: [], observations: [] };
+
+    for (const permits of [[], [permit], [unchecked], [permit, unchecked]]) {
       for (const schedule of [null, ["08:30", "16:30"]]) {
-        const json = await buildSharedListAsync(permits, () => reviewHistory, schedule);
-        expect(json).toBe(buildSharedList(permits, () => reviewHistory, schedule));
+        const json = await buildSharedListAsync(permits, historyOf, schedule);
+        expect(json).toBe(buildSharedList(permits, historyOf, schedule));
       }
     }
   });

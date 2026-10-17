@@ -5,6 +5,7 @@ import {
   parsePortalUrl,
   sameJurisdictionPermitNumber,
 } from "../shared/permit.js";
+import { DETAIL_NUMBER } from "./accela-global.js";
 import { readAccelaReviews } from "./accela-reviews.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
@@ -18,7 +19,7 @@ interface DetailFields {
 }
 
 const ACCELA_FIELDS: DetailFields = {
-  number: "#ctl00_PlaceHolderMain_lblPermitNumber",
+  number: DETAIL_NUMBER,
   status: "#ctl00_PlaceHolderMain_lblRecordStatus",
   label: "#ctl00_PlaceHolderMain_lblRecordStatusTitle",
 };

@@ -291,7 +291,7 @@ async function observe(): Promise<Observed> {
         candidates.push({
           id: "open_public_search",
           established: true,
-          description: "Open Search Public Records in Hernando County Civic Access.",
+          description: `Open Search Public Records in ${jurisdiction.label} Civic Access.`,
         });
       }
     } else if (jurisdiction?.portalFamily === "click2gov") {
@@ -616,10 +616,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       }
 
       if (jurisdiction?.portalFamily !== "tyler-civic-access") break;
-      await page.goto(
-        "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
-        { waitUntil: "domcontentloaded", timeout: 15_000 },
-      );
+      await page.goto(jurisdiction.searchUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
       await waitForTylerSearch(page);
       break;
     }

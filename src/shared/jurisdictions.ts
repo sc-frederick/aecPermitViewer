@@ -71,6 +71,8 @@ export const JURISDICTIONS = [
     authorityType: "county-government",
     portalFamily: "tyler-civic-access",
     startUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice",
+    // Civic Access lands on its home page; the public records search is a separate route under the county's site.
+    searchUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
     tenant: "",
     module: "Building",
     coverageNote: "Tyler Civic Access public records. The county keeps earlier permits in a separate legacy portal.",
