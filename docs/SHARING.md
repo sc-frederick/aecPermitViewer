@@ -134,7 +134,7 @@ The app uses `https://permitmon-sync.sc-frederick.workers.dev`, which `windows.y
 The `v2` migration in `wrangler.jsonc` added the admission object and kept existing list storage. After changing bindings or limit variables, update the runner's `sourceHash` as described in `infra/sync-server/cloudflare-cli/README.md`, and regenerate the committed binding types from `infra/sync-server`:
 
 ```sh
-npx wrangler@4.143.0 types src/worker-configuration.d.ts --env-interface SyncWorkerEnv --include-runtime=false --strict-vars=false
+npx wrangler@4.147.0 types src/worker-configuration.d.ts --env-interface SyncWorkerEnv --include-runtime=false --strict-vars=false
 ```
 
 To validate the configuration without deploying, run `node cloudflare-cli/run.mjs dry-run` from `infra/sync-server`.
