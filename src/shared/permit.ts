@@ -2,6 +2,7 @@ import { z } from "zod";
 import { reviewsSchema, type ReviewEntry } from "./reviews.js";
 import type { KeyState, ShareState } from "./bridge.js";
 import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
+import { PERMIT_NUMBER_MAX, PERMIT_NUMBER_MIN, PERMIT_NUMBER_PATTERN } from "./permit-number.js";
 import {
   accelaModules,
   getAutomatedJurisdiction,
@@ -146,9 +147,9 @@ export const manualStatusSchema = z.object({
 export const permitNumberSchema = z
   .string()
   .trim()
-  .min(3)
-  .max(80)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "Use the full permit number with its hyphens, dots, and zeros.");
+  .min(PERMIT_NUMBER_MIN)
+  .max(PERMIT_NUMBER_MAX)
+  .regex(PERMIT_NUMBER_PATTERN, "Use the full permit number with its hyphens, dots, and zeros.");
 
 /** A saved permit's id. */
 export const permitIdSchema = z.uuid();
