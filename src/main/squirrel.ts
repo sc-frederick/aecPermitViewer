@@ -70,6 +70,7 @@ export function handleSquirrelEvent(argv: readonly string[], beforeUninstall: ()
   }
 }
 
+/** Whether the installed Windows app has its desktop shortcut; always false elsewhere. */
 export function hasDesktopShortcut(): boolean {
   return installedApp() && existsSync(path.join(app.getPath("desktop"), SHORTCUT_FILE));
 }

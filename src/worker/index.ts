@@ -14,7 +14,7 @@ import type {
   WorkerFailure,
   WorkerToMain,
 } from "../shared/worker-protocol.js";
-import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
+import { exactLinks, NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
 import {
   readDetail,
   TYLER_SEARCH_FIELD,
@@ -32,18 +32,22 @@ import {
   regPermittingRecordShown,
   waitForSearchRecordsLink,
 } from "./regpermitting.js";
-import { accelaGlobalResultsAdapter, waitForAccelaGlobalResults } from "./accela-global.js";
+import {
+  accelaGlobalResultsAdapter,
+  DETAIL_NUMBER,
+  GLOBAL_RESULT_LINK,
+  waitForAccelaGlobalResults,
+} from "./accela-global.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
 
 const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
 
-const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
+/** What Accela's record search shows when nothing matches. */
+const NO_RESULTS_MESSAGE = "Your search returned no results. Please modify your search criteria and try again.";
 
-// Accela's Global Search box (Pasco injects its own after load) and the record links on its results page.
+// Accela's Global Search box; Pasco injects its own after load.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
-
-const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
 
 const TYLER_SEARCH_BUTTON = "#button-Search";
 
@@ -67,7 +71,7 @@ let requestedNumber = "";
 
 let actionCount = 0;
 
-let recentActions: string[] = [];
+const recentActions: string[] = [];
 
 let lastObservation: PageObservation | null = null;
 
@@ -147,7 +151,7 @@ function onGlobalResults(url: string): boolean {
   return globalSearch() && new URL(url).pathname.toLowerCase().endsWith("/cap/globalsearchresults.aspx");
 }
 
-async function exactResultLinks(): Promise<Array<{ text: string; href: string; id: string }>> {
+async function exactResultLinks(): Promise<Array<{ text: string; href: string }>> {
   if (!page) return [];
 
   const links = await page.locator(globalSearch() ? GLOBAL_RESULT_LINK : "a").evaluateAll((anchors) =>
@@ -155,15 +159,11 @@ async function exactResultLinks(): Promise<Array<{ text: string; href: string; i
       if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
       const href = anchor.getAttribute("href");
 
-      return href ? [{ text: anchor.innerText.trim(), href, id: anchor.id }] : [];
+      return href ? [{ text: anchor.innerText.trim(), href }] : [];
     }),
   );
 
-  const found = links.filter(
-    (link) => jurisdiction && sameJurisdictionPermitNumber(requestedNumber, link.text, jurisdiction.id),
-  );
-
-  return found.filter((link, index) => found.findIndex((candidate) => candidate.href === link.href) === index);
+  return jurisdiction ? exactLinks(links, requestedNumber, jurisdiction.id) : [];
 }
 
 /** An observation for main, and the record it read on a detail page so the result doesn't read it again. */
@@ -423,10 +423,7 @@ async function sendObservationOrResult(): Promise<void> {
         return;
       }
     } else if (jurisdiction?.portalFamily === "accela") {
-      const message = page.getByText(
-        "Your search returned no results. Please modify your search criteria and try again.",
-        { exact: true },
-      );
+      const message = page.getByText(NO_RESULTS_MESSAGE, { exact: true });
 
       const input = page.locator(SEARCH_FIELD);
 
@@ -701,11 +698,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         await Promise.any([
           page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 12_000 }),
           page.getByRole("link", { name: requestedNumber, exact: true }).waitFor({ state: "visible", timeout: 12_000 }),
-          page
-            .getByText("Your search returned no results. Please modify your search criteria and try again.", {
-              exact: true,
-            })
-            .waitFor({ state: "visible", timeout: 12_000 }),
+          page.getByText(NO_RESULTS_MESSAGE, { exact: true }).waitFor({ state: "visible", timeout: 12_000 }),
         ]).catch(() => undefined);
       }
 

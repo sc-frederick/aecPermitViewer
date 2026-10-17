@@ -5,7 +5,10 @@ import type { CheckEvent } from "./notifications.js";
 export class DesktopNotificationFailed extends Error {
   readonly _tag = "DesktopNotificationFailed" as const;
 
-  constructor(readonly code: "unsupported" | "failed" | "not_shown") {
+  constructor(
+    /** The platform can't show notifications, showing one failed, or none appeared in time. */
+    readonly code: "unsupported" | "failed" | "not_shown",
+  ) {
     super("Desktop notification was not shown.");
   }
 }

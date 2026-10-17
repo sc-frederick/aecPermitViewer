@@ -1,11 +1,7 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
-
-const setupPath = path.resolve("out/make/squirrel.windows/x64/PermitMonitorSetup.exe");
-
-const outputPath = path.resolve("out/make/squirrel.windows/x64/release-manifest.json");
+import { installerPath, manifestPath } from "./release-feed.mjs";
 
 const installerUrl = process.env.UPDATE_INSTALLER_URL;
 
@@ -26,13 +22,13 @@ if (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME !== `v${version}`
 }
 
 // The installer is several hundred megabytes, so it is hashed as a stream rather than read into memory.
-const { size } = await stat(setupPath);
+const { size } = await stat(installerPath);
 
 const hash = createHash("sha256");
 
 let hashedBytes = 0;
 
-for await (const chunk of createReadStream(setupPath)) {
+for await (const chunk of createReadStream(installerPath)) {
   hash.update(chunk);
   hashedBytes += chunk.byteLength;
 }
@@ -58,7 +54,7 @@ const publicKey = createPublicKey({ key: Buffer.from(publicKeyBase64, "base64"),
 if (!verify(null, signed, publicKey, signature)) throw new Error("Release manifest key pair does not match.");
 
 await writeFile(
-  outputPath,
+  manifestPath,
   JSON.stringify({ signed: signed.toString("base64"), signature: signature.toString("base64") }),
 );
 

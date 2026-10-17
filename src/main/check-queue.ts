@@ -236,6 +236,14 @@ export class CheckQueue {
     return entry.reason === "manual" || (this.paused !== "rejected" && this.ports.scheduledEligible(entry.permitId));
   }
 
+  /** The saved key, or `"missing"` when none is saved and `"unreadable"` when reading it failed. */
+  private keyOrProblem(): Promise<string> {
+    return this.ports.readKey().then(
+      (value) => value ?? ("missing" as const),
+      () => "unreadable" as const,
+    );
+  }
+
   private async run(entry: Entry): Promise<void> {
     const scope = this.ports.scopeOf(entry.permitId);
 
@@ -250,19 +258,12 @@ export class CheckQueue {
 
     try {
       let generation = this.keyGeneration;
-
-      let key = await this.ports.readKey().then(
-        (value) => value ?? ("missing" as const),
-        () => "unreadable" as const,
-      );
+      let key = await this.keyOrProblem();
 
       // A key saved during the read invalidates its answer, including a missing or unreadable one.
       while (generation !== this.keyGeneration && !this.stopped && !current.cancelled) {
         generation = this.keyGeneration;
-        key = await this.ports.readKey().then(
-          (value) => value ?? ("missing" as const),
-          () => "unreadable" as const,
-        );
+        key = await this.keyOrProblem();
       }
 
       if (this.stopped || current.cancelled) {

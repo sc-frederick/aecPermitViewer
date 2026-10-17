@@ -5,8 +5,10 @@ import type { PermitRow, RunOutcome } from "../shared/permit.js";
 import type { PermitStore } from "./store.js";
 import type { KeyProblem } from "./check-queue.js";
 
+/** What a notice reports: a permit's first or changed status, a new review request, a failed check, or a key problem. */
 export type CheckEventKind = "first-status" | "status-changed" | "review-action" | "check-failed" | "key-needed";
 
+/** A notice for the window or a desktop notification. */
 export interface CheckEvent {
   kind: CheckEventKind;
   /** The permit the notice is about; null for app-wide notices. */

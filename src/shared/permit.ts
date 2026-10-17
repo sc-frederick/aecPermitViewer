@@ -15,8 +15,10 @@ import {
   type JurisdictionProfile,
 } from "./jurisdictions.js";
 
+/** The jurisdiction a permit is added under when none is given. */
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 
+/** How a check run ended. Only `success` saves an observation. */
 export const runOutcomeSchema = z.enum([
   "success",
   "not_found_in_supported_search",
@@ -33,6 +35,7 @@ export const runOutcomeSchema = z.enum([
   "cancelled",
 ]);
 
+/** How a check run ended; see `runOutcomeSchema`. */
 export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 
 /** A saved permit as the window shows it, with its latest verified status and latest check attempt. */
@@ -55,6 +58,7 @@ export interface PermitRow {
   checking: boolean;
 }
 
+/** One check attempt; `finishedAt` and `outcome` are null while it runs. */
 export interface CheckRunRow {
   id: string;
   permitId: string;
@@ -78,6 +82,7 @@ export interface ObservationRow {
   recordUrl: string;
 }
 
+/** A permit's check runs and the observations its successful runs saved, newest first. */
 export interface PermitHistory {
   /** Exclusive UTC cursor for an older daily page; absent on raw or shared histories. */
   nextBefore?: string | null;
@@ -85,6 +90,7 @@ export interface PermitHistory {
   observations: ObservationRow[];
 }
 
+/** The settings the window shows, with what this platform and install allow. */
 export interface AppPreferences {
   notifyStatusChanges: boolean;
   notifyFailures: boolean;
@@ -124,6 +130,7 @@ export interface AppSnapshot {
 /** Label stored on observations the user entered from a hand-checked portal. */
 export const MANUAL_STATUS_LABEL = "Status (entered by hand)";
 
+/** A status the user read on a hand-checked portal, with the record link they read it on. */
 export const manualStatusSchema = z.object({
   permitId: z.uuid(),
   status: z
@@ -135,6 +142,7 @@ export const manualStatusSchema = z.object({
   recordUrl: z.string().trim().max(2000),
 });
 
+/** A permit number as entered: 3 to 80 letters, digits, hyphens, and dots, starting with a letter or digit. */
 export const permitNumberSchema = z
   .string()
   .trim()
@@ -142,6 +150,7 @@ export const permitNumberSchema = z
   .max(80)
   .regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "Use the full permit number with its hyphens, dots, and zeros.");
 
+/** A saved permit's id. */
 export const permitIdSchema = z.uuid();
 
 /** An empty value clears the project number. */
@@ -151,8 +160,10 @@ export const projectNumberSchema = z
   .max(PROJECT_NUMBER_MAX)
   .regex(PROJECT_NUMBER_PATTERN, "Use letters, numbers, spaces, and - . _ / only.");
 
+/** A permit and the project number to give it. */
 export const setProjectNumberSchema = z.object({ permitId: permitIdSchema, projectNumber: projectNumberSchema });
 
+/** A permit to add: its jurisdiction id and number. */
 export const addPermitSchema = z.object({
   jurisdiction: z.string().trim().min(1).max(100),
   permitNumber: permitNumberSchema,
@@ -530,8 +541,7 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
     const record = WMIS_RECORD_PAGES[profile.module];
     const names = [...url.searchParams.keys()];
 
-    return record &&
-      url.host === recordHost(profile) &&
+    return url.host === recordHost(profile) &&
       url.pathname.toLowerCase() === record.path.toLowerCase() &&
       names.length === record.params.length &&
       record.params.every((name) => /^\d{1,8}$/.test(url.searchParams.get(name) ?? ""))
@@ -586,7 +596,9 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
         Boolean(url.searchParams.get("permit.appYear")) &&
         Boolean(url.searchParams.get("permit.appNumber"));
 
-      return page === "search" ? (!detail ? url : null) : detail ? url : null;
+      if (page === "search") return detail ? null : url;
+
+      return detail ? url : null;
     }
 
     if (profile.portalFamily === "tyler-civic-access") {

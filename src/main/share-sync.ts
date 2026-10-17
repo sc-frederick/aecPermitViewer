@@ -180,6 +180,7 @@ export const cachedListSchema = z.object({
   json: z.string(),
 });
 
+/** The followed list as last received: its revision, publication time, and decrypted JSON. */
 export type CachedList = z.infer<typeof cachedListSchema>;
 
 /** A first fetch with a new share code: the list it opens, or why it doesn't open one. */

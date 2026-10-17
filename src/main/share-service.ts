@@ -74,7 +74,10 @@ export function openList(
 export class ListTooLarge extends Error {
   readonly _tag = "ListTooLarge" as const;
 
-  constructor(readonly bytes: number) {
+  constructor(
+    /** The size that exceeded the limit: the sealed list, or the response as declared or read. */
+    readonly bytes: number,
+  ) {
     super(`Shared list is ${bytes} bytes sealed`);
   }
 }
@@ -83,7 +86,10 @@ export class ListTooLarge extends Error {
 export class ShareServiceError extends Error {
   readonly _tag = "ShareServiceError" as const;
 
-  constructor(readonly status: number) {
+  constructor(
+    /** The unexpected HTTP status. */
+    readonly status: number,
+  ) {
     super(`Sharing service answered ${status}`);
   }
 }
@@ -92,8 +98,10 @@ const publishedSchema = z.object({ revision: z.number().int().positive(), publis
 
 const REVISION_TAG = /^"r(\d{1,15})"$/;
 
+/** The service stored the list, or asked for the publication to be retried later. */
 export type PublishReply = { _tag: "published"; publishedAt: string } | { _tag: "retry"; afterSeconds: number };
 
+/** The stored list, `unchanged` when the follower already has its revision, or `absent` when nothing is shared. */
 export type FetchReply =
   | { _tag: "absent" }
   | { _tag: "unchanged" }

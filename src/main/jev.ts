@@ -70,6 +70,15 @@ const MIN_CONFIDENCE = 0.75;
 
 const MIN_MARGIN = 0.15;
 
+/** The most requests one navigation choice makes: a first try and one retry after a rate limit. */
+const MAX_ATTEMPTS = 2;
+
+/**
+ * Per-request SDK settings. With the SDK's own retries off, each HTTP request is one attempt counted by `onAttempt`.
+ * The client and each call both set them, so a client configured elsewhere can't add uncounted retries.
+ */
+const REQUEST_SETTINGS = { retry: { maxRetries: 0 }, timeout: 8_000 } as const;
+
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -131,8 +140,7 @@ export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
   const config: TypeSafeClientConfig = {
     apiKey: key,
     defaultModel: NAVIGATION_MODEL.model,
-    retry: { maxRetries: 0 },
-    timeout: 8_000,
+    ...REQUEST_SETTINGS,
     logLevel: "off",
   };
 
@@ -174,9 +182,10 @@ export async function chooseNavigation(input: {
   criteria.STOP = "No listed action safely advances the exact permit lookup.";
   const offered = Object.keys(criteria);
 
+  const maxAttempts = Math.min(MAX_ATTEMPTS, input.remainingRequests);
   let attempts = 0;
 
-  while (attempts < Math.min(2, input.remainingRequests) && Date.now() + 1_000 < input.deadline) {
+  while (attempts < maxAttempts && Date.now() + 1_000 < input.deadline) {
     if (input.signal.aborted) return { _tag: "cancelled", actualModel: null, attempts };
     attempts += 1;
     input.onAttempt();
@@ -204,7 +213,7 @@ export async function chooseNavigation(input: {
             ),
           },
         },
-        { signal: input.signal, retry: { maxRetries: 0 }, timeout: 8_000 },
+        { signal: input.signal, ...REQUEST_SETTINGS },
       );
 
       const reply = replySchema.safeParse(result);
@@ -233,7 +242,7 @@ export async function chooseNavigation(input: {
 
       if (cause instanceof AuthenticationError) return { _tag: "authentication_error", actualModel: null, attempts };
 
-      if (cause instanceof RateLimitError && attempts < Math.min(2, input.remainingRequests)) {
+      if (cause instanceof RateLimitError && attempts < maxAttempts) {
         const wait = Math.min(cause.retryAfterMs ?? 1_000, 5_000);
 
         if (Date.now() + wait + 1_000 >= input.deadline)

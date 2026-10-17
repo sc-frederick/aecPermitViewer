@@ -28,6 +28,12 @@ const configSchema = z.object({
   expectedPublisher: z.string(),
 });
 
+/** The most bytes read from the update feed, whose signed JSON envelope is far smaller. */
+const MAX_MANIFEST_BYTES = 32_768;
+
+/** A download that receives nothing for this long is aborted. */
+const DOWNLOAD_STALL_MS = 60_000;
+
 function newer(candidate: string, current: string): boolean {
   const a = candidate.split(".").map(Number);
   const b = current.split(".").map(Number);
@@ -208,7 +214,9 @@ export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
   constructor(
+    /** The operation whose result was discarded. */
     readonly operation: "check" | "download" | "install",
+    /** The error the operation stopped with, if it failed rather than finished. */
     override readonly cause?: unknown,
   ) {
     super(`Update ${operation} was superseded`);
@@ -219,7 +227,10 @@ export class UpdateSuperseded extends Error {
 export class UpdateNotReady extends Error {
   readonly _tag = "UpdateNotReady" as const;
 
-  constructor(readonly needed: "available" | "downloaded") {
+  constructor(
+    /** What was missing: an offered update or a finished download. */
+    readonly needed: "available" | "downloaded",
+  ) {
     super(needed === "available" ? "No verified update available" : "No verified update downloaded");
   }
 }
@@ -255,7 +266,7 @@ function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
  * check that changes the offer stops the old download, and a failed check leaves the current offer untouched.
  */
 export class UpdateManager {
-  private readonly config: { feedUrl: string; publicKeySpkiBase64: string; expectedPublisher: string };
+  private readonly config: z.infer<typeof configSchema>;
   private state: UpdateState = { _tag: "idle" };
   /** Advances whenever the offer is replaced or withdrawn; work started under an older value is stale. */
   private generation = 0;
@@ -288,12 +299,12 @@ export class UpdateManager {
     if (!feed || !this.config.publicKeySpkiBase64) return { state: "unavailable" };
     const response = await fetchHttps(feed, AbortSignal.timeout(10_000));
 
-    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 32_768) {
+    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > MAX_MANIFEST_BYTES) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error("Update manifest unavailable");
     }
 
-    const text = await boundedText(response, 32_768);
+    const text = await boundedText(response, MAX_MANIFEST_BYTES);
     const payload = verifyReleaseEnvelope(text, this.config.publicKeySpkiBase64, this.config.expectedPublisher);
 
     if (sequence !== this.checkSequence || generation !== this.generation) throw new UpdateSuperseded("check");
@@ -414,7 +425,7 @@ export class UpdateManager {
     if (!installerUrl) throw new Error("Update URL invalid");
     // The installer is large, so abort on a stalled connection rather than a fixed total time.
     const stall = new AbortController();
-    let stallTimer = setTimeout(() => stall.abort(), 60_000);
+    let stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
     let hash: string;
 
     try {
@@ -427,7 +438,7 @@ export class UpdateManager {
 
       hash = await saveDownload(response.body, temporary, payload.size, () => {
         clearTimeout(stallTimer);
-        stallTimer = setTimeout(() => stall.abort(), 60_000);
+        stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
       });
     } catch (cause) {
       // Aborting ends the connection, whatever step failed.

@@ -1,6 +1,6 @@
 import type { CheckRunRow, ObservationRow, PermitHistory } from "./permit.js";
 
-export interface HistoryDay {
+interface HistoryDay {
   run: CheckRunRow;
   observation: ObservationRow | undefined;
 }

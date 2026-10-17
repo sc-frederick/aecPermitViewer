@@ -20,6 +20,7 @@ export function desktopPlatform(): boolean {
 /** Where the icon lives, in the words each platform uses. */
 export const TRAY_PLACE = process.platform === "darwin" ? "menu bar" : "tray";
 
+/** What the tray or menu bar menu asks the rest of main to do. */
 export interface BackgroundHooks {
   showWindow(): void;
   openPermit(permitId: string): void;
@@ -28,6 +29,7 @@ export interface BackgroundHooks {
   quit(): void;
 }
 
+/** The counts and schedule the tray or menu bar icon summarizes. */
 export interface TrayState {
   permits: number;
   checking: number;
@@ -69,10 +71,12 @@ export class Background {
     }
   }
 
+  /** Whether the icon exists. Without it, the app can't keep running with its window closed. */
   get available(): boolean {
     return this.tray !== null;
   }
 
+  /** Refreshes the icon's tooltip, attention image, and menu; does nothing when `state` is unchanged. */
   update(state: TrayState): void {
     if (!this.tray) return;
     // Most snapshots leave the tray as it was; rebuilding the native menu each time is wasted work.
@@ -177,6 +181,7 @@ export class Background {
     });
   }
 
+  /** Removes the icon. */
   destroy(): void {
     this.tray?.destroy();
     this.tray = null;
@@ -195,12 +200,14 @@ function loginItemTarget() {
   };
 }
 
+/** Whether the installed Windows app starts at sign-in; always false elsewhere. */
 export function getOpenAtLogin(): boolean {
   if (!installedApp()) return false;
 
   return app.getLoginItemSettings(loginItemTarget()).openAtLogin;
 }
 
+/** Turns starting at sign-in on or off for the installed Windows app; does nothing elsewhere. */
 export function setOpenAtLogin(enabled: boolean): void {
   if (!installedApp()) return;
   app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemTarget() });

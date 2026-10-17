@@ -9,6 +9,7 @@ export const PREFERENCE_KEYS = [
   "desktopShortcut",
 ] as const;
 
+/** One of the window's preference toggles. */
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];
 
 /** An IPC call's result. Failures carry a message safe to show the user; details stay in main. */

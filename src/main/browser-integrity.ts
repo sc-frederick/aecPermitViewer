@@ -48,7 +48,8 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
 
   if (!parsed.success) throw new Error("Browser payload manifest is invalid");
   const manifest = parsed.data;
-  const expected = manifest.files.map((entry) => entry.path);
+  // Compared as sorted lists, so the order the manifest lists its files in doesn't matter.
+  const expected = manifest.files.map((entry) => entry.path).sort();
   const actual = (await filesIn(directory)).sort();
 
   if (expected.length !== actual.length || expected.some((value, index) => value !== actual[index])) {

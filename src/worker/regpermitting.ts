@@ -105,6 +105,11 @@ function form(requested: string) {
   return parseRegPermittingNumber(requested)?.kind === "permit" ? FORMS.permit : FORMS.application;
 }
 
+/** The search frame, when either tab's field is showing. */
+async function eitherSearchFrame(page: Page): Promise<Frame | null> {
+  return (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
+}
+
 /** The search frame, when its field for this kind of number is showing. */
 async function searchFrame(page: Page, requested: string): Promise<Frame | null> {
   return frameShowing(page, form(requested).input);
@@ -148,7 +153,7 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
   if (!wanted) return { phase: "unknown", ...none };
 
   if (await frameShowing(page, RECORD_HEADING)) return { phase: "detail", ...none, visibleControls: ["Record view"] };
-  const frame = (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
+  const frame = await eitherSearchFrame(page);
 
   if (!frame) {
     return (await page.locator(SEARCH_RECORDS_LINK).count()) > 0
@@ -254,7 +259,7 @@ async function openRegPermittingSearch(page: Page): Promise<void> {
 
 async function fillRegPermittingSearch(page: Page, requested: string): Promise<void> {
   const wanted = parseRegPermittingNumber(requested);
-  let frame = (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
+  let frame = await eitherSearchFrame(page);
 
   if (!wanted || !frame) return;
   const target = form(requested);

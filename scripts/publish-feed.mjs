@@ -90,6 +90,19 @@ async function hashStored(key) {
   return hash.digest("hex");
 }
 
+/**
+ * The upload decision for whatever is stored under `key`. A copy stored without a recorded hash is downloaded and
+ * hashed, since a matching size alone can't show it holds the same bytes.
+ */
+async function decideStored(key, claim) {
+  const decision = decideInstallerUpload(await headInstaller(key), claim);
+
+  if (decision._tag !== "unverified") return decision;
+  process.stdout.write(`${key} is stored without a recorded hash; hashing the stored copy.\n`);
+
+  return decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
+}
+
 /** The published manifest and its version, or null before the first release. */
 async function publishedManifest() {
   // Read the etag before the body: if the object changes during either read, the conditional write fails closed.
@@ -137,12 +150,7 @@ async function uploadManifest(etag) {
 
 /** Writes `file` under `key` once: an identical stored copy is skipped and different bytes fail the job. */
 async function publishOnce(file, key, contentType, claim) {
-  let decision = decideInstallerUpload(await headInstaller(key), claim);
-
-  if (decision._tag === "unverified") {
-    process.stdout.write(`${key} is stored without a recorded hash; hashing the stored copy.\n`);
-    decision = decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
-  }
+  const decision = await decideStored(key, claim);
 
   if (decision._tag === "conflict") {
     throw new Error(
@@ -191,10 +199,7 @@ async function publishOnce(file, key, contentType, claim) {
   if (result.code !== 0) {
     if (!/PreconditionFailed|ConditionalRequestConflict|\b412\b|\b409\b/.test(result.stderr))
       throw failure(`Upload ${key}`, result);
-    let winner = decideInstallerUpload(await headInstaller(key), claim);
-
-    if (winner._tag === "unverified")
-      winner = decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
+    const winner = await decideStored(key, claim);
 
     if (winner._tag !== "already_published")
       throw new Error(`${key} is already published with different bytes; release a new version instead.`);

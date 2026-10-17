@@ -1,5 +1,6 @@
 import type { RunOutcome } from "./permit.js";
 
+/** The short label shown for each check outcome. */
 export const outcomeText: Record<RunOutcome, string> = {
   success: "Verified",
   not_found_in_supported_search: "Not found",
@@ -27,6 +28,7 @@ export const outcomeHelp: Partial<Record<RunOutcome, string>> = {
   timeout: "Stopped after 3 minutes.",
 };
 
+/** Whether a check ended without a verified status for a reason other than being cancelled. */
 export function isFailure(outcome: RunOutcome | null): boolean {
   return outcome !== null && outcome !== "success" && outcome !== "cancelled";
 }

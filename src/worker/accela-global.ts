@@ -2,18 +2,19 @@ import { createHash } from "node:crypto";
 import type { Page } from "playwright";
 import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import { sameJurisdictionPermitNumber } from "../shared/permit.js";
-import type { SearchObservation } from "./adapter.js";
+import { exactLinks, type SearchObservation } from "./adapter.js";
 
 const RESULTS_LABEL = "#ctl00_PlaceHolderMain_lblSearchResults";
 
 const NO_RESULTS = "#ctl00_PlaceHolderMain_pnlNoResults";
 
-const RESULT_LINK = "a[id$='_lnkPermitNumber']";
+/** A record link on Accela's Global Search results page. */
+export const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
 
 const NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
 
-const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
+/** The permit number on an Accela record page. */
+export const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 
 /** Accela Global Search results. `pageIdentity` hashes the visible rows and pager for the worker's fingerprint only. */
 export interface AccelaGlobalResults {
@@ -46,7 +47,7 @@ export async function waitForAccelaGlobalResults(page: Page, previousRows: strin
 
         return current !== "" && (current !== rows || currentPager !== pager);
       },
-      { rows: previousRows, pager: previousPager, link: RESULT_LINK, detail: DETAIL_NUMBER, none: NO_RESULTS },
+      { rows: previousRows, pager: previousPager, link: GLOBAL_RESULT_LINK, detail: DETAIL_NUMBER, none: NO_RESULTS },
       { timeout: 15_000 },
     )
     .catch(() => undefined);
@@ -60,7 +61,7 @@ export function accelaGlobalResultsAdapter(
   requested: string,
 ): AccelaGlobalResults {
   const read = async () => {
-    const rows = await page.locator(RESULT_LINK).evaluateAll((anchors) =>
+    const rows = await page.locator(GLOBAL_RESULT_LINK).evaluateAll((anchors) =>
       anchors.slice(0, 250).flatMap((anchor, index) => {
         if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
         const href = anchor.getAttribute("href");
@@ -75,12 +76,7 @@ export function accelaGlobalResultsAdapter(
         anchors.slice(0, 10).map((anchor) => anchor.closest("tr")?.innerText.trim().slice(0, 512) ?? ""),
       );
 
-    const matching = rows.filter((row) => sameJurisdictionPermitNumber(requested, row.text, profile.id));
-
-    const exact = matching.filter(
-      (row, index) => matching.findIndex((candidate) => candidate.href === row.href) === index,
-    );
-
+    const exact = exactLinks(rows, requested, profile.id);
     const next = page.locator(NEXT_PAGE);
     const hasNext = (await next.count()) === 1 && (await next.isVisible()) && (await next.isEnabled());
 
@@ -150,7 +146,7 @@ export function accelaGlobalResultsAdapter(
       const exact = onlyElement((await read()).exact);
 
       if (!exact) return;
-      await page.locator(RESULT_LINK).nth(exact.index).click({ noWaitAfter: true });
+      await page.locator(GLOBAL_RESULT_LINK).nth(exact.index).click({ noWaitAfter: true });
       await page
         .locator(DETAIL_NUMBER)
         .waitFor({ state: "visible", timeout: 15_000 })

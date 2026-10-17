@@ -14,6 +14,7 @@ export interface CheckTime {
 /** Sorted, de-duplicated, never empty. */
 export type CheckTimes = readonly [CheckTime, ...CheckTime[]];
 
+/** The check times used until the user saves their own: 8:30 AM, 12:30 PM, and 4:30 PM. */
 export const DEFAULT_CHECK_TIMES: CheckTimes = [
   { hour: 8, minute: 30 },
   { hour: 12, minute: 30 },

@@ -3,11 +3,9 @@ import type { PermitRow } from "./permit.js";
 import { describeReview, outstandingReviews, type ReviewEntry } from "./reviews.js";
 
 /** Who a verified status waits on: the applicant (AEC), the issuing authority (the AHJ), or no one. */
-export const ACTION_ON = ["applicant", "authority", "none"] as const;
+export type ActionOn = "applicant" | "authority" | "none";
 
-export type ActionOn = (typeof ACTION_ON)[number];
-
-export const actionText: Record<ActionOn, string> = { applicant: "AEC", authority: "AHJ", none: "None" };
+const actionText: Record<ActionOn, string> = { applicant: "AEC", authority: "AHJ", none: "None" };
 
 /**
  * How a classification was reached: `listed` wording the survey saw the authority use with that meaning, `cautious`

@@ -3,6 +3,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StoredKeyState } from "../shared/bridge.js";
 
+function isMissingFile(cause: unknown): boolean {
+  return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+}
+
 /** The platform's per-user encryption. Tests supply a fake with the same shape. */
 export interface KeyEncryption {
   available: () => Promise<boolean>;
@@ -23,7 +27,10 @@ export class KeyStorageUnavailable extends Error {
 export class KeyWriteFailed extends Error {
   readonly _tag = "KeyWriteFailed" as const;
 
-  constructor(override readonly cause: unknown) {
+  constructor(
+    /** The encryption or file system error. */
+    override readonly cause: unknown,
+  ) {
     super("The key couldn't be written");
   }
 }
@@ -65,7 +72,7 @@ export class KeyStore {
 
       return this.lastReadFailed ? "unreadable" : "configured";
     } catch (cause) {
-      return cause instanceof Error && "code" in cause && cause.code === "ENOENT" ? "missing" : "unavailable";
+      return isMissingFile(cause) ? "missing" : "unavailable";
     }
   }
 
@@ -127,7 +134,7 @@ export class KeyStore {
 
   private async readSaved(generation: number): Promise<string | null> {
     const encrypted = await readFile(this.secretPath).catch((cause) => {
-      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return null;
+      if (isMissingFile(cause)) return null;
       throw cause;
     });
 

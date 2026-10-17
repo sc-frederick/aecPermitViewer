@@ -362,7 +362,7 @@ export function runCheck(input: {
             return;
           }
 
-          worker.send({
+          sendOrFail({
             kind: "choose",
             runId: input.runId,
             fingerprint: observation.fingerprint,

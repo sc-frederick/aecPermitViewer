@@ -29,10 +29,12 @@ export const RETENTION_MS = 180 * 86_400_000;
 /** The shortest gap between two publications. The app publishes at most once a minute. */
 export const MIN_PUBLISH_INTERVAL_MS = 10_000;
 
+/** A stored publication with its new revision, or how long to wait when it came too soon after the last one. */
 export type PublishResult =
   | { readonly _tag: "published"; readonly revision: number; readonly publishedAt: string }
   | { readonly _tag: "too_soon"; readonly retryAfterSeconds: number };
 
+/** The stored list, `unchanged` when the reader already has its revision, or `absent` when nothing is stored. */
 export type ReadResult =
   | { readonly _tag: "absent" }
   | { readonly _tag: "unchanged"; readonly revision: number }

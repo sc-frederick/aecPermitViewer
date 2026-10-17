@@ -13,7 +13,14 @@ import {
 } from "../shared/share-protocol.js";
 import { buildSharedListAsync, SHARED_HISTORY_DAYS, type SharedList } from "./share-list.js";
 import type { ShareService } from "./share-service.js";
-import { cachedListSchema, probeShare, ShareFollower, SharePublisher, type CachedList } from "./share-sync.js";
+import {
+  cachedListSchema,
+  probeShare,
+  ShareFollower,
+  SharePublisher,
+  type CachedList,
+  type Probe,
+} from "./share-sync.js";
 import type { PermitStore } from "./store.js";
 import { formatCheckTime } from "../shared/schedule.js";
 
@@ -113,10 +120,12 @@ export class Sharing {
     });
   }
 
+  /** Whether this app is following another app's list. */
   get following(): boolean {
     return this.follower !== null;
   }
 
+  /** What the window shows about sharing: off, sharing this list, or following another. */
   state(): ShareState {
     if (this.publishing) {
       const { code, publisher } = this.publishing;
@@ -154,10 +163,12 @@ export class Sharing {
     return this.follower?.list?.permits ?? [];
   }
 
+  /** A followed permit, or null when the followed list doesn't have it. */
   permit(id: string): PermitRow | null {
     return this.permits().find((permit) => permit.id === id) ?? null;
   }
 
+  /** A followed permit's shared history, or null when the followed list doesn't have it. */
   history(permitId: string): PermitHistory | null {
     return this.follower?.list?.histories.get(permitId) ?? null;
   }
@@ -173,6 +184,7 @@ export class Sharing {
     return null;
   }
 
+  /** Creates share keys and publishes this app's list. Fails while following another list or without a service. */
   startSharing(): Promise<BridgeResult<null>> {
     return this.serially(() => this.share());
   }
@@ -249,7 +261,7 @@ export class Sharing {
     const code = parseShareCode(input);
 
     if (!code) return problem("That isn't a share code. Codes start with PMS1-.");
-    let probe: Awaited<ReturnType<typeof probeShare>>;
+    let probe: Probe;
 
     try {
       probe = await probeShare(this.service, code.readToken, code.contentKey);
@@ -280,6 +292,7 @@ export class Sharing {
     return ok;
   }
 
+  /** Stops fetching the followed list and forgets its code and cached copy. */
   stopFollowing(): Promise<BridgeResult<null>> {
     return this.serially(async () => {
       await this.follower?.stop();
