@@ -1,11 +1,13 @@
 import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js";
 import { PermitStore } from "../src/main/store.js";
 import { temporaryDirectory } from "./support/temporary-directory.js";
+
+/** A folder named by HISTORY_BENCHMARK_OUTPUT also gets each round's results as `aec-history-<days>.json`. */
+const outputDirectory = process.env.HISTORY_BENCHMARK_OUTPUT;
 
 // CI runs this alone with `npm run benchmark:history`. The fixture models 75 permits with three daily checks and
 // 20 reviews per check. The two-minute timeout covers seeding 246,375 observations on Windows; publication must still
@@ -104,7 +106,9 @@ describe("history growth benchmark", () => {
         };
 
         console.log(JSON.stringify(result));
-        writeFileSync(path.join(tmpdir(), `aec-history-${to}.json`), JSON.stringify(result));
+
+        if (outputDirectory)
+          writeFileSync(path.join(outputDirectory, `aec-history-${to}.json`), JSON.stringify(result));
         expect(ticks).toBeGreaterThan(0);
         expect(maxTurnMs).toBeLessThan(100);
         expect(reads).toBe(75 * 120);

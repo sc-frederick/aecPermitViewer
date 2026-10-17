@@ -7,10 +7,16 @@ import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { AppEvent, AppSnapshot, BridgeResult } from "../src/shared/bridge.js";
+import type { AppEvent, AppSnapshot, BridgeResult, PermitBridge } from "../src/shared/bridge.js";
 import type { PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
 import { permitRow } from "./support/permit-row.js";
+
+/** The bridge's requests to main: every method except the snapshot and history reads and the event subscriptions. */
+type BridgeRequest = Exclude<keyof PermitBridge, "snapshot" | "history" | `on${string}`>;
+
+/** An argument the renderer can pass with a bridge request. */
+type BridgeArgument = Parameters<PermitBridge[BridgeRequest]>[number];
 
 /** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
@@ -19,6 +25,8 @@ interface TestBridge {
   checkTimeCalls: string[][];
   /** Each setting the renderer asked main to change, in order. */
   preferenceCalls: Array<[string, boolean]>;
+  /** Every request the renderer sent, in order, with the arguments it passed. */
+  calls: Array<{ method: BridgeRequest; args: BridgeArgument[] }>;
   /** Reasons for promise rejections that nothing in the page handled. */
   unhandled: string[];
   push(next: AppSnapshot): void;
@@ -28,6 +36,10 @@ interface TestBridge {
   openDetails(permitId: string): void;
   /** Answers the renderer's first snapshot request when `open` was called with `holdFirstSnapshot`. */
   answerSnapshot(): void;
+  /** Answers every later snapshot request with `next`, as main does once its state changes. */
+  serveSnapshot(next: AppSnapshot): void;
+  /** Rejects the held first snapshot request and every later one, as a broken IPC channel would. */
+  rejectSnapshots(): void;
   /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string, nextBefore?: string, startedAt?: string): void;
   /** Answers the index-th history request with a failure main reported. */
@@ -35,7 +47,9 @@ interface TestBridge {
   /** Rejects the index-th history request, as a broken IPC channel would. */
   rejectHistory(index: number): void;
   /** Makes every later call of the named bridge method answer with a failure carrying `error`. */
-  fail(method: string, error: string): void;
+  fail(method: BridgeRequest, error: string): void;
+  /** Makes every later call of the named bridge method succeed with `value`, such as the id of an added permit. */
+  succeed(method: BridgeRequest, value: string): void;
 }
 
 declare global {
@@ -180,26 +194,33 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
         reject: (cause: Error) => void;
       }> = [];
 
-      const failures = new Map<string, string>();
+      const results = new Map<BridgeRequest, BridgeResult<string | null>>();
+      const calls: TestBridge["calls"] = [];
 
-      const answer = (method: string) => async (): Promise<BridgeResult<null>> => {
-        const error = failures.get(method);
+      const answer =
+        (method: BridgeRequest) =>
+        async (...args: BridgeArgument[]): Promise<BridgeResult<string | null>> => {
+          calls.push({ method, args });
 
-        return error === undefined ? { ok: true, value: null } : { ok: false, error };
-      };
+          return results.get(method) ?? { ok: true, value: null };
+        };
 
       let answerFirst: () => void = () => undefined;
+      let rejectFirst: () => void = () => undefined;
 
-      const firstReply = new Promise<AppSnapshot>((resolve) => {
+      const firstReply = new Promise<AppSnapshot>((resolve, reject) => {
         answerFirst = () => resolve(first);
+        rejectFirst = () => reject(new Error("IPC channel closed"));
       });
 
       if (!hold) answerFirst();
+      let snapshotReply: () => Promise<AppSnapshot> = () => firstReply;
 
       const control: TestBridge = {
         historyCalls: [],
         checkTimeCalls: [],
         preferenceCalls: [],
+        calls,
         unhandled: [],
         push: (next) => {
           for (const listener of listeners) listener(next);
@@ -211,6 +232,15 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
           for (const listener of openDetails) listener(permitId);
         },
         answerSnapshot: () => answerFirst(),
+        serveSnapshot: (next) => {
+          snapshotReply = async () => next;
+        },
+        rejectSnapshots: () => {
+          rejectFirst();
+          snapshotReply = async () => {
+            throw new Error("IPC channel closed");
+          };
+        },
         failHistory: (index, error) => {
           pending[index]?.resolve({ ok: false, error });
         },
@@ -218,7 +248,10 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
           pending[index]?.reject(new Error("IPC channel closed"));
         },
         fail: (method, error) => {
-          failures.set(method, error);
+          results.set(method, { ok: false, error });
+        },
+        succeed: (method, value) => {
+          results.set(method, { ok: true, value });
         },
         answerHistory: (index: number, status: string, nextBefore?: string, startedAt = "2026-09-24T12:00:00.000Z") => {
           const request = pending[index];
@@ -260,7 +293,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
         control.unhandled.push(String(event.reason));
       });
 
-      const methods = [
+      const methods: BridgeRequest[] = [
         "addAndCheck",
         "checkNow",
         "cancel",
@@ -291,7 +324,7 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
         testBridge: control,
         permitMonitor: {
           ...Object.fromEntries(methods.map((method) => [method, answer(method)])),
-          snapshot: () => firstReply,
+          snapshot: () => snapshotReply(),
           history: (permitId: string) => {
             control.historyCalls.push(permitId);
 
@@ -300,12 +333,12 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
           setCheckTimes: async (times: string[]) => {
             control.checkTimeCalls.push(times);
 
-            return answer("setCheckTimes")();
+            return answer("setCheckTimes")(times);
           },
           setPreference: async (key: string, value: boolean) => {
             control.preferenceCalls.push([key, value]);
 
-            return answer("setPreference")();
+            return answer("setPreference")(key, value);
           },
           onSnapshot: (callback: (value: AppSnapshot) => void) => {
             listeners.push(callback);
@@ -345,6 +378,14 @@ async function checkTimeCalls(): Promise<string[][]> {
   return page.evaluate(() => window.testBridge.checkTimeCalls);
 }
 
+/** The arguments of each `method` request the renderer sent, in order. */
+async function callsTo(method: BridgeRequest): Promise<BridgeArgument[][]> {
+  return page.evaluate(
+    (name) => window.testBridge.calls.flatMap((call) => (call.method === name ? [call.args] : [])),
+    method,
+  );
+}
+
 /** Whether the notice is showing and a click at its center would land on it, so no dialog covers it. */
 async function noticeOnTop(): Promise<boolean> {
   return page.locator("#notice").evaluate((node) => {
@@ -357,6 +398,27 @@ async function noticeOnTop(): Promise<boolean> {
 }
 
 const fifty = Array.from({ length: 50 }, (_, index) => permit(index + 1));
+
+/** A Pasco permit as main lists it once the add form has added it. */
+const added = permit(51, { jurisdictionId: "pasco-county-building", permitNumber: "BLD-2026-01234" });
+
+/** Has main accept the next add with `added`'s id, then answer the snapshot request that follows with `added` first. */
+async function acceptAdd(others: PermitRow[]): Promise<void> {
+  await page.evaluate(
+    ({ id, next }) => {
+      window.testBridge.succeed("addAndCheck", id);
+      window.testBridge.serveSnapshot(next);
+    },
+    { id: added.id, next: snapshot([added, ...others]) },
+  );
+}
+
+/** Picks `added`'s jurisdiction, types its number with spaces around it, and submits the add form. */
+async function submitAdd(): Promise<void> {
+  await page.selectOption("#jurisdiction", added.jurisdictionId);
+  await page.locator("#permit-number").fill(`  ${added.permitNumber}  `);
+  await page.locator("#add-button").click();
+}
 
 beforeEach(async () => {
   await open(snapshot(fifty));
@@ -408,6 +470,156 @@ describe("permit table updates", () => {
     expect(
       await page.locator(`#permit-table tr:has(button[data-permit-id="${returning.id}"])`).getAttribute("class"),
     ).toBe("row-enter");
+  });
+});
+
+describe("adding a permit", () => {
+  it("asks for a usable number before sending anything to main", async () => {
+    const input = page.locator("#permit-number");
+    const error = page.locator("#permit-number-error");
+    await page.locator("#add-button").click();
+
+    expect(await error.textContent()).toBe("Enter a permit number.");
+    expect(await error.isVisible()).toBe(true);
+    expect(await input.getAttribute("aria-invalid")).toBe("true");
+
+    await input.fill("AB");
+    await page.locator("#add-button").click();
+    expect(await error.textContent()).toBe("Use letters, numbers, hyphens, and dots only.");
+    expect(await error.isVisible()).toBe(true);
+    expect(await callsTo("addAndCheck")).toEqual([]);
+  });
+
+  it("adds the permit under the chosen jurisdiction with the number trimmed", async () => {
+    await acceptAdd(fifty);
+    await submitAdd();
+
+    await expect
+      .poll(() => callsTo("addAndCheck"))
+      .toEqual([[{ jurisdiction: "pasco-county-building", permitNumber: added.permitNumber }]]);
+    await page.locator("#project-dialog").waitFor();
+    expect(await page.locator("#project-permit").textContent()).toBe(added.permitNumber);
+    expect(await page.locator("#permit-number").inputValue()).toBe("");
+    expect(
+      await page.locator(`#permit-table button[data-permit-id="${added.id}"][data-action="details"]`).count(),
+    ).toBe(1);
+  });
+
+  it("shows main's refusal under the number and keeps what was typed", async () => {
+    await page.evaluate(() => window.testBridge.fail("addAndCheck", "That permit is already in the list."));
+    await submitAdd();
+
+    await expect
+      .poll(() => page.locator("#permit-number-error").textContent())
+      .toBe("That permit is already in the list.");
+    expect(await page.locator("#permit-number").inputValue()).toBe(`  ${added.permitNumber}  `);
+    expect(await page.locator("#project-dialog").isVisible()).toBe(false);
+  });
+});
+
+describe("project number prompt", () => {
+  /** Adds `added` alongside `others` and waits for the prompt that follows. */
+  async function addAndWaitForPrompt(others: PermitRow[]): Promise<void> {
+    await acceptAdd(others);
+    await submitAdd();
+    await page.locator("#project-dialog").waitFor();
+  }
+
+  it("adds the permit without a project when skipped", async () => {
+    await addAndWaitForPrompt(fifty);
+    await page.locator("#project-skip").click();
+
+    expect(await page.locator("#project-dialog").isVisible()).toBe(false);
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe(`${added.permitNumber} added.`);
+    expect(await callsTo("setProjectNumber")).toEqual([]);
+  });
+
+  it("saves a valid project number for the new permit", async () => {
+    await addAndWaitForPrompt(fifty);
+    await page.locator("#project-input").fill("28069");
+    await page.locator("#project-save").click();
+
+    await expect.poll(() => callsTo("setProjectNumber")).toEqual([[added.id, "28069"]]);
+    await expect
+      .poll(() => page.locator("#notice-text").textContent())
+      .toBe(`${added.permitNumber} added to project 28069.`);
+    expect(await page.locator("#project-dialog").isVisible()).toBe(false);
+  });
+
+  it("keeps the prompt open with an inline error for an invalid number", async () => {
+    await addAndWaitForPrompt(fifty);
+    await page.locator("#project-input").fill("28069*");
+    await page.locator("#project-save").click();
+
+    expect(await page.locator("#project-error").textContent()).toBe("Use letters, numbers, spaces, and - . _ / only.");
+    expect(await page.locator("#project-error").isVisible()).toBe(true);
+    expect(await page.locator("#project-input").getAttribute("aria-invalid")).toBe("true");
+    expect(await page.locator("#project-dialog").isVisible()).toBe(true);
+    expect(await callsTo("setProjectNumber")).toEqual([]);
+  });
+
+  it("offers recent project numbers as chips, with the latest filled in", async () => {
+    const others = [
+      permit(1, { projectNumber: "28069" }),
+      permit(2, { projectNumber: "24082" }),
+      permit(3, { projectNumber: "28069" }),
+      permit(4, { projectNumber: "31007" }),
+      permit(5),
+    ];
+
+    await open(snapshot(others));
+    await addAndWaitForPrompt(others);
+
+    const chips = page.locator("#project-recent-list button");
+    expect(await page.locator("#project-recent").isVisible()).toBe(true);
+    expect(await chips.allTextContents()).toEqual(["28069", "24082", "31007"]);
+    expect(await page.locator("#project-input").inputValue()).toBe("28069");
+
+    await chips.filter({ hasText: "24082" }).click();
+    expect(await page.locator("#project-input").inputValue()).toBe("24082");
+    await page.locator("#project-save").click();
+    await expect.poll(() => callsTo("setProjectNumber")).toEqual([[added.id, "24082"]]);
+  });
+});
+
+describe("hand-checked permits", () => {
+  const manual = permit(1, {
+    jurisdictionId: "palm-bay-building",
+    permitNumber: "PB26-00123",
+    lastStatus: null,
+    lastObservedAt: null,
+    lastRecordUrl: null,
+  });
+
+  beforeEach(async () => {
+    await open(snapshot([manual, permit(2)]));
+    await page.locator(`#permit-table button[data-action="check"][data-permit-id="${manual.id}"]`).click();
+    await page.locator("#manual-dialog").waitFor();
+  });
+
+  it("opens the portal on Check now and saves the status read there", async () => {
+    expect(await callsTo("openPortal")).toEqual([[manual.id]]);
+    expect(await callsTo("checkNow")).toEqual([]);
+    expect(await page.locator("#manual-jurisdiction").textContent()).toBe("City of Palm Bay");
+    expect(await page.locator("#manual-title").textContent()).toBe(manual.permitNumber);
+
+    await page.locator("#manual-status").fill(" Issued ");
+    await page.locator("#manual-link").fill("https://ims.palmbayfl.gov/ims/Permit/123");
+    await page.locator("#manual-save").click();
+
+    await expect
+      .poll(() => callsTo("recordManualStatus"))
+      .toEqual([[{ permitId: manual.id, status: "Issued", recordUrl: "https://ims.palmbayfl.gov/ims/Permit/123" }]]);
+    await expect.poll(() => page.locator("#manual-dialog").isVisible()).toBe(false);
+    expect(await page.locator("#notice-text").textContent()).toBe("Status saved.");
+  });
+
+  it("saves nothing when cancelled", async () => {
+    await page.locator("#manual-status").fill("Issued");
+    await page.locator("#manual-cancel").click();
+
+    expect(await page.locator("#manual-dialog").isVisible()).toBe(false);
+    expect(await callsTo("recordManualStatus")).toEqual([]);
   });
 });
 
@@ -648,6 +860,20 @@ describe("details history", () => {
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Permit not found.");
     expect(await retry.count()).toBe(1);
   });
+
+  it("opens the record of the history entry clicked", async () => {
+    await page.locator(`button[data-action="details"][data-permit-id="${permit(1).id}"]`).click();
+    await page.evaluate(() => window.testBridge.answerHistory(0, "Newest", "2026-09-24T00:00:00.000Z"));
+    await page.locator("button[data-history-more]").click();
+    await page.evaluate(() =>
+      window.testBridge.answerHistory(1, "Previous day", undefined, "2026-09-23T12:00:00.000Z"),
+    );
+
+    const older = page.locator("#history-list li", { hasText: "Previous day" });
+    await older.getByRole("button", { name: "Open record" }).click();
+
+    await expect.poll(() => callsTo("openObservationRecord")).toEqual([["o1"]]);
+  });
 });
 
 describe("update controls", () => {
@@ -717,6 +943,30 @@ describe("snapshot order", () => {
 
     await push(older);
     expect(await status.innerText()).toContain("Newer");
+  });
+});
+
+describe("unanswered snapshot requests", () => {
+  it("says the app didn't answer when the first snapshot request fails", async () => {
+    await open(snapshot(fifty), true);
+    await page.evaluate(() => window.testBridge.rejectSnapshots());
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("The app didn't answer.");
+    expect(await page.locator("#permit-table tbody tr").count()).toBe(0);
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
+  });
+
+  it("says the app didn't answer when the list can't be reloaded after an add", async () => {
+    await page.evaluate((id) => {
+      window.testBridge.succeed("addAndCheck", id);
+      window.testBridge.rejectSnapshots();
+    }, added.id);
+    await submitAdd();
+
+    await expect.poll(() => page.locator("#notice-text").textContent()).toBe("The app didn't answer.");
+    expect(await callsTo("addAndCheck")).toHaveLength(1);
+    expect(await page.locator("#project-dialog").isVisible()).toBe(false);
+    expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
   });
 });
 

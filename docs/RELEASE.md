@@ -36,6 +36,8 @@ npm test -- --exclude tests/history-growth.test.ts
 npm run benchmark:history
 ```
 
+Set `HISTORY_BENCHMARK_OUTPUT` to a folder to also save each round's measurements there as JSON.
+
 ## Installing unsigned builds
 
 ### Windows

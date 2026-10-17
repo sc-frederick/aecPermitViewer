@@ -349,8 +349,17 @@ describe("update operations", () => {
     server.publish("1.1.0", first);
     await updates.check();
 
+    // A dropped connection fails with Node's own fetch error, whose wording varies between Node versions. What the
+    // updater guarantees is a plain failure rather than a superseded download, with nothing kept or made ready.
     server.serve("1.1.0", first, "drop");
-    await expect(updates.download()).rejects.toThrow("terminated");
+    const dropped = updates.download();
+    await expect(dropped).rejects.toBeInstanceOf(Error);
+    await expect(dropped).rejects.not.toBeInstanceOf(UpdateSuperseded);
+    expect(server.requests).toEqual(["1.1.0"]);
+    expect(await updateFiles()).toEqual([]);
+    await expect(updates.installerForApprovedHandoff()).rejects.toBeInstanceOf(UpdateNotReady);
+
+    // The release stays on offer, so the next attempt downloads it again.
     server.serve("1.1.0", second, "end");
     await expect(updates.download()).rejects.toThrow("Update hash mismatch");
     await expect(updates.installerForApprovedHandoff()).rejects.toBeInstanceOf(UpdateNotReady);
