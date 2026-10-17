@@ -47,6 +47,9 @@ interface Current extends Entry {
   cancel: () => void;
 }
 
+/** One read of the saved key. Tagged so that no saved key's text can pass for a missing or unreadable one. */
+type KeyRead = { _tag: "key"; key: string } | { _tag: "missing" } | { _tag: "unreadable" };
+
 /** Portals see at most one check per scope in this window, measured from the end of the last one. */
 export const SCOPE_SPACING_MS = 30_000;
 
@@ -236,11 +239,11 @@ export class CheckQueue {
     return entry.reason === "manual" || (this.paused !== "rejected" && this.ports.scheduledEligible(entry.permitId));
   }
 
-  /** The saved key, or `"missing"` when none is saved and `"unreadable"` when reading it failed. */
-  private keyOrProblem(): Promise<string> {
+  /** Reads the saved key, telling no saved key apart from one that couldn't be read. */
+  private readSavedKey(): Promise<KeyRead> {
     return this.ports.readKey().then(
-      (value) => value ?? ("missing" as const),
-      () => "unreadable" as const,
+      (key): KeyRead => (key === null ? { _tag: "missing" } : { _tag: "key", key }),
+      (): KeyRead => ({ _tag: "unreadable" }),
     );
   }
 
@@ -258,12 +261,12 @@ export class CheckQueue {
 
     try {
       let generation = this.keyGeneration;
-      let key = await this.keyOrProblem();
+      let read = await this.readSavedKey();
 
       // A key saved during the read invalidates its answer, including a missing or unreadable one.
       while (generation !== this.keyGeneration && !this.stopped && !current.cancelled) {
         generation = this.keyGeneration;
-        key = await this.keyOrProblem();
+        read = await this.readSavedKey();
       }
 
       if (this.stopped || current.cancelled) {
@@ -275,8 +278,8 @@ export class CheckQueue {
       // Settings can change while the key is read. Work that no longer qualifies stays due for a later pass.
       if (!this.wanted(entry)) return;
 
-      if (key === "missing" || key === "unreadable") {
-        this.pause(key, entry.reason === "manual");
+      if (read._tag !== "key") {
+        this.pause(read._tag, entry.reason === "manual");
 
         return;
       }
@@ -286,7 +289,7 @@ export class CheckQueue {
 
       const check = this.ports.start(
         entry.permitId,
-        key,
+        read.key,
         () => !this.stopped && !current.cancelled && generation === this.keyGeneration && this.wanted(entry),
       );
 

@@ -340,6 +340,32 @@ describe("keys", () => {
     await queue.stop();
   });
 
+  it.each(["missing", "unreadable"])("uses a saved key whose text is %j", async (savedKey) => {
+    const startedKeys: string[] = [];
+    const notices: KeyProblem[] = [];
+
+    const queue = new CheckQueue({
+      scopeOf: () => "accela",
+      scheduledEligible: () => true,
+      readKey: async () => savedKey,
+      start: (id, key) => {
+        startedKeys.push(`${id}:${key}`);
+
+        return { finished: Promise.resolve("success" as const), cancel: () => undefined };
+      },
+      defer: () => undefined,
+      keyUnavailable: (problem) => notices.push(problem),
+      saveFailed: () => undefined,
+      changed: () => undefined,
+    });
+
+    queue.enqueue("a", "manual");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startedKeys).toEqual([`a:${savedKey}`]);
+    expect(notices).toEqual([]);
+    await queue.stop();
+  });
+
   it("ignores an old-key rejection and retains pending new-key work with portal spacing", async () => {
     const { queue, startedKeys, keyNotices, state, finish } = harness({ a1: "accela", a2: "accela" });
     state.key = "old";
