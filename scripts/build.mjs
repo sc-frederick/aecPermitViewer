@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { existsSync } from "node:fs";
 import { copyFile, cp, lstat, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { isBrowserDiagnosticFile } from "../src/shared/browser-payload.ts";
 
@@ -44,6 +45,9 @@ await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 // Shared lists (infra/sync-server). Empty turns sharing off; `wrangler dev` URLs on localhost work in development.
 await writeFile("dist/sync-config.json", JSON.stringify({ serviceUrl: process.env.SHARE_SERVICE_URL ?? "" }));
 
+// Each run records the Playwright release that drove it, read from the installed package so it can't drift from the pin.
+const { version: playwrightVersion } = createRequire(import.meta.url)("playwright/package.json");
+
 const shared = {
   bundle: true,
   sourcemap: false,
@@ -54,7 +58,12 @@ const shared = {
 };
 
 await Promise.all([
-  build({ ...shared, entryPoints: ["src/main/index.ts"], outfile: "dist/main.cjs" }),
+  build({
+    ...shared,
+    entryPoints: ["src/main/index.ts"],
+    outfile: "dist/main.cjs",
+    define: { PLAYWRIGHT_VERSION: JSON.stringify(playwrightVersion) },
+  }),
   build({ ...shared, entryPoints: ["src/preload/index.ts"], outfile: "dist/preload.cjs" }),
   build({ ...shared, entryPoints: ["src/worker/index.ts"], outfile: "dist/worker.cjs" }),
   build({

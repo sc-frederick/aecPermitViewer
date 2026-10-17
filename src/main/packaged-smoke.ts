@@ -1,6 +1,7 @@
 import { app, utilityProcess } from "electron";
-import path from "node:path";
 import { workerEnvironment } from "./check-runner.js";
+import { bundledBrowserPath, workerPath } from "./paths.js";
+import { HILLSBOROUGH_ID } from "../shared/permit.js";
 import { workerToMainSchema, type MainToWorker } from "../shared/worker-protocol.js";
 
 /**
@@ -10,10 +11,10 @@ import { workerToMainSchema, type MainToWorker } from "../shared/worker-protocol
 export async function runPackagedBrowserSmoke(): Promise<void> {
   const runId = "packaged-browser-smoke";
   const permitNumber = "HC-BLD-26-0087599";
-  const browserPath = path.join(process.resourcesPath, "playwright-browsers");
+  const browserPath = bundledBrowserPath();
   const env = workerEnvironment(browserPath);
 
-  const worker = utilityProcess.fork(path.join(__dirname, "worker.cjs"), [], {
+  const worker = utilityProcess.fork(workerPath(), [], {
     env,
     serviceName: "Permit Browser Smoke",
   });
@@ -69,7 +70,7 @@ export async function runPackagedBrowserSmoke(): Promise<void> {
   worker.postMessage({
     kind: "start",
     runId,
-    jurisdictionId: "hillsborough-county-building",
+    jurisdictionId: HILLSBOROUGH_ID,
     permitNumber,
     previousRecordUrl: null,
     browserPath,
