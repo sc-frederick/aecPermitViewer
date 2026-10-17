@@ -4,8 +4,7 @@ import { getOpenAtLogin } from "./background.js";
 import { hasDesktopShortcut, installedApp } from "./squirrel.js";
 import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime } from "../shared/schedule.js";
-import type { AppSnapshot } from "../shared/permit.js";
-import type { KeyState, StoredKeyState } from "../shared/bridge.js";
+import type { AppSnapshot, KeyState, StoredKeyState } from "../shared/bridge.js";
 
 /** The settings rows behind the preferences stored as flags. */
 export const PREF_FLAGS = {

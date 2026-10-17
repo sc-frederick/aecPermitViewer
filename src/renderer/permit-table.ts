@@ -1,7 +1,8 @@
 import { actionLabel, actionReason, type StatusAction } from "../shared/action.js";
 import { getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import { outcomeText } from "../shared/outcomes.js";
-import type { AppSnapshot, PermitRow, RunOutcome } from "../shared/permit.js";
+import type { AppSnapshot } from "../shared/bridge.js";
+import type { PermitRow, RunOutcome } from "../shared/permit.js";
 import { groupByProject, projectKey, type ProjectGroup } from "../shared/projects.js";
 import { element, icon, make } from "./dom.js";
 import { permitCount, timeNode } from "./format.js";

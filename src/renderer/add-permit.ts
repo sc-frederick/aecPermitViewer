@@ -7,7 +7,8 @@ import {
 } from "../shared/jurisdictions.js";
 import type { PermitRow } from "../shared/permit.js";
 import { PERMIT_NUMBER_MIN, PERMIT_NUMBER_PATTERN } from "../shared/permit-number.js";
-import { projectProblem, recentProjects } from "../shared/projects.js";
+import { projectProblem } from "../shared/project-number.js";
+import { recentProjects } from "../shared/projects.js";
 import { busy, element, eventButton, make, setInlineError } from "./dom.js";
 import { notice } from "./overlays.js";
 import { fetchSnapshot, setFilter } from "./snapshot-render.js";

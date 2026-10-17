@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { reviewsSchema } from "./reviews.js";
+import { reviewsSchema } from "./review-schema.js";
 import { runOutcomeSchema } from "./permit.js";
 import type { JurisdictionId } from "./jurisdictions.js";
 

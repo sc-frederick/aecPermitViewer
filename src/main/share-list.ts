@@ -11,7 +11,8 @@ import {
   type PermitHistory,
   type PermitRow,
 } from "../shared/permit.js";
-import { outstandingReviews, reviewsSchema } from "../shared/reviews.js";
+import { reviewsSchema } from "../shared/review-schema.js";
+import { outstandingReviews } from "../shared/reviews.js";
 import { normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
 /** Days of history shared per permit: one entry per day, as the details sheet shows it. */

@@ -1,17 +1,20 @@
 import { app } from "electron";
 import { rm } from "node:fs/promises";
 import { z } from "zod";
+import { DELETE_LOCAL_DATA_CONFIRMATION } from "../../shared/bridge.js";
 import type { AppContext } from "../app-context.js";
 import { setOpenAtLogin } from "../background.js";
 import { dataRoot } from "../paths.js";
 import { reopenAfterFailedShutdown, resumeAfterFailedShutdown, stopChecks } from "../shutdown.js";
 import { createHandle } from "./handle.js";
 
+const confirmationSchema = z.literal(DELETE_LOCAL_DATA_CONFIRMATION);
+
 /** Registers the window's request to delete all local data and quit. */
 export function registerDataHandlers(context: AppContext): void {
   const handle = createHandle(context);
 
-  handle("permit:delete-local-data", z.literal("DELETE LOCAL DATA"), "Deletion was not confirmed.", async () => {
+  handle("permit:delete-local-data", confirmationSchema, "Deletion was not confirmed.", async () => {
     if (!(await stopChecks(context))) {
       resumeAfterFailedShutdown(context);
 

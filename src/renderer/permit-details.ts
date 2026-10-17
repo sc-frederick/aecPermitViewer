@@ -1,10 +1,10 @@
 import { permitAction } from "../shared/action.js";
-import type { BridgeResult } from "../shared/bridge.js";
+import type { AppSnapshot, BridgeResult } from "../shared/bridge.js";
 import { dailyHistory } from "../shared/history.js";
 import { getJurisdiction, isManualJurisdiction } from "../shared/jurisdictions.js";
 import { outcomeHelp, outcomeText } from "../shared/outcomes.js";
-import type { AppSnapshot, PermitHistory, PermitRow } from "../shared/permit.js";
-import { projectProblem } from "../shared/projects.js";
+import type { PermitHistory, PermitRow } from "../shared/permit.js";
+import { projectProblem } from "../shared/project-number.js";
 import { describeReview, latestReviews, outstandingReviews, reviewRequestKey } from "../shared/reviews.js";
 import { effectiveRunTime } from "../shared/schedule.js";
 import { busy, element, eventButton, icon, make, setInlineError } from "./dom.js";

@@ -1,6 +1,12 @@
-import { PREFERENCE_KEYS, type KeyState } from "../shared/bridge.js";
+import {
+  DELETE_LOCAL_DATA_CONFIRMATION,
+  PREFERENCE_KEYS,
+  type AppPreferences,
+  type AppSnapshot,
+  type KeyState,
+  type PreferenceKey,
+} from "../shared/bridge.js";
 import { keyProblem } from "../shared/key-format.js";
-import type { AppPreferences, AppSnapshot, PreferenceKey } from "../shared/permit.js";
 import { busy, element, setInlineError } from "./dom.js";
 import { confirmAction, notice } from "./overlays.js";
 import { api, ui } from "./state.js";
@@ -274,7 +280,7 @@ export function initSettings(): void {
       ))
     )
       return;
-    const result = await api.deleteLocalData("DELETE LOCAL DATA");
+    const result = await api.deleteLocalData(DELETE_LOCAL_DATA_CONFIRMATION);
 
     if (!result.ok) notice(result.error);
   });

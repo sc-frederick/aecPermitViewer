@@ -1,4 +1,4 @@
-import type { AppSnapshot } from "../shared/permit.js";
+import type { AppSnapshot } from "../shared/bridge.js";
 import {
   DEFAULT_CHECK_TIMES,
   describeCheckTimes,
@@ -6,6 +6,7 @@ import {
   MAX_CHECK_TIMES,
   normalizeCheckTimes,
   parseCheckTime,
+  wallClockDate,
   type CheckTimes,
 } from "../shared/schedule.js";
 import { element, eventButton, icon, make } from "./dom.js";
@@ -42,10 +43,7 @@ function renderCheckTimeRows(times: readonly string[]): void {
     remove.type = "button";
     remove.dataset.removeTime = "";
     const time = parseCheckTime(value);
-    remove.setAttribute(
-      "aria-label",
-      time ? `Remove ${clockFormat.format(new Date(2026, 0, 5, time.hour, time.minute))}` : "Remove time",
-    );
+    remove.setAttribute("aria-label", time ? `Remove ${clockFormat.format(wallClockDate(time))}` : "Remove time");
     remove.append(icon("close"));
     row.append(input, remove);
 

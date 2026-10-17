@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { reviewsSchema, type ReviewEntry } from "./reviews.js";
-import type { KeyState, ShareState } from "./bridge.js";
-import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./projects.js";
+import { reviewsSchema } from "./review-schema.js";
+import type { ReviewEntry } from "./reviews.js";
+import { PROJECT_NUMBER_MAX, PROJECT_NUMBER_PATTERN } from "./project-number.js";
 import { PERMIT_NUMBER_MAX, PERMIT_NUMBER_MIN, PERMIT_NUMBER_PATTERN } from "./permit-number.js";
 import {
   accelaModules,
@@ -89,43 +89,6 @@ export interface PermitHistory {
   nextBefore?: string | null;
   runs: CheckRunRow[];
   observations: ObservationRow[];
-}
-
-/** The settings the window shows, with what this platform and install allow. */
-export interface AppPreferences {
-  notifyStatusChanges: boolean;
-  notifyFailures: boolean;
-  runInBackground: boolean;
-  openAtLogin: boolean;
-  desktopShortcut: boolean;
-  /** False when the platform has no usable notification area, so closing the window quits. */
-  backgroundAvailable: boolean;
-  /** Start-at-sign-in and the desktop shortcut are only offered for the installed Windows app. */
-  installedApp: boolean;
-  /** True on the first launch after a fresh install, until the user says whether they want a desktop shortcut. */
-  offerDesktopShortcut: boolean;
-}
-
-export type { PreferenceKey } from "./bridge.js";
-
-/** Everything the window renders, sent whole from main on each change. */
-export interface AppSnapshot {
-  /**
-   * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
-   * any lower one that arrives later.
-   */
-  revision: number;
-  permits: PermitRow[];
-  preferences: AppPreferences;
-  keyState: KeyState;
-  appVersion: string;
-  /** Which settings and update steps the window offers. `other` is a development run on Linux. */
-  platform: "windows" | "mac" | "other";
-  monitoring: "manual" | "scheduled";
-  /** Daily scheduled check times as sorted "HH:MM" strings. */
-  checkTimes: string[];
-  /** While following, `permits` is the followed list and this app's own permits are neither shown nor checked. */
-  share: ShareState;
 }
 
 /** Label stored on observations the user entered from a hand-checked portal. */

@@ -1,5 +1,4 @@
-import type { PermitBridge } from "../shared/bridge.js";
-import type { AppSnapshot } from "../shared/permit.js";
+import type { AppSnapshot, PermitBridge } from "../shared/bridge.js";
 
 declare global {
   interface Window {

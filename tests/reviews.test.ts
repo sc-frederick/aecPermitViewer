@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { actionLabel, permitAction } from "../src/shared/action.js";
-import { latestReviews, outstandingReviews, reviewDate, type ReviewEntry } from "../src/shared/reviews.js";
+import { reviewDate } from "../src/shared/review-schema.js";
+import { latestReviews, outstandingReviews, type ReviewEntry } from "../src/shared/reviews.js";
 
 const correction: ReviewEntry = {
   process: "Stormwater Review",

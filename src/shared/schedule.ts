@@ -109,13 +109,20 @@ export function nextDueAfter(now: Date, outcome: RunOutcome, times: CheckTimes):
   return retry < slot ? retry : slot;
 }
 
+/**
+ * A local Date at `time`, for formatting a wall-clock time; only its time of day carries meaning. The day is fixed in
+ * January, when no US time zone changes its clocks, so every time of day exists on it.
+ */
+export function wallClockDate(time: CheckTime): Date {
+  return new Date(2026, 0, 5, time.hour, time.minute, 0, 0);
+}
+
 /** "8:30 AM, 12:30 PM, and 4:30 PM" in the user's locale. */
 export function describeCheckTimes(times: CheckTimes, locale?: string): string {
   const format = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
-  const reference = new Date(2026, 0, 5);
 
   return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(
-    times.map((time) => format.format(at(reference, time))),
+    times.map((time) => format.format(wallClockDate(time))),
   );
 }
 

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
-import { reviewsSchema } from "../shared/reviews.js";
+import { reviewsSchema } from "../shared/review-schema.js";
 import {
   HILLSBOROUGH_ID,
   MANUAL_STATUS_LABEL,

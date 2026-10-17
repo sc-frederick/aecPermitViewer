@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actionLabel, actionReason, STATUS_WORDING, statusAction, wordingKey } from "../src/shared/action.js";
+import { actionLabel, actionReason, STATUS_WORDING, statusAction } from "../src/shared/action.js";
+import { wordingKey } from "../src/shared/wording-key.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
 

@@ -1,6 +1,7 @@
 import type { JurisdictionId } from "./jurisdictions.js";
 import type { PermitRow } from "./permit.js";
 import { describeReview, outstandingReviews, type ReviewEntry } from "./reviews.js";
+import { wordingKey } from "./wording-key.js";
 
 /** Who a verified status waits on: the applicant (AEC), the issuing authority (the AHJ), or no one. */
 export type ActionOn = "applicant" | "authority" | "none";
@@ -152,11 +153,6 @@ export const STATUS_WORDING: Partial<Record<JurisdictionId, StatusWording>> = {
     none: ["COMPLT", "VOID"],
   },
 };
-
-/** Portal wording compared without regard to case or runs of spaces, which vary between records and hand entry. */
-export function wordingKey(status: string): string {
-  return status.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
-}
 
 /** Who a status waits on, and how the wording led there. */
 export type StatusAction =

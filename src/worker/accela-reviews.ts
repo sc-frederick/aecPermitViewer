@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
-import { reviewDate, reviewsSchema, type ReviewEntry } from "../shared/reviews.js";
+import { reviewDate, reviewsSchema } from "../shared/review-schema.js";
+import type { ReviewEntry } from "../shared/reviews.js";
 
 /** The workflow could not be read completely; treating that as an empty workflow would clear known requests. */
 export class ReviewReadFailed extends Error {

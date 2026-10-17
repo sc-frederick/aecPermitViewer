@@ -7,8 +7,8 @@ import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { AppEvent, BridgeResult } from "../src/shared/bridge.js";
-import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
+import type { AppEvent, AppSnapshot, BridgeResult } from "../src/shared/bridge.js";
+import type { PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
 import { permitRow } from "./support/permit-row.js";
 

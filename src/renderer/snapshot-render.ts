@@ -1,5 +1,5 @@
 import { permitAction } from "../shared/action.js";
-import type { AppSnapshot } from "../shared/permit.js";
+import type { AppSnapshot } from "../shared/bridge.js";
 import { effectiveRunTime } from "../shared/schedule.js";
 import { element } from "./dom.js";
 import { relativeTime, stamp } from "./format.js";

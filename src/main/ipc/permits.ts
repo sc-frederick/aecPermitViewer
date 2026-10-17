@@ -15,7 +15,7 @@ import {
   resolveJurisdiction,
   setProjectNumberSchema,
 } from "../../shared/permit.js";
-import { PROJECT_NUMBER_MAX } from "../../shared/projects.js";
+import { PROJECT_NUMBER_MAX } from "../../shared/project-number.js";
 
 /** The reply to any change to this app's own permits while the window shows a followed list. */
 const FOLLOWING: BridgeResult<never> = {
