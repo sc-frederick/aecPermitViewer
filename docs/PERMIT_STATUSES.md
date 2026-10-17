@@ -1,16 +1,19 @@
 # Permit status wording and who acts next
 
-Surveyed September 27, 2026. This covers the counties and cities in the jurisdiction menu. The water management districts are not classified yet.
+This survey of the counties and cities in the jurisdiction menu was taken on September 27, 2026. The water management districts are not classified, and their permits show a dash in the Action column.
 
-The app classifies the record-level status it saves (see `src/shared/action.ts`) into the Action column:
+The app classifies the record-level status it saves into the Action column. The lists below are in `src/shared/action.ts`.
 
-- **AEC**: the applicant has to act before the record moves: corrections, missing documents, plans not yet uploaded, fees due, or a hold the applicant clears.
-- **AHJ**: the authority having jurisdiction is working on it: intake, review, other-agency review, or issuing after payment.
-- **None**: the record was issued, finished, or deliberately ended (withdrawn, void, canceled).
+- **AEC**: the applicant has to act before the record moves. Examples are corrections, missing documents, plans not yet uploaded, fees due, or a hold the applicant clears.
+- **AHJ**: the authority having jurisdiction is working on it, through intake, review, other-agency review, or issuing after payment. AHJ is used only where the survey saw the authority working under that wording.
+- **None**: the record was issued, finished, or deliberately ended, such as withdrawn, void, or canceled.
 
-When in doubt, a status counts as AEC's, and its badge reads **AEC?** so it stands apart from an explicit request. It's better to look at a permit that turns out not to need anything than to miss one that does. So "AEC, to be safe" below covers two groups. One is wording the survey couldn't pin down. The other is records that stopped short: expired, denied, revoked, abandoned, or closed by staff, where someone at AEC should decide whether to renew, resubmit, or let it go. AHJ is used only where the survey saw the authority working under that wording. Revise these as the portals' wording becomes better understood.
+When in doubt, a status counts as AEC's, and its badge reads **AEC?** so it stands apart from an explicit request. Looking at a permit that turns out to need nothing costs less than missing one that does. The "AEC, to be safe" column below covers two groups:
 
-Wording is matched per authority, ignoring case and runs of spaces. The same words can mean different things on different portals, so nothing carries over between authorities. Wording a county or city hasn't been seen to use also counts as AEC?, and its badge's tooltip says the wording isn't on the list. Water management district permits show a dash.
+- wording the survey couldn't pin down
+- records that stopped short, such as expired, denied, revoked, abandoned, or closed by staff, where someone at AEC should decide whether to renew, resubmit, or let it go
+
+Wording is matched per authority, ignoring case and runs of spaces. The same words can mean different things on different portals, so nothing carries over between authorities. Wording an authority hasn't been seen to use also counts as AEC?, and the badge's tooltip says the wording isn't on the list.
 
 ## Method
 
@@ -43,11 +46,18 @@ Record Status usually changes when a request goes to the applicant, and every re
 - Pasco COMALT-2026-000516 reads "Plan Review In Process" while six of seven reviews already show "Revisions Required". Pasco releases the requests once every review finishes.
 - Tampa's guide shows "In Process" with a certification task marked "Awaiting Client Reply" for fees due before the CO.
 
-The app now reads the public workflow under **Record Info > Processing Status** (`#tab-processing_status`), opening the tab when a tenant loads the history on demand. It retains each process’s status, decision date, and due date with every observation. The latest dated entry per process determines whether a response is required; a new pending round uses its due date and replaces that discipline’s older corrections. Same-day events follow the portal’s chronological row order.
+To catch these, the app also reads the public workflow under **Record Info > Processing Status** (`#tab-processing_status`), opening the tab when a tenant loads the history on demand. Each observation keeps every process's status, decision date, and due date. The rules are in `src/shared/reviews.ts`:
 
-Explicit requests such as “Corrections Required”, “Revisions Required”, and “Awaiting Client Reply” set AEC action even while Record Status still says “In Process”. Later “Plans Submitted”, “Plans Received”, “Resubmitted”, “Revisions Received”, “Resubmittal Received”, “Routed for Review”, or “Routed for Electronic Review” events on Application Submittal, Application Review, Plans Distribution, or Plans Coordination supersede older requests. A resubmittal on a single discipline does not clear another discipline’s corrections. Same-day requests remain actionable because no time is supplied. A document upload or payment alone does not prove the applicant answered the corrections. The app preserves the exact Record Status and shows the review evidence separately.
+- The latest dated entry per process decides whether a response is required. A new pending round uses its due date and replaces that discipline's older corrections. Same-day events follow the portal's row order, oldest first.
+- Explicit requests such as "Corrections Required", "Revisions Required", and "Awaiting Client Reply" set AEC action even while Record Status says "In Process".
+- A later "Plans Submitted", "Plans Received", "Resubmitted", "Revisions Received", "Resubmittal Received", "Routed for Review", or "Routed for Electronic Review" event on Application Submittal, Application Review, Plans Distribution, or Plans Coordination supersedes older requests.
+- A resubmittal on one discipline does not clear another discipline's corrections.
+- Same-day requests stay actionable, because the portal gives no times to show they came before the submission.
+- A document upload or payment alone does not prove the applicant answered the corrections.
 
-Confirmed September 28, 2026 on HC-SITECON-26-0000004: Record Status is “In Process”; Natural Resources requires corrections dated September 24 and Site Engineer September 22, while Stormwater has a new pending round due September 22. The older July Stormwater and Plans Coordination corrections do not drive the current action. Each newly seen discipline or correction date sends a notification under the existing status-change preference; unchanged requests stay quiet.
+The app keeps the exact Record Status and shows the review evidence separately. Each newly seen discipline or correction date sends a notification under the status-change notification setting. Unchanged requests stay quiet.
+
+On September 28, 2026, HC-SITECON-26-0000004 showed how this plays out. Its Record Status read "In Process". Natural Resources required corrections dated September 24 and Site Engineer dated September 22, while Stormwater had a new pending round due September 22. The older July corrections from Stormwater and Plans Coordination did not drive the action.
 
 ## Tyler Civic Access: Hernando
 
@@ -60,7 +70,7 @@ Field: `Status` on the permit page. The portal's Permit Status dropdown lists 23
 
 "On Hold" and "Health Department Hold" count as AEC because the holds seen were the applicant's to clear (a revision fee, a septic release), but the reason varies; the record's Holds tab gives it. Fees can also be due under another status: one plan record read "In Review" with $238.00 unpaid.
 
-Plan records (numbers like DEVP-, SUB-, CSC-, REZ-) show their status in a different field, `#label-PlanDetail-Status`. Since September 28, 2026 the app reads a `#/plan/` record from its plan fields and a `#/permit/` record from its permit fields, never one from the other. Plan statuses seen then include Requires Resubmittal, Void, and Deficient; Deficient isn't on the list above, so it shows as AEC?.
+Plan records, with numbers such as DEVP-, SUB-, CSC-, or REZ-, show their status in a different field, `#label-PlanDetail-Status`. The app reads a `#/plan/` record from its plan fields and a `#/permit/` record from its permit fields, never one from the other. Plan statuses seen on September 28, 2026 include Requires Resubmittal, Void, and Deficient. Deficient isn't on the list above, so it shows as AEC?.
 
 ## Click2Gov: St. Petersburg
 
@@ -71,11 +81,11 @@ Field: `Application Status` on Status Detail. 5,792 applications from 13 address
 - **AHJ**: IN PROCESS (482).
 - **None**: APPROVED FOR PERMIT (578; its permits show "PERMIT PRINTED"), C/O ISSUED, TEMP CO ISSUED, CERTIFICATE OF COMPLETION, COMPLETED, CLOSED, BUSINESS CO, BUSINESS CO WAIVER, VOID.
 
-"IN PROCESS" covers most active work, including applications with corrections due or permits waiting for pickup. The Plan Tracking Status page shows each trade review's latest step: RFC ("Ready for corrections") and WFP ("Waiting for permit pickup") put the next step with the applicant, while a blank step means the review hasn't happened yet. Older RFC rows stay listed after a resubmittal, so only the latest row per agency counts. The app does not read this page yet.
+"IN PROCESS" covers most active work, including applications with corrections due or permits waiting for pickup. The Plan Tracking Status page shows each trade review's latest step: RFC ("Ready for corrections") and WFP ("Waiting for permit pickup") put the next step with the applicant, while a blank step means the review hasn't happened. Older RFC rows stay listed after a resubmittal, so only the latest row per agency counts. The app does not read this page.
 
 ## Checked by hand: Orange County, Palm Bay, and Baker County
 
-Orange County and Palm Bay can't be searched anonymously, so their lists come from the authorities' published material, not from records the app read. Baker County's search is public but turns away the app's browser, so its list comes from records read in a visible browser. The user types the status they see, so matching ignores case and spacing.
+Orange County's search requires a CAPTCHA and Palm Bay's requires a login, so their lists come from the authorities' published material, not from records the app read. Baker County's search is public but turns away the app's browser, so its list comes from records read in a visible browser. For all three, the user types the status they see.
 
 ### Orange County (Fast Track)
 
