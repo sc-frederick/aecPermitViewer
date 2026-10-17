@@ -22,7 +22,7 @@ const INSTALLER = /^PermitMonitorSetup-\d+\.\d+\.\d+\.exe$/;
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
 
-// Both publishers store the Mac build before advancing the common manifest.
+// The Mac archive for a version must be stored before the shared manifest can advance to it.
 const MAC_ZIP = /^PermitMonitor-\d+\.\d+\.\d+-mac-arm64\.zip$/;
 
 const MANIFEST_MAX_BYTES = 32_768;
@@ -178,7 +178,7 @@ function recordedSha256(object: FeedObject): string | null {
   return recorded !== undefined && sha256Hex.safeParse(recorded).success ? recorded : null;
 }
 
-// Stable links for handing the current Windows installer or Mac zip to someone new. `file` names a version's download.
+// Redirects a stable link to the current Windows installer or Mac zip. `file` maps a version to its file name.
 async function latest(env: FeedEnv, url: URL, file: (version: string) => string): Promise<Response> {
   const manifest = await stored("get", MANIFEST, () => env.BUCKET.get(MANIFEST));
 
@@ -504,8 +504,8 @@ async function removeStaging(env: FeedEnv, stagingKey: string, response: Respons
   return removed._tag === "ok" ? response : unavailable(removed);
 }
 
-// Refuse a manifest whose installer isn't already in place with the advertised size and hash, so clients
-// never see a version they can't download, and refuse one that would move the feed backwards.
+// Refuses a manifest unless its installer is stored with the advertised size and hash and its Mac archive is
+// stored too, so clients never see a version they can't download. Also refuses one that would move the feed back.
 async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
   const read = await readBounded(request, MANIFEST_MAX_BYTES);
 
@@ -522,7 +522,7 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
   if (installer._tag !== "ok") return unavailable(installer);
   const recorded = installer.value ? recordedSha256(installer.value) : null;
 
-  // Installers stored before hashes were recorded are matched by size alone.
+  // Older installers have no recorded hash and are matched by size alone.
   if (!installer.value || installer.value.size !== payload.size || (recorded !== null && recorded !== payload.sha256)) {
     return text("Manifest does not match a published installer", 409);
   }

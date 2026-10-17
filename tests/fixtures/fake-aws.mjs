@@ -14,6 +14,8 @@ import path from "node:path";
 // Stands in for the AWS CLI in tests of scripts/publish-feed.mjs, supporting only the commands that script
 // runs. Objects live under FAKE_AWS_ROOT as <bucket>/<key>, each with a <key>.meta.json sidecar, and every
 // write is appended to FAKE_AWS_ROOT/writes.log. FAKE_AWS_FAIL names a subcommand that fails like an outage.
+// FAKE_AWS_RACE_MANIFEST is a manifest that a competing publisher stores just before a release-manifest.json put.
+// FAKE_AWS_GATE_DIR pauses an .exe put before its preconditions: it writes <dir>/ready, then waits for <dir>/continue.
 
 const root = process.env.FAKE_AWS_ROOT ?? "";
 
@@ -105,7 +107,7 @@ if (args[0] === "s3api" && args[1] === "head-object") {
   }
 
   try {
-    // Exclusive create models the destination condition at commit, including across CLI processes.
+    // Exclusive create enforces If-None-Match at commit time, even across concurrent CLI processes.
     writeFileSync(file, bytes, option("--if-none-match") === "*" ? { flag: "wx" } : {});
   } catch (cause) {
     if (cause.code === "EEXIST")

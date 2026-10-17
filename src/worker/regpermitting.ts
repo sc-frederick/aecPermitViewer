@@ -300,7 +300,7 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
   await waitForFrameShowing(page, RECORD_HEADING, 30_000);
 }
 
-/** Wait up to 20 seconds for the Search Records link to attach. Returns either way; the next observation decides. */
+/** Waits up to 20 seconds for the Search Records link to attach. Resolves either way; the next observation decides. */
 export async function waitForSearchRecordsLink(page: Page): Promise<void> {
   await page
     .locator(SEARCH_RECORDS_LINK)
@@ -309,15 +309,15 @@ export async function waitForSearchRecordsLink(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
-/** True when a record view's heading is showing; the adapter's read waits separately for its identity and status. */
+/** True once a record view's heading shows within `timeout` ms. The adapter's read waits for its number and status. */
 export async function regPermittingRecordShown(page: Page, timeout: number): Promise<boolean> {
   return Boolean(await waitForFrameShowing(page, RECORD_HEADING, timeout));
 }
 
 /**
  * Read the open record: the number field and status for its kind (Application Number with Application Status or,
- * for water use, App Status; Permit Number with Permit Status). A record opened from a result carries its key in its
- * frame address; one opened from a saved link was opened from that link.
+ * for water use, App Status; Permit Number with Permit Status). The record link is built from the key in the frame
+ * address when there is one (a record opened from a result), else it is the saved link the run opened.
  */
 async function readRegPermittingRecord(
   page: Page,
@@ -349,7 +349,10 @@ async function readRegPermittingRecord(
   };
 }
 
-/** Both saved links and search results can show their heading before the requested record's fields finish loading. */
+/**
+ * Rereads the record until it shows the requested number and a status, or `timeout` ms pass. Records opened from saved
+ * links and from search results can both show their heading before the fields finish loading.
+ */
 async function readReadyRegPermittingRecord(
   page: Page,
   profile: RegPermittingProfile,
@@ -381,7 +384,7 @@ async function readReadyRegPermittingRecord(
  *
  * @param openedRecordUrl - The saved record link this run opened, if any; it is reported as the record link when the
  *   record view's frame carries no key.
- * @param readinessTimeout - The bounded time to wait for the requested number and its kind-specific status.
+ * @param readinessTimeout - Milliseconds to wait for the requested number and its kind-specific status.
  */
 export function regPermittingAdapter(
   page: Page,

@@ -42,7 +42,7 @@ export function keyNotice(problem: KeyProblem): CheckEvent {
   }
 }
 
-/** The quoted wording, followed by "Action: AEC" (or "AEC?" when marked to be safe) when the new status waits on the applicant. */
+/** The quoted wording, plus the review requests or action label when the new status waits on the applicant. */
 function statusBody(quoted: string, after: PermitRow): string {
   const classified = permitAction(after);
 
@@ -53,9 +53,9 @@ function statusBody(quoted: string, after: PermitRow): string {
 }
 
 /**
- * Decides whether a finished check is worth telling the user about. Portal wording is quoted exactly;
- * newly observed review requests notify even when the record's wording has not changed. A new discipline or
- * correction date counts as a new request. Repeated requests and repeat failures stay quiet.
+ * The notice for a finished check, or null when it isn't worth one. Portal wording is quoted exactly. A new review
+ * request (a new discipline or correction date) notifies even when the status wording is unchanged; repeated requests
+ * and repeat failures stay quiet.
  */
 export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome: RunOutcome): CheckEvent | null {
   const number = after.permitNumber;
@@ -110,10 +110,10 @@ export function describeCheckEvent(before: PermitRow, after: PermitRow, outcome:
 }
 
 /**
- * What a follower hears when a newer shared list arrives: for each permit whose check finished since the list before,
- * the notice the publisher's own app would have given. A check still running when the earlier list went out has the
- * same start time but no outcome yet, so its finish counts. Permits new to the list stay quiet, so following a list
- * doesn't announce every permit in it, and key notices are left out because they are about the publisher's key.
+ * Notices for a follower when a newer shared list arrives: for each permit whose check finished since the previous
+ * list, the notice the publisher's app would have shown. A check still running in the previous list has the same start
+ * time but no outcome, so its finish counts. Permits new to the list stay quiet, so following a list doesn't announce
+ * every permit, and key notices are dropped because they concern the publisher's key.
  */
 export function describeSharedUpdate(before: readonly PermitRow[], after: readonly PermitRow[]): CheckEvent[] {
   const previous = new Map(before.map((permit) => [permit.id, permit]));
@@ -130,7 +130,7 @@ export function describeSharedUpdate(before: readonly PermitRow[], after: readon
   });
 }
 
-/** Records a completed check before describing it, using the previous completed outcome rather than its unfinished run. */
+/** Finishes the run in the store and returns its notice, comparing against the permit as it was before this run. */
 export function recordCheckEvent(
   store: Pick<PermitStore, "getPermitBeforeRun" | "finishRun" | "getPermit">,
   input: Parameters<PermitStore["finishRun"]>[0],

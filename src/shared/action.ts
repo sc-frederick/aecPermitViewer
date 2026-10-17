@@ -10,8 +10,9 @@ export type ActionOn = (typeof ACTION_ON)[number];
 export const actionText: Record<ActionOn, string> = { applicant: "AEC", authority: "AHJ", none: "None" };
 
 /**
- * Where a classification comes from: wording the survey saw the authority use for that meaning, wording counted as
- * AEC's to be safe (it stopped short or couldn't be pinned down), or wording not on the authority's list at all.
+ * How a classification was reached: `listed` wording the survey saw the authority use with that meaning, `cautious`
+ * wording counted as AEC's to be safe (the record stopped short or the wording couldn't be pinned down), or `unlisted`
+ * wording not on the authority's list.
  */
 export type ActionBasis = "listed" | "cautious" | "unlisted";
 
@@ -22,9 +23,8 @@ type StatusWording = Readonly<Record<ActionOn | "cautious", readonly string[]>>;
  * Each county and city portal's status wording, as its records displayed it in September 2026 (see
  * docs/PERMIT_STATUSES.md). When in doubt a status counts as AEC's: holds, wording the survey couldn't pin down,
  * and records that stopped short (expired, denied, revoked, abandoned, closed by staff) all need someone at AEC to
- * look. Those cautious ones are listed apart from explicit requests so the badge can tell them apart. AHJ is only for
- * wording the survey saw the authority working under, and None only for records that were issued, finished, or
- * deliberately ended.
+ * look. They are listed apart from explicit requests so the badge can mark them. AHJ is only for wording the survey saw
+ * the authority working under, and None only for records that were issued, finished, or deliberately ended.
  */
 export const STATUS_WORDING: Partial<Record<JurisdictionId, StatusWording>> = {
   "hillsborough-county-building": {
@@ -189,8 +189,9 @@ const LOOKUP = new Map(
 );
 
 /**
- * Who the authority's status wording leaves the next step to. Wording a county or city hasn't been seen to use
- * counts as AEC's, so a new status gets looked at. Water management districts aren't classified yet.
+ * Who the authority's status wording leaves the next step to. Wording the authority hasn't been seen to use counts as
+ * AEC's (`unlisted`), so a new status gets looked at. Null for an empty status or a jurisdiction without a wording
+ * list, such as the water management districts.
  */
 export function statusAction(jurisdictionId: JurisdictionId, status: string | null): StatusAction | null {
   const wording = LOOKUP.get(jurisdictionId);

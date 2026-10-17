@@ -149,7 +149,7 @@ let offerDesktopShortcut = installedApp() && process.argv.includes(FIRST_RUN_ARG
 
 const PLAYWRIGHT_VERSION = "1.63.0";
 
-/** The answer to a change to this app's own permits while the window shows a followed list instead. */
+/** The reply to any change to this app's own permits while the window shows a followed list. */
 const FOLLOWING: BridgeResult<never> = {
   ok: false,
   error: "You're viewing a shared list. Stop following it in Settings to change permits.",
@@ -220,14 +220,14 @@ function keyStateProblem(state: StoredKeyState): string | null {
   }
 }
 
-/** Whether checks can run for want of a key: what storage knows, plus the queue's pause after the service turned the key down. */
+/** The key state shown to the user: the stored state, or `rejected` while the queue is paused on a rejected key. */
 function effectiveKeyState(stored: StoredKeyState): KeyState {
   return stored === "configured" && checks.keyPaused ? "rejected" : stored;
 }
 
 /**
- * Reads the whole app state. The key state is the only asynchronous part, so it is read first; everything else, and the
- * revision, is read after it in one turn. A snapshot with a higher revision therefore never holds older permits or settings.
+ * Reads the whole app state. The key state is the only asynchronous read, so it goes first; the revision and everything
+ * else are read after it in one turn. A snapshot with a higher revision never holds older permits or settings.
  */
 async function snapshot(): Promise<AppSnapshot> {
   const stored = await storedKeyState("snapshot:key-state");
@@ -341,8 +341,8 @@ function permitScope(permitId: string): string | null {
 }
 
 /**
- * Runs one browser check and records its result. Resolves null when no run was recorded, including when the queue no
- * longer wants the check once the browser payload is verified.
+ * Runs one browser check and records its result. `finished` resolves null when no run was recorded, including when the
+ * queue stopped wanting the check while the browser payload was being verified.
  */
 function startCheck(permitId: string, key: string, stillWanted: () => boolean): StartedCheck {
   let cancelled = false;
@@ -466,7 +466,10 @@ function resumeAfterFailedShutdown(): void {
   void broadcast();
 }
 
-/** Queues due permits. The interval and resume listener are stopped before the store closes, and this checks as well. */
+/**
+ * Queues due permits. `stopScheduler` removes the timer and resume listener before the store closes; the `shuttingDown`
+ * guard covers the other callers.
+ */
 function scheduleDue(): void {
   if (shuttingDown || sharing.following || checks.keyPaused || store.getMonitoring() !== "scheduled") return;
   const now = new Date();
@@ -837,7 +840,7 @@ async function startApp(): Promise<void> {
       return { ok: true, value: null };
     },
   );
-  // Any other permit ID is simply not found, so only the project number can be invalid.
+  // An unknown permit ID is answered as not found, so the invalid-input message only covers the project number.
   handle(
     "permit:set-project-number",
     setProjectNumberSchema.extend({ permitId: z.string() }),
@@ -1019,8 +1022,8 @@ async function startApp(): Promise<void> {
   handle("permit:follow", z.string().max(200), "That isn't a share code.", async (code) => {
     const result = await sharing.follow(code);
 
-    // Nothing of this app's own runs while another list is shown, including checks asked for by hand, such as Check
-    // all from the tray; otherwise they would notify about permits the window no longer shows.
+    // None of this app's own checks run while another list is shown, including manual ones such as Check all from the
+    // tray; they would notify about permits the window no longer shows.
     if (result.ok) for (const permit of store.listPermits()) checks.cancel(permit.id);
 
     return result;

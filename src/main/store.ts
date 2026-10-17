@@ -100,7 +100,7 @@ const observationSchema = z.object({
 
 /**
  * How node:sqlite reports a UNIQUE constraint violation: its generic code plus SQLite's extended result code
- * SQLITE_CONSTRAINT_UNIQUE (2067). The message text is SQLite's and not part of the contract, so it isn't read.
+ * SQLITE_CONSTRAINT_UNIQUE (2067). The message text isn't a stable contract, so it isn't matched.
  */
 const uniqueViolationSchema = z.object({ code: z.literal("ERR_SQLITE_ERROR"), errcode: z.literal(2067) });
 
@@ -195,9 +195,8 @@ export class PermitStore {
 
     if (version > 4) throw new Error("Database was created by a newer app version.");
 
-    // permits.interval_hours is retired: scheduling now uses the check times in settings, and nothing reads or writes
-    // the column. It stays in the schema because dropping a column rewrites every permit row, which isn't worth the
-    // risk on its own. Remove it in a future migration that has another reason to rewrite permits.
+    // permits.interval_hours is unused; scheduling reads the check times in settings. Dropping the column rewrites
+    // every permit row, so it stays until a migration has another reason to rewrite permits.
     if (version === 0)
       this.transaction(() => {
         this.db.exec(`
@@ -264,10 +263,10 @@ export class PermitStore {
         this.db.exec("PRAGMA user_version = 1");
       });
 
-    // Version 2 added the other jurisdictions; syncProfiles now writes every profile on each open.
+    // Version 2 needs no schema change: syncProfiles writes every jurisdiction profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
 
-    // Version 3 added the user's project number for grouping permits.
+    // Version 3: the user's project number, for grouping permits.
     const columns = this.db
       .prepare("PRAGMA table_info(permits)")
       .all()
@@ -291,8 +290,7 @@ export class PermitStore {
 
         this.db.exec("PRAGMA user_version = 4");
       });
-    // Added for a latest-browser-version read that no longer exists. Nothing reads runs in this order now; the index is
-    // kept rather than dropped by a migration of its own. Older app versions ignore it.
+    // idx_runs_started is unused. Kept because dropping it would need its own migration; older app versions ignore it.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_runs_success_permit_started ON check_runs(permit_id, started_at DESC) WHERE outcome = 'success'",
@@ -300,9 +298,9 @@ export class PermitStore {
   }
 
   /**
-   * Upserts the built-in jurisdiction profiles so permits can reference any supported authority.
-   * A profile removed from the app keeps its row, because saved permits and history still point to it. Permits
-   * under a removed profile are left out of reads until it returns.
+   * Upserts the built-in jurisdiction profiles so permits can reference any supported authority. A profile removed from
+   * the app keeps its row, because saved permits and history still point to it; reads skip those permits until it
+   * returns.
    */
   private syncProfiles(): void {
     /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
@@ -448,7 +446,10 @@ export class PermitStore {
     return row ? mapPermit(row, false) : null;
   }
 
-  /** The prior completed attempt with the current verified evidence, excluding the run being finished. */
+  /**
+   * The permit with its current status and record link, but with the latest attempt taken from its most recent
+   * completed run other than `runId`. Used to compare a finishing run with what came before it.
+   */
   getPermitBeforeRun(permitId: string, runId: string): PermitRow | null {
     const permit = this.getPermit(permitId);
 
@@ -644,8 +645,12 @@ export class PermitStore {
   }
 
   /**
-   * At most `days` daily entries before the exclusive UTC cursor. Calendar boundaries use this computer's time zone,
-   * including DST. Indexed per-day seeks skip older raw checks; only the chosen observations' review JSON is parsed.
+   * One entry per calendar day, newest first, for at most `days` days before the exclusive `before` timestamp (UTC
+   * ISO). Days follow this computer's time zone, including DST. A day's entry is its latest successful run with an
+   * observation, else its latest run. Each day costs a few indexed seeks, and only the chosen observations' review JSON
+   * is parsed.
+   *
+   * @throws Error when `days` is not an integer from 1 to 120.
    */
   dailyHistory(permitId: string, days = 120, before: string | null = null): PermitHistory {
     if (!Number.isInteger(days) || days < 1 || days > 120) throw new Error("Invalid history page size");
@@ -673,9 +678,8 @@ export class PermitStore {
       const date = new Date(latest.startedAt);
       const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
 
-      // A verified latest success is already the daily pick. Reuse it rather
-      // than seeking and parsing the same run again; other outcomes and missing
-      // observations still use the indexed successful-run fallback.
+      // When the day's latest run is a success with an observation, it is the pick; reuse it instead of seeking and
+      // parsing it again. Otherwise the indexed successful-run lookup below chooses.
       const latestObservation =
         latest.outcome === "success" ? this.row(observationSchema, observationSelect, latest.id) : null;
 
@@ -758,7 +762,7 @@ export class PermitStore {
   getMonitoring(): "manual" | "scheduled" {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
 
-    // Scheduled checks are the default. "daily" is how earlier versions stored the same choice.
+    // Anything but "manual" means scheduled, including "daily" from older databases.
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
@@ -770,7 +774,10 @@ export class PermitStore {
     return stored ?? DEFAULT_CHECK_TIMES;
   }
 
-  /** Saves schedule edits and future deadlines atomically; overdue checks keep their one catch-up. */
+  /**
+   * Saves new check times and moves future due times to the next new slot, in one transaction. Permits already overdue
+   * are left due, so each still gets its one catch-up check.
+   */
   setCheckTimes(times: CheckTimes, now: Date): void {
     this.transaction(() => {
       const previousTimes = this.getCheckTimes();
@@ -788,7 +795,7 @@ export class PermitStore {
       const next = nextSlotAfter(now, times);
 
       for (const permit of future) {
-        // Transient retries retain their original one-hour deadline, capped by the next newly selected slot.
+        // A pending one-hour retry after `api_unavailable` keeps its time unless the next new slot comes sooner.
         const retry =
           permit.outcome === "api_unavailable" &&
           permit.finishedAt &&
@@ -859,13 +866,16 @@ export class PermitStore {
     return this.sql("DELETE FROM permits WHERE id = ?").run(id).changes === 1;
   }
 
-  /** Pulls due times later than the next slot (old 24-hour rule, or a changed schedule) forward to it. */
+  /**
+   * Pulls any due time later than the next slot forward to it. Due times saved by older versions or under different
+   * check times can be later.
+   */
   alignSchedule(now: Date): void {
     const slot = nextSlotAfter(now, this.getCheckTimes()).toISOString();
     this.sql("UPDATE permits SET next_due_at = ? WHERE next_due_at > ?").run(slot, slot);
   }
 
-  /** Saves the permit's project number; null or blank clears it. */
+  /** Saves the permit's project number; null or blank clears it. Returns false when no permit has that id. */
   setProjectNumber(id: string, projectNumber: string | null): boolean {
     return (
       this.sql("UPDATE permits SET project_number = ? WHERE id = ?").run(projectNumber?.trim() || null, id).changes ===

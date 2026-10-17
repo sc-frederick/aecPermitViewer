@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StoredKeyState } from "../shared/bridge.js";
 
-/** Encryption owned by the desktop platform; tests use the same port with synthetic keys. */
+/** The platform's per-user encryption. Tests supply a fake with the same shape. */
 export interface KeyEncryption {
   available: () => Promise<boolean>;
   encrypt: (key: string) => Promise<Buffer>;
@@ -69,7 +69,7 @@ export class KeyStore {
     }
   }
 
-  /** Encrypts the key for this user. The plaintext is never returned or persisted. */
+  /** Encrypts the key for this user and replaces any saved key. The plaintext is never written to disk. */
   async save(key: string): Promise<KeySave> {
     this.generation += 1;
 
@@ -98,8 +98,8 @@ export class KeyStore {
   }
 
   /**
-   * The key, or null when none is saved or this computer can't store one. The file is read and decrypted once; a
-   * saved key that can't be read or decrypted rejects, so it isn't mistaken for a missing one.
+   * The key, or null when none is saved or this computer can't store one. A saved key that can't be read or decrypted
+   * rejects, so it isn't mistaken for a missing one. A save or removal during the read restarts it on the new file.
    */
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
@@ -146,7 +146,7 @@ export class KeyStore {
     return decrypted.result;
   }
 
-  /** Serializes every disk mutation, including migration; rejected work cannot poison the next operation. */
+  /** Runs disk mutations, including re-encryption, one at a time. A failed mutation doesn't block the next one. */
   private mutate<T>(work: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(work);
     this.mutations = result.then(

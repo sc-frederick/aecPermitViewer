@@ -197,8 +197,8 @@ describe("sync Worker", () => {
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect(room?.alarm).toBeNull();
     expect((await call(rooms, "GET", token)).status).toBe(404);
-    // Deleting again, or a list that never existed, still succeeds, and the same room takes a new publication. That
-    // one's revision is new, so a follower holding the deleted list's revision gets the new contents, not a 304.
+    // Deleting a missing list succeeds. The room then takes a new publication with a new revision, so a follower
+    // holding the deleted list's etag gets the new contents, not a 304.
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect((await call(rooms, "PUT", WRITE_KEY, { body: body("again") })).status).toBe(200);
     expect((await call(rooms, "GET", token, { ifNoneMatch: etag ?? "" })).status).toBe(200);

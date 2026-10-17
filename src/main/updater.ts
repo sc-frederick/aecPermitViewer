@@ -11,7 +11,7 @@ const payloadSchema = z.object({
   url: z.url(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   size: z.number().int().positive().max(1_000_000_000),
-  // Empty until releases are Authenticode-signed; the Ed25519 manifest is then the only trust anchor.
+  // Empty for releases without an Authenticode signature, which leaves the Ed25519 manifest as the only trust anchor.
   publisher: z.string().max(200),
 });
 
@@ -86,7 +86,10 @@ function safeHttpsUrl(value: string): URL | null {
   }
 }
 
-/** Follows up to three HTTPS redirects by hand. Each redirect's body is released before the next request. */
+/**
+ * Fetches `url`, following up to three redirects by hand so each target must be a plain HTTPS URL. Each redirect's
+ * body is released before the next request.
+ */
 async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
   let current = url;
 
@@ -306,7 +309,7 @@ export class UpdateManager {
     return { state: "available", version: payload.version, size: payload.size };
   }
 
-  /** The feed's link to the newest macOS build, which the Mac app sends people to instead of installing; null with no feed. */
+  /** The download page for the newest macOS build, derived from the feed URL; null when this build has no feed. */
   macDownloadUrl(): string | null {
     const feed = safeHttpsUrl(this.config.feedUrl);
 
@@ -368,7 +371,8 @@ export class UpdateManager {
 
   /**
    * Re-verifies the downloaded installer's size, hash, and publisher just before it is launched and returns its path.
-   * Rejects with `UpdateNotReady` when no download finished for the current offer.
+   * Rejects with `UpdateNotReady` when no download finished for the current offer, and with `UpdateSuperseded` when the
+   * offer changes during verification.
    */
   async installerForApprovedHandoff(): Promise<string> {
     const state = this.state;
@@ -464,8 +468,8 @@ export class UpdateManager {
   }
 
   private async verifyPublisher(file: string, publisher: string, signal?: AbortSignal): Promise<void> {
-    // verifyReleaseEnvelope already required publisher === config.expectedPublisher, so an empty value
-    // only reaches here from an unsigned-build configuration.
+    // verifyReleaseEnvelope required publisher to equal the configured expectedPublisher, so an empty value means this
+    // build is configured for unsigned releases.
     if (!publisher) return;
 
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");

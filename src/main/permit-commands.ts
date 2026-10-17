@@ -2,7 +2,10 @@ import type { JurisdictionId } from "../shared/jurisdictions.js";
 import type { CheckQueue } from "./check-queue.js";
 import type { AddPermitResult, PermitStore } from "./store.js";
 
-/** Saves a permit, announces insertion independently of automation, and queues its first supported check. */
+/**
+ * Saves a permit, queues its first check, and calls `changed`. `changed` runs even for hand-checked permits, which the
+ * queue skips.
+ */
 export function addAndCheck(
   store: Pick<PermitStore, "addPermit">,
   queue: Pick<CheckQueue, "enqueue">,

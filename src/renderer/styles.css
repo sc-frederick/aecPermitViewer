@@ -1,5 +1,5 @@
-/* Permit Monitor — the warm Aether system shared with AEC Plan Search.
-   Local fonts and original system tokens live in assets; workflow styling stays here. */
+/* Permit Monitor styles, layered on the warm Aether system shared with AEC Plan Search.
+   Font files and the base Aether tokens live in assets/; app-specific styling lives here. */
 @font-face {
   font-family: "Inter";
   font-style: normal;

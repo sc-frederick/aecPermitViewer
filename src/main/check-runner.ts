@@ -40,7 +40,7 @@ export interface CheckWorker {
   onError(listener: () => void): void;
 }
 
-/** Starting the worker process gave either the worker or why the process couldn't be created. */
+/** The started worker, or why its process couldn't be created. */
 export type WorkerStart = { _tag: "started"; worker: CheckWorker } | { _tag: "failed"; cause: unknown };
 
 /** Local steps of a check whose failure is reported for diagnosis. */
@@ -298,9 +298,9 @@ export function runCheck(input: {
 
           decisionPending = true;
 
-          // A lone step the worker's own checks established needs no model call. The worker still revalidates the
-          // page before acting. Repeated established steps settle locally above: a model cannot authorize an action
-          // that loop protection would reject. Jev is reserved for genuinely unresolved choices.
+          // A lone step the worker's own checks established needs no model call; the worker still revalidates the page
+          // before acting. Repeated established steps are handled above, so the model can't authorize an action that
+          // loop protection would reject. Jev is only asked about unresolved choices.
           const decision: NavigationDecision = established
             ? { _tag: "chosen", candidateId: only.id, attempts: 0, actualModel: null }
             : await chooseNavigation({

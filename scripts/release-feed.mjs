@@ -13,7 +13,7 @@ export const installerPath = path.resolve("out/make/squirrel.windows/x64/PermitM
 /** The signed manifest describing `installerPath`. */
 export const manifestPath = path.resolve("out/make/squirrel.windows/x64/release-manifest.json");
 
-/** The zipped Mac app from the macOS package job. Both publishers require it before promoting the common version. */
+/** The zipped Mac app from the macOS package job. Both publication scripts require it before advancing the manifest. */
 export const macZipPath = path.resolve("out/make/PermitMonitor-mac-arm64.zip");
 
 /** The feed key for a version's Mac zip. The Worker's `/mac` link redirects to it. */
@@ -53,7 +53,7 @@ export async function readLocalRelease() {
   return { text, payload, key };
 }
 
-/** The matching local Mac artifact, required so a publication cannot break the common feed's Mac download. */
+/** The matching local Mac artifact, required so a publication cannot break the feed's Mac download. */
 export async function readLocalMac(version) {
   let size;
 

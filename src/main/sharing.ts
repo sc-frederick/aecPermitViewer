@@ -17,7 +17,7 @@ import { cachedListSchema, probeShare, ShareFollower, SharePublisher, type Cache
 import type { PermitStore } from "./store.js";
 import { formatCheckTime } from "../shared/schedule.js";
 
-/** Checks or edits kept changing the list while its history was read; the publisher retries after it settles. */
+/** The store changed during every attempt to build the list; the publisher reports it and retries later. */
 class SharedListChanged extends Error {
   readonly _tag = "SharedListChanged" as const;
 
@@ -61,8 +61,8 @@ function problem(error: string): BridgeResult<null> {
  * Sharing this app's list, or following another's. The two are exclusive: a follower's window shows the followed list
  * in place of its own, and its own permits aren't checked meanwhile, so there would be nothing current to share.
  *
- * Starting, stopping, and syncing each wait on the network, so they run one at a time: otherwise a Share click during a
- * Follow's first fetch would do both, and a Sync now during Stop sharing would publish the list being deleted.
+ * Starting, stopping, and syncing wait on the network, so they run one at a time: otherwise a Share click during a
+ * Follow's first fetch would do both, and Sync now during Stop sharing would republish the list being deleted.
  */
 export class Sharing {
   private publishing: Publishing | null = null;
@@ -198,8 +198,9 @@ export class Sharing {
   }
 
   /**
-   * Deletes the shared copy first, so the code stops working; sharing carries on if that fails, keeping the write key
-   * that can still delete it. Deleting local data comes through here too, so it never throws that key away.
+   * Deletes the shared copy so the code stops working, then forgets the keys. If the delete fails, sharing resumes with
+   * the same write key so a later try can still delete it. Deleting local data also goes through here, so it never
+   * discards that key.
    */
   stopSharing(): Promise<BridgeResult<null>> {
     return this.serially(() => this.unshare());
@@ -332,7 +333,10 @@ export class Sharing {
     return publisher;
   }
 
-  /** A mutation during yielding invalidates the snapshot; a retry observes one consistent store revision. */
+  /**
+   * Builds the list to publish from one consistent store revision. A store change while the build yields restarts it;
+   * after three attempts it throws SharedListChanged.
+   */
   private async buildList(): Promise<string> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const version = this.store.changeCount();

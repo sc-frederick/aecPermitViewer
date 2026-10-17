@@ -5,7 +5,7 @@ const REDUCED_EFFECTS =
 
 type FallbackReason = GpuFailureReason | "reduced-effects" | "timeout";
 
-/** Starts a decorative still frame; missing GPU support always leaves the CSS background visible. */
+/** Paints the backdrop as one still frame and returns a stop function. Any GPU failure leaves the CSS background. */
 function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   let renderer: ReturnType<typeof shaderRendererGPU> | null = null;
   let observer: ResizeObserver | null = null;
@@ -107,8 +107,8 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
         return;
       }
 
-      // Probe before importing: unsupported GPUs never load the engine. The public
-      // manual renderer has no animation loop or telemetry, and stays frame locked.
+      // Probe the adapter before importing so unsupported GPUs never load the engine.
+      // The manual renderer has no animation loop or telemetry and stays frame-locked.
       const [core, gradient, grain] = await Promise.all([
         import("shaders/core"),
         import("shaders/core/MultiPointGradient"),
@@ -137,8 +137,8 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
         animated: false,
       } satisfies import("shaders/core/FilmGrain").ComponentProps;
 
-      // SAFETY: the SDK bridge erases shader-specific transform inputs to unknown.
-      // The unchanged definition only receives values checked against its published props.
+      // SAFETY: the SDK's bridge type erases shader-specific transform inputs to unknown. The
+      // definition is passed unchanged and only receives grainProps, checked against its props.
       // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       const grainBridge = grain.componentDefinition as unknown as Parameters<typeof core.createGpuUniformsMap>[0];
       current.registerNode(
@@ -165,8 +165,8 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
         colorSpace: "oklab",
       } satisfies import("shaders/core/MultiPointGradient").ComponentProps;
 
-      // SAFETY: the same SDK variance mismatch applies here; gradientProps retains
-      // and checks the shader-specific value types passed to the unchanged definition.
+      // SAFETY: same SDK variance mismatch as above. gradientProps is checked against the
+      // gradient's props, and the definition is passed unchanged.
       // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       const gradientBridge = gradient.componentDefinition as unknown as Parameters<typeof core.createGpuUniformsMap>[0];
       current.registerNode(
@@ -198,7 +198,10 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
   return stop;
 }
 
-/** Mounts the shared warm backdrop and releases GPU resources when preferences change or the window closes. */
+/**
+ * Mounts the warm backdrop, or the CSS fallback while a reduced-effects preference is on, and restarts when that
+ * preference changes. The returned function releases GPU resources.
+ */
 export function mountWarmBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   const preference = window.matchMedia(REDUCED_EFFECTS);
   let stop: () => void = () => undefined;

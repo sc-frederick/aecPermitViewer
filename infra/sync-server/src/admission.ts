@@ -32,7 +32,7 @@ export const DEFAULT_ADMISSION_LIMITS: AdmissionLimits = {
   trackedSources: 4096,
 };
 
-/** A quota rejection; creation-only rejections still permit an existing legacy room to update. */
+/** A quota rejection. Creation-only rejections still let an existing room with no admission record (legacy) update. */
 export type AdmissionDenied = {
   readonly _tag: "denied";
   readonly reason: "source_writes" | "tracked_sources" | "source_creations" | "deployment_creations" | "room_capacity";
@@ -154,7 +154,10 @@ export class ShareAdmission {
     return this.creationLimit(state, now) ?? { _tag: "allowed", registered: false };
   }
 
-  /** Rechecks quotas after body validation and reserves capacity before the first room publication can happen. */
+  /**
+   * Rechecks quotas after body validation and reserves the room's slot before its first publication. A room that is
+   * already registered is allowed without charging again.
+   */
   register(name: string, source: string, now: number): AdmissionResult {
     if (this.registered(name)) return { _tag: "allowed", registered: true };
     const state = this.source(source, now);

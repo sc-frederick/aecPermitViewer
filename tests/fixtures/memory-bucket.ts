@@ -28,9 +28,9 @@ interface PendingUpload {
 }
 
 /**
- * An in-memory implementation of the feed's R2 port with R2's observable behavior for the operations the
- * Worker uses: conditional puts, multipart uploads that only appear on completion, and ranged reads.
- * Operations listed in `failing` reject the way an R2 outage does.
+ * In-memory feed bucket matching R2's observable behavior for the operations the Worker uses: conditional puts,
+ * multipart uploads that appear only on completion, and ranged reads. Operations in `failing` reject the way an R2
+ * outage does.
  */
 export class MemoryBucket implements FeedBucket {
   /** Operations that currently reject. */

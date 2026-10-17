@@ -55,7 +55,7 @@ async function serve(): Promise<void> {
   await page.goto(RESULTS_URL);
 }
 
-/** The existing worker port backed by real routed-browser adapter operations, with every network request fulfilled locally. */
+/** A `CheckWorker` that drives the real Accela adapter in the routed test page, so no request leaves the process. */
 class BrowserWorker implements CheckWorker {
   private readonly messages: Array<(message: WorkerToMain) => void> = [];
   private readonly exits: Array<() => void> = [];

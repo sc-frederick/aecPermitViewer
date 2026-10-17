@@ -83,8 +83,8 @@ const SUBMISSIONS = new Set([
   "routed for review",
 ]);
 
-// Only the portal's intake/coordination tasks establish a submission for the whole record. A resubmittal on one
-// discipline must not clear another discipline's outstanding request.
+// Only intake/coordination tasks establish a submission for the whole record, so a resubmittal on one discipline
+// doesn't clear another discipline's outstanding request.
 const COORDINATION = new Set([
   "application submittal",
   "application review",
@@ -93,9 +93,9 @@ const COORDINATION = new Set([
 ]);
 
 /**
- * Current requests for an applicant response. A later explicit resubmittal/routing event starts a new review round,
- * when recorded on an intake/coordination task. Uploads and payments alone do not establish that corrections were answered.
- * Same-day requests remain actionable because the portal supplies no times to prove they preceded submission.
+ * Requests still awaiting an applicant response. A resubmittal or routing event on an intake/coordination task starts
+ * a new round and clears requests dated before it; uploads and payments alone don't. A request dated the same day as
+ * the resubmittal stays outstanding, since the portal gives no times to order them.
  */
 export function outstandingReviews(entries: readonly ReviewEntry[]): ReviewEntry[] {
   let submitted: string | null = null;

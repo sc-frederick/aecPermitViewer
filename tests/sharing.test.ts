@@ -455,7 +455,7 @@ describe("sharing between two apps", () => {
     expect(publisher.state()).not.toMatchObject({ publishedAt: second });
     expect(await publisher.sync()).toEqual({ ok: false, error: "The list was just sent. Try again in 10 seconds." });
 
-    // The follower's sync brings the new status, with the notice the publisher got.
+    // The follower's sync brings the new status, with the notice the publisher's own app would have given.
     expect(await follower.sync()).toEqual({ ok: true, value: null });
     const update = defined(followerHost.updates.at(-1), "an update");
     expect(
@@ -579,7 +579,7 @@ describe("sharing snapshot consistency", () => {
 
     if (other._tag !== "ok") throw other.error;
     observe(store, other.value, "In Process");
-    // Restore a known synthetic sharing key through the normal startup path.
+    // Saved keys that start() picks up as on a normal launch; the content key is the one CapturingService opens with.
     store.setText("share_write_key", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE");
     store.setText("share_content_key", "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk");
     const service = new CapturingService(new URL("http://localhost"));
@@ -588,7 +588,7 @@ describe("sharing snapshot consistency", () => {
     try {
       await sharing.start();
       const publishing = sharing.sync();
-      // syncNow first yields to its prior attempt, then captures the store revision and yields its first read.
+      // sync() awaits any prior attempt, records the store's change count, then yields before its first history read.
 
       const edited = new Promise<void>((resolve) => {
         queueMicrotask(() =>

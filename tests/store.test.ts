@@ -27,7 +27,7 @@ function newestDirectory(): string {
   return defined(directories.at(-1), "a store created by newStore");
 }
 
-/** Adds a permit that the test expects to be new, returning its id. */
+/** Adds a permit the test expects to be new and returns its id; throws if the store refuses it. */
 function addPermit(store: PermitStore, permitNumber: string, jurisdictionId?: JurisdictionId): string {
   const added = store.addPermit(permitNumber, jurisdictionId);
 

@@ -24,7 +24,7 @@ const offeredCriteriaSchema = z.object({
   questions: z.object({ next: z.object({ criteria: z.record(z.string(), z.string()) }) }),
 });
 
-/** What the service saw: the criteria of each request it received. */
+/** The labels offered in each request the service received, in order. */
 interface ServiceLog {
   offered: string[][];
 }
@@ -220,8 +220,8 @@ describe("Jev navigation requests", () => {
     expect(log.offered).toHaveLength(1);
   });
 
-  // The server asks for the longest wait the app honors (5 s), so a wait the signal couldn't end would outlast the
-  // test's 5 s budget before the second request failed it.
+  // The server asks for 5 s, the longest wait the app honors. If the signal couldn't end that wait, the test would hit
+  // its timeout or reach the unscripted second request.
   it("reports cancellation during the wait before retrying a rate-limited request", async () => {
     const controller = new AbortController();
 

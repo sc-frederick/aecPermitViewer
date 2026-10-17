@@ -41,7 +41,10 @@ export function parseCheckTime(value: string): CheckTime | null {
   return match ? { hour: Number(match[1]), minute: Number(match[2]) } : null;
 }
 
-/** Parses, de-duplicates, and sorts "HH:MM" strings. Returns null unless 1–MAX valid times remain. */
+/**
+ * Parses, de-duplicates, and sorts "HH:MM" strings. Returns null if any is invalid or the result isn't 1 to
+ * MAX_CHECK_TIMES times.
+ */
 export function normalizeCheckTimes(values: readonly string[]): CheckTimes | null {
   const formatted = new Set<string>();
 
@@ -63,7 +66,7 @@ function at(day: Date, time: CheckTime): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), time.hour, time.minute, 0, 0);
 }
 
-/** When a day's check window closes: half an hour after its last slot, which is past midnight for a slot after 11:30 PM. */
+/** When a day's check window closes: half an hour after its last slot, past midnight for a slot after 11:30 PM. */
 function windowEnd(day: Date, times: CheckTimes): Date {
   return new Date(at(day, times[times.length - 1] ?? times[0]).getTime() + WINDOW_GRACE_MINUTES * 60_000);
 }

@@ -66,7 +66,7 @@ function uploadCall(env: FeedEnv, path: string, method: string, body?: BodyInit)
   return call(env, `/upload/${path}`, init);
 }
 
-/** Uploads `installer` through the manual multipart protocol in parts of `partBytes`, as publish-update.mjs does. */
+/** Uploads `installer` through the manual multipart protocol in parts of `partBytes`, as scripts/publish-update.mjs does. */
 async function uploadInstaller(env: FeedEnv, version: string, installer: string, partBytes = 4): Promise<Response> {
   const key = `PermitMonitorSetup-${version}.exe`;
   const claim = { sha256: sha256(installer), size: Buffer.byteLength(installer) };
@@ -445,7 +445,7 @@ describe("manual installer upload", () => {
     const { bucket, env } = feed();
     const key = "PermitMonitorSetup-0.8.0.exe";
     const late = { sha256: sha256("second"), size: 6 };
-    // Both uploads start while the key is empty; the first one completes before the second.
+    // Both uploads start while the key is empty; the one started second completes first.
     const started = await (await uploadCall(env, key, "POST", JSON.stringify(late))).json();
 
     const part = await (
@@ -741,7 +741,7 @@ describe("manual manifest upload", () => {
       },
     });
 
-    // Node's fetch requires `duplex` for a streamed request body; the DOM typings don't declare it yet.
+    // Node's fetch requires `duplex` for a streamed request body; the DOM typings don't declare it.
     const init: RequestInit & { duplex: "half" } = {
       method: "PUT",
       headers: { authorization: `Bearer ${TOKEN}` },

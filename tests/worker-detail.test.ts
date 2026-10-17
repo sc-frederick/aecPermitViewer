@@ -7,8 +7,8 @@ import { parseDisplayedStatus } from "../src/shared/permit.js";
 import type { DisplayedRecord } from "../src/worker/adapter.js";
 import { readDetail, tylerFoundNothing, waitForLanding, waitForTylerResults } from "../src/worker/detail.js";
 
-// Recorded Hernando pages, served at the portal's own address in the bundled Chromium, so the worker's reading code
-// sees the markup it sees live.
+// Recorded Hernando pages are served at the portal's own address in the bundled Chromium, so the worker reads the same
+// markup it reads live.
 const BASE = "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod";
 
 const PERMIT_URL = `${BASE}#/permit/f3a325c7-9779-4de4-9b08-3a6aff019939`;
@@ -54,7 +54,7 @@ interface WatchedWait {
   done: () => boolean;
 }
 
-/** Runs `wait` and reports whether it has finished, so a test can show a wait holds until the page is ready. */
+/** Tracks whether `wait` has settled, so a test can show the wait holds until the page is ready. */
 function watch(wait: Promise<void>): WatchedWait {
   let done = false;
 
@@ -66,7 +66,7 @@ function watch(wait: Promise<void>): WatchedWait {
   };
 }
 
-/** Main's verification of what the worker read, given the fields the worker requires before it reports a record. */
+/** Runs the main process's verification on a worker read; throws if a field the worker requires is missing. */
 function verify(record: DisplayedRecord, requestedNumber: string): ReturnType<typeof parseDisplayedStatus> {
   const { displayedNumber, statusLabel, statusValue, recordUrl } = record;
 
@@ -166,7 +166,7 @@ describe("Hernando record pages", () => {
   });
 
   // The record page has no search controls, so a wait on them would hold the landing for its full 12 seconds, past
-  // this test's 5-second budget. Nothing else here depends on speed.
+  // the 5-second test timeout on Linux and macOS. Nothing else here depends on speed.
   it("lands on a saved record link once the record renders, without waiting on search controls", async () => {
     if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, renderedLater(fixture("plan-detail.html")));
@@ -203,7 +203,7 @@ describe("Hernando search", () => {
   });
 
   // The count label is hidden until the search finishes, next to labels that stay hidden. A wait that picked a hidden
-  // label would hold for its full 12 seconds, past this test's 5-second budget.
+  // label would hold for its full 12 seconds, past the 5-second test timeout on Linux and macOS.
   it("settles on the result message once it shows, and tells a finished empty search apart", async () => {
     const pending = fixture("search-one-result.html").replace(
       'aria-hidden="false" class=""',

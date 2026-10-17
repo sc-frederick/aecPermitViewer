@@ -279,6 +279,7 @@ describe("running a check", () => {
 
     expect((await active.result).outcome).toBe("cancelled");
     await active.closed;
+    // Outlast the runner's 800 ms settle delay so a reobserve that leaked past cancel would arrive.
     await new Promise((resolve) => setTimeout(resolve, 850));
     expect(messages).toEqual(["start", "choose"]);
   });

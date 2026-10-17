@@ -18,14 +18,14 @@ interface TestBridge {
   checkTimeCalls: string[][];
   /** Each setting the renderer asked main to change, in order. */
   preferenceCalls: Array<[string, boolean]>;
-  /** Reasons of promise rejections nothing in the page handled. */
+  /** Reasons for promise rejections that nothing in the page handled. */
   unhandled: string[];
   push(next: AppSnapshot): void;
   /** Delivers a foreground notice from main. */
   appEvent(event: AppEvent): void;
   /** Delivers the permit selected from a native notification. */
   openDetails(permitId: string): void;
-  /** Answers the renderer's first direct snapshot request, when the page was opened with it held. */
+  /** Answers the renderer's first snapshot request when `open` was called with `holdFirstSnapshot`. */
   answerSnapshot(): void;
   /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string, nextBefore?: string, startedAt?: string): void;

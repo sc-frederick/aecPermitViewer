@@ -3,10 +3,13 @@ import path from "node:path";
 import { DesktopNotificationFailed, type DesktopDelivery } from "./notification-delivery.js";
 import { installedApp, updateExePath } from "./squirrel.js";
 
-// Squirrel.Windows registers shortcuts under com.squirrel.<maker name>.<executable name>.
-// Windows only delivers toast notifications for an app whose ID matches its Start menu shortcut.
+/**
+ * The ID Squirrel.Windows gives the Start menu shortcut: com.squirrel.<maker name>.<executable name>. Windows only
+ * delivers toast notifications for an app whose ID matches its Start menu shortcut.
+ */
 export const APP_USER_MODEL_ID = "com.squirrel.PermitMonitor.PermitMonitor";
 
+/** Starts the app with its window hidden when a tray or menu bar icon is available. The login item passes it. */
 export const HIDDEN_LAUNCH_ARG = "--hidden";
 
 /** Windows and macOS: the platforms with a tray or menu bar icon and desktop notifications. */
@@ -34,6 +37,7 @@ export interface TrayState {
   checkTimes: string;
 }
 
+/** The tray or menu bar icon and desktop notifications that let the app keep running with its window closed. */
 export class Background {
   private tray: Tray | null = null;
   private attention = false;
@@ -45,7 +49,10 @@ export class Background {
     private readonly hooks: BackgroundHooks,
   ) {}
 
-  /** Windows gets a tray icon and macOS a menu bar icon; other platforms keep ordinary close-to-quit behavior. */
+  /**
+   * Creates the tray icon on Windows or the menu bar icon on macOS. Returns false on other platforms, which keep
+   * ordinary close-to-quit behavior, or when the icon can't be created.
+   */
   start(): boolean {
     if (!desktopPlatform()) return false;
 
@@ -108,7 +115,11 @@ export class Background {
     );
   }
 
-  /** Resolve only when Electron reports display or failure, so callers can keep an undelivered notice visible in-app. */
+  /**
+   * Shows a desktop notification. Resolves `shown` once Electron reports it displayed, or `failed` when it is
+   * unsupported, fails, or isn't shown within 10 seconds, so the caller can show the notice in the app instead. Never
+   * rejects.
+   */
   notify(input: { title: string; body: string; permitId?: string }): Promise<DesktopDelivery> {
     return new Promise((resolve) => {
       const fail = (code: DesktopNotificationFailed["code"]) =>

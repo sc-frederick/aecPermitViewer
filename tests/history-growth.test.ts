@@ -6,8 +6,9 @@ import { describe, expect, it } from "vitest";
 import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js";
 import { PermitStore } from "../src/main/store.js";
 
-// Run with npm run benchmark:history. Fixtures model 75 permits, three daily checks and 20 reviews per check.
-// The two-minute timeout includes seeding 246,375 observations on Windows; publication still has a 100 ms turn budget.
+// CI runs this alone with `npm run benchmark:history`. The fixture models 75 permits with three daily checks and
+// 20 reviews per check. The two-minute timeout covers seeding 246,375 observations on Windows; publication must still
+// keep every event-loop turn under 100 ms.
 describe("history growth benchmark", () => {
   it("materializes only the retained daily window as discarded history grows", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "permit-history-growth-"));

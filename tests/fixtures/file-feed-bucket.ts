@@ -7,14 +7,17 @@ import { MemoryBucket } from "./memory-bucket.js";
 
 const metadataSchema = z.object({ contentType: z.string(), metadata: z.object({ sha256: z.string().optional() }) });
 
-/** Public objects shared between the real Worker and the fake S3 CLI; multipart staging remains in memory. */
+/**
+ * Feed bucket whose public objects are files shared by the real Worker and the fake S3 CLI. Multipart staging under
+ * `_uploads/` stays in memory.
+ */
 export class FileFeedBucket extends MemoryBucket {
   /** Uses the fake CLI's bucket directory as shared public storage. */
   constructor(private readonly directory: string) {
     super();
   }
 
-  /** Reads public object metadata or delegates private staging metadata to the multipart bucket. */
+  /** Reads public metadata from disk; staging keys go to the in-memory bucket. */
   override async head(key: string): Promise<FeedObject | null> {
     if (key.startsWith("_uploads/")) return super.head(key);
     const file = path.join(this.directory, key);
@@ -46,7 +49,10 @@ export class FileFeedBucket extends MemoryBucket {
     return { ...object, body: new Blob([selected]).stream(), text: async () => selected.toString("utf8") };
   }
 
-  /** Applies exclusive create at commit so CLI and Worker writes cannot overwrite one another. */
+  /**
+   * Writes a public object to disk, returning null when an etag or `If-None-Match: *` precondition fails. Exclusive
+   * create keeps CLI and Worker writes from overwriting each other.
+   */
   override async put(
     key: string,
     value: string | ReadableStream<Uint8Array>,

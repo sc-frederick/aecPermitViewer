@@ -1,6 +1,6 @@
 import type { AppSnapshot, PermitHistory } from "./permit.js";
 
-/** The settings the window can switch, listed here because the renderer checks them without bundling zod. */
+/** Preferences the window can toggle. Listed here so the renderer can validate them without bundling zod. */
 export const PREFERENCE_KEYS = [
   "notifyStatusChanges",
   "notifyFailures",
@@ -15,7 +15,7 @@ export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];
 export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * What key storage knows about the saved TypeSafe key without asking the service:
+ * What local key storage knows about the saved TypeSafe key, without asking the service:
  * - `configured`: a key is saved, and the last attempt to read it (if any) succeeded.
  * - `missing`: no key is saved.
  * - `unavailable`: this computer can't store a key.
@@ -24,9 +24,8 @@ export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: strin
 export type StoredKeyState = "configured" | "missing" | "unavailable" | "unreadable";
 
 /**
- * Whether checks can run for want of a key, as the window shows it. Adds `rejected` to the stored states: the service
- * turned the saved key down, so scheduled checks are paused until a key is saved. Every state but `configured` pauses
- * scheduled checks.
+ * The key state the window shows: the stored states plus `rejected`, meaning the service turned down the saved key.
+ * Every state but `configured` pauses scheduled checks.
  */
 export type KeyState = StoredKeyState | "rejected";
 
@@ -68,7 +67,7 @@ export interface PermitBridge {
   openPortal(permitId: string): Promise<BridgeResult<null>>;
   /** Hand-checked permits: saves the status the user read, with an optional record link. */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string }): Promise<BridgeResult<null>>;
-  /** Reads one daily page; the reply provides the cursor for older entries. */
+  /** Reads one page of daily history; the reply's `nextBefore` is the cursor for older entries. */
   history(permitId: string, before?: string): Promise<BridgeResult<PermitHistory>>;
   /** Sends the key to main once for encryption; it is never returned to the window. */
   saveKey(key: string): Promise<BridgeResult<null>>;
@@ -89,7 +88,7 @@ export interface PermitBridge {
   /** macOS: opens the page with the newest Mac download in the browser. */
   openUpdateDownload(): Promise<BridgeResult<null>>;
   deleteLocalData(confirmation: string): Promise<BridgeResult<null>>;
-  /** Starts sharing this app's list and returns the code others follow it with. */
+  /** Starts sharing this app's list. The share code arrives in the next snapshot's `share` state. */
   startSharing(): Promise<BridgeResult<null>>;
   /** Stops sharing and deletes the shared copy, so the code stops working. */
   stopSharing(): Promise<BridgeResult<null>>;

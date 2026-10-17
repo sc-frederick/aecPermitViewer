@@ -77,7 +77,7 @@ async function headInstaller(key) {
   };
 }
 
-/** Hashes a stored object by streaming it through the CLI. Only needed for installers stored before hashes were recorded. */
+/** Hashes a stored object by streaming it through the CLI. Needed only for older installers with no recorded hash. */
 async function hashStored(key) {
   const hash = createHash("sha256");
 
@@ -156,8 +156,8 @@ async function publishOnce(file, key, contentType, claim) {
     return;
   }
 
-  // The storage condition applies when bytes commit, across both S3 and Worker publishers. R2's S3 API
-  // supports Content-MD5 for integrity; its Workers binding also verifies the claimed SHA-256.
+  // R2 checks `--if-none-match` when the bytes commit, so it also holds against a concurrent Worker upload. The S3
+  // API verifies integrity through Content-MD5; the Workers binding verifies the claimed SHA-256 as well.
   const md5 = createHash("md5");
   const sha256 = createHash("sha256");
 

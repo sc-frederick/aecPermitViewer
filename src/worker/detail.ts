@@ -139,7 +139,7 @@ export async function readDetail(
   return record;
 }
 
-/** Tyler renders a record after load, so this waits until its number and status hold text. Other families load ready. */
+/** Waits for a Tyler record's number and status to hold text; Tyler renders after load. Other families load ready. */
 export async function waitForDetail(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const fields = profile.portalFamily === "tyler-civic-access" ? detailFields(profile, page.url()) : null;
 
@@ -175,14 +175,14 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
 }
 
 /**
- * Waits for the page a run just opened, its start page or a saved record link, to be ready to observe. A record page
- * waits for its number and status (see `waitForDetail`), and a Tyler search page for its keyword field. A record page
- * has no search controls, so it never waits on them. Other families' start pages are the worker's to wait on.
+ * Waits for the page a run just opened (its start page or a saved record link) to be ready to observe: a record page
+ * for its number and status (see `waitForDetail`), a Tyler search page for its keyword field. The worker waits on
+ * other families' start pages itself.
  */
 export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const url = page.url();
 
-  // The worker's own order: an address the portal uses for its search is a search page even if it could show a record.
+  // Same precedence as the worker: a search address is a search page even if it could also show a record.
   if (parsePortalUrl(url, "search", profile.id)) {
     if (profile.portalFamily === "tyler-civic-access") await waitForTylerSearch(page);
 

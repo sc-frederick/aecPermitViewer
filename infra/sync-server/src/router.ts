@@ -7,7 +7,7 @@ import type { PublishResult, ReadResult } from "./room.js";
 
 /** A room as the router reaches it: a Durable Object stub in production, a ShareRoom in tests. */
 export interface RoomApi {
-  /** Probes an existing legacy share without allocating persistent storage or reading ciphertext. */
+  /** True when the room holds ciphertext, without allocating storage or reading the body. Detects legacy rooms. */
   exists(): Promise<boolean>;
   publish(body: ArrayBuffer): Promise<PublishResult>;
   read(knownRevision: number | null): Promise<ReadResult>;
@@ -133,7 +133,10 @@ async function writerRoom(request: Request): Promise<string | null> {
   return token ? roomNameFor(token) : null;
 }
 
-/** CF-Connecting-IP is supplied by the edge. Missing/invalid addresses share one fail-closed bucket in local dev. */
+/**
+ * The hashed quota key for the caller: the IPv4 address or IPv6 /64 from CF-Connecting-IP, which the edge sets.
+ * Missing or invalid addresses, as in local dev, all share one bucket.
+ */
 async function sourceFor(request: Request): Promise<string> {
   const address = request.headers.get("cf-connecting-ip") ?? "";
   let source = "unknown-source";
@@ -192,8 +195,8 @@ async function publishList(request: Request, rooms: RoomDirectory, admission: Ad
     const source = await sourceFor(request);
     const checked = await admission.check(name, source);
 
-    // Request-rate and metadata limits reject before reaching even an empty room or reading the body. Creation-only
-    // limits allow a storage-free existence probe, so shares from before this admission policy still update at cap.
+    // Request-rate and metadata limits reject before touching a room or reading the body. Creation-only limits fall
+    // through to a storage-free existence probe, so a legacy room with no admission record still updates at capacity.
     if (checked._tag === "denied" && (checked.reason === "source_writes" || checked.reason === "tracked_sources"))
       return admissionResponse(checked);
     let legacy = false;

@@ -1,5 +1,5 @@
-// The actual manual publisher uses HTTPS URLs; this test-only loader routes that origin to the local
-// HTTP server running the actual Worker. Every other origin is refused, so tests cannot upload remotely.
+// Test-only loader that routes the manual publisher's HTTPS origin to the local HTTP server running the real
+// Worker. Any other origin throws, so a test cannot upload remotely.
 const originalFetch = globalThis.fetch;
 
 const localOrigin = process.env.FAKE_UPDATE_ORIGIN;

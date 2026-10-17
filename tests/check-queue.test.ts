@@ -18,7 +18,6 @@ interface Gate {
   open: () => void;
 }
 
-/** A gate that stays closed until the test opens it. */
 function gate(): Gate {
   let open: () => void = () => undefined;
 

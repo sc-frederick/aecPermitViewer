@@ -29,8 +29,8 @@ async function filesIn(directory, prefix = "") {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
 
-    // Tests may have produced this volatile Windows log. Keep it out of the
-    // staged distribution and manifest; all browser code is still hashed.
+    // Tests on Windows can leave Chromium's debug.log here. It changes between runs, so it is deleted rather than
+    // hashed; every other browser file is hashed.
     if (entry.isFile() && isBrowserDiagnosticFile(relative)) {
       await unlink(path.join(directory, entry.name));
 

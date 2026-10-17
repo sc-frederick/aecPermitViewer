@@ -8,8 +8,8 @@ await mkdir("dist", { recursive: true });
 
 await rm("dist/chunks", { recursive: true, force: true });
 
-// Tests and live checks can produce this regular Windows diagnostic. Remove
-// it from staging before Forge copies resources, without touching browser code.
+// Tests and live checks on Windows can leave Chromium's debug.log in the staged browser. Delete it before Forge
+// copies resources; the browser's own files are left alone.
 const stagedBrowser = "vendor/playwright-browsers";
 
 if (existsSync(stagedBrowser)) {

@@ -1,7 +1,7 @@
-// Keeps a shared list current on both ends without syncing more than the list changes. The publisher sends its list
-// once its checks have finished and the list has changed, so a scheduled run of checks goes out as one publication. A
-// follower asks for a newer copy a while after each of the publisher's check times, when that run should be done. Both
-// sides also sync on request. Neither ever throws into the app; problems become a short message for Settings.
+// Keeps a shared list current on both ends with as few syncs as its changes allow. The publisher sends once its checks
+// have finished and the list has changed, so a scheduled run goes out as one publication. A follower fetches a while
+// after each of the publisher's check times, when that run should be done. Both sides also sync on request. Neither
+// throws into the app; failures become a short message for Settings.
 import { z } from "zod";
 import { nextSlotAfter, type CheckTimes } from "../shared/schedule.js";
 import { parseSharedList, type SharedList } from "./share-list.js";
@@ -21,14 +21,17 @@ export const UNSCHEDULED_FOLLOW_MS = 3 * 3_600_000;
 
 type Report = (operation: string, cause: unknown) => void;
 
-/** When a follower next asks for a newer copy: FOLLOW_DELAY_MS after the publisher's next check time. */
+/**
+ * When a follower next fetches: FOLLOW_DELAY_MS after the earliest publisher check time whose fetch is still ahead, or
+ * UNSCHEDULED_FOLLOW_MS from now when there is no schedule.
+ */
 export function nextFetchAt(schedule: CheckTimes | null, now: Date): Date {
   if (!schedule) return new Date(now.getTime() + UNSCHEDULED_FOLLOW_MS);
 
   return new Date(nextSlotAfter(new Date(now.getTime() - FOLLOW_DELAY_MS), schedule).getTime() + FOLLOW_DELAY_MS);
 }
 
-/** What a sync someone asked for came to: null when it went through, or why it didn't. */
+/** Result of a requested sync: why it failed, as Settings shows it, or null. */
 export type SyncProblem = string | null;
 
 /** Sends one app's list when it has changed and its checks have finished. */
@@ -46,7 +49,7 @@ export class SharePublisher {
   /**
    * @param buildList - The list to publish, as JSON; called once per attempt.
    * @param checking - Whether checks are queued or running; a publication waits for them to finish.
-   * @param changed - `publishedAt` or `problem` changed.
+   * @param changed - Called when `publishedAt` or `problem` changes.
    */
   constructor(
     private readonly service: ShareService,
@@ -65,13 +68,16 @@ export class SharePublisher {
     this.schedule(PUBLISH_SETTLE_MS);
   }
 
-  /** Sends the list now, even when it hasn't changed, and says why that failed, if it did. Does nothing once stopped. */
+  /**
+   * Sends the list now, even if unchanged, after any publication under way. Resolves with the failure message or null;
+   * does nothing once stopped.
+   */
   async syncNow(): Promise<SyncProblem> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     await this.running;
 
-    // Stopping comes before deleting the shared copy, so a publication now would bring back a list being removed.
+    // Stopping sharing stops the publisher before deleting the shared copy; publishing here would bring it back.
     if (this.stopped) return null;
     const attempt = this.publish(true);
     this.running = attempt
@@ -180,7 +186,7 @@ export type CachedList = z.infer<typeof cachedListSchema>;
 export type Probe =
   { _tag: "ok"; cache: CachedList } | { _tag: "absent" } | { _tag: "undecryptable" } | { _tag: "unreadable" };
 
-/** Why a fetched list can't be shown, as Settings says it. */
+/** Settings text for each follow failure. */
 const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   absent: "The shared list was removed. Ask for a new code.",
   undecryptable: "This code no longer opens the shared list. Ask for a new code.",
@@ -235,8 +241,8 @@ export class ShareFollower {
   private stopped = false;
 
   /**
-   * @param cached - The list received earlier, shown until a fetch brings a newer one. A cache that no longer parses is
-   *   ignored.
+   * @param cached - The list received earlier, shown until a fetch brings a newer one. A cache that doesn't parse is
+   *   reported and ignored.
    * @param save - Keeps a newly received list for the next start.
    * @param updated - A newer list replaced `before` (null when none was shown).
    * @param changed - Anything the window shows about the list changed.
@@ -278,6 +284,7 @@ export class ShareFollower {
     this.planNext();
   }
 
+  /** Stops fetching. A fetch under way finishes, but its result is ignored. */
   async stop(): Promise<void> {
     this.stopped = true;
 

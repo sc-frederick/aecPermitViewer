@@ -245,7 +245,7 @@ export type AutomatedJurisdictionProfile = Exclude<JurisdictionProfile, { portal
 /** Stable identifier for a supported permit authority. */
 export type JurisdictionId = JurisdictionProfile["id"];
 
-/** Return the exact profile for a persisted or user-selected identifier. */
+/** The profile for a persisted or user-selected id, or null when no supported authority has it. */
 export function getJurisdiction(id: string): JurisdictionProfile | null {
   return JURISDICTIONS.find((profile) => profile.id === id) ?? null;
 }
@@ -274,7 +274,7 @@ export function isManualJurisdiction(id: string): boolean {
   return getJurisdiction(id)?.portalFamily === "manual";
 }
 
-/** The host serving record pages, when it differs from the search host. */
+/** The host serving record pages: the profile's `recordHost` when it has one, otherwise the search host. */
 export function recordHost(profile: JurisdictionProfile): string {
   return "recordHost" in profile ? profile.recordHost : new URL(profile.startUrl).host;
 }

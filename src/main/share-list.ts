@@ -1,5 +1,5 @@
-// The permit list as one app shares it with others: its permits with their latest statuses, and each permit's recent
-// daily history. The publisher builds it from its store; followers parse it at the boundary like any network input.
+// The shared-list wire format: each permit with its latest status and recent daily history. The publisher builds it
+// from its store; followers parse it as untrusted network input.
 import { z } from "zod";
 import { setImmediate } from "node:timers/promises";
 import { dailyHistory } from "../shared/history.js";
@@ -86,10 +86,10 @@ export interface SharedList {
 }
 
 /**
- * The runs and observations of the latest `days` days, as the details sheet's daily history would pick them. A history
- * entry shows only the review requests outstanding that day, so only those are kept; the full workflow on every day
- * would make up most of the list. An observation takes its run's id, which is unique because a run has at most one
- * observation: random ids don't compress, and a second one per day would otherwise be the list's largest part.
+ * The latest `days` days of history, picked as the details sheet's daily history picks them. Each observation keeps
+ * only its outstanding review requests, since that is all a history entry shows and the full workflow would dominate
+ * the list's size. Each observation also reuses its run's id (unique, since a run has at most one observation),
+ * because random ids don't compress.
  */
 function recentHistory(history: PermitHistory, days: number): PermitHistory {
   const picked = dailyHistory(history).slice(0, days);
@@ -110,11 +110,7 @@ function recentHistory(history: PermitHistory, days: number): PermitHistory {
   };
 }
 
-/**
- * The list to publish, as JSON, with the publisher's check times (null when it only checks on request). Live check
- * state isn't shared: a follower can't cancel a check, and a publisher that quits mid-check would leave it showing as
- * running.
- */
+/** Serializes the list to publish. `schedule` is the publisher's check times, or null if it only checks on request. */
 export function buildSharedList(
   permits: readonly PermitRow[],
   historyOf: (permitId: string) => PermitHistory,
@@ -149,7 +145,10 @@ export function parseSharedList(json: string): SharedList {
   return { schedule: list.schedule ? normalizeCheckTimes(list.schedule) : null, permits, histories };
 }
 
-/** One permit's public state and retained history, serialized together. */
+/**
+ * One permit's shared state and recent history. Live check state (`checking`, `nextDueAt`) is left out: a follower
+ * can't cancel a check, and a publisher that quits mid-check would leave it showing as running.
+ */
 function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof sharedListSchema>["permits"][number] {
   return {
     permit: {
@@ -169,7 +168,10 @@ function sharedEntry(permit: PermitRow, history: PermitHistory): z.input<typeof 
   };
 }
 
-/** Builds the same wire format while yielding between history reads and serialization, so their costs do not accumulate into a freeze. */
+/**
+ * Builds the same JSON as `buildSharedList`, yielding to the event loop before each history read and each entry's
+ * serialization so a long list doesn't block the main process.
+ */
 export async function buildSharedListAsync(
   permits: readonly PermitRow[],
   historyOf: (permitId: string) => PermitHistory,
@@ -182,8 +184,7 @@ export async function buildSharedListAsync(
 
     const history = historyOf(permit.id);
 
-    // A retained history read and its review-heavy JSON each fit the turn budget
-    // separately. Let pending UI/IPC work run before preparing the wire entry.
+    // A history read and its serialization each fit in one turn on their own; yield between them so pending IPC runs.
     await setImmediate();
     entries.push(JSON.stringify(sharedEntry(permit, history)));
   }

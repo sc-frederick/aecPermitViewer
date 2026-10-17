@@ -11,19 +11,16 @@ import { z } from "zod";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
 
-/** A confidence or probability, which the service reports from 0 to 1. Zod 4 numbers already refuse NaN and infinity. */
+/** A confidence or probability, from 0 to 1. Zod 4 numbers already reject NaN and infinity. */
 const unitIntervalSchema = z.number().min(0).max(1);
 
-/**
- * The reply around the answer. The SDK hands back the body as the service sent it, unchecked against the question, so
- * the model name and the answers are parsed here before anything reads them.
- */
+/** The reply envelope. The SDK returns the body unchecked, so the model name and answers are parsed before use. */
 const replySchema = z.object({
   model: z.string().min(1),
   answers: z.object({ next: z.unknown() }),
 });
 
-/** The model's answer as sent over the wire. Which labels it names is checked against the offered criteria afterwards. */
+/** A choice answer's shape. `readChoice` then checks its labels against the offered criteria. */
 const choiceAnswerSchema = z.object({
   type: z.literal("choice"),
   choice: z.string(),
@@ -34,8 +31,8 @@ const choiceAnswerSchema = z.object({
 type ChoiceAnswer = z.infer<typeof choiceAnswerSchema>;
 
 /**
- * How far the probabilities may sum from 1. The service documents them as the full distribution across every option,
- * summing to 1; this only absorbs per-label rounding across the at most 32 labels offered (30 candidates, WAIT, STOP).
+ * How far the probabilities may sum from 1. The service documents them as a full distribution over the offered labels;
+ * this absorbs per-label rounding across at most 32 labels (30 candidates, WAIT, STOP).
  */
 const PROBABILITY_SUM_TOLERANCE = 0.02;
 
@@ -129,10 +126,7 @@ function readChoice(
   return { _tag: "ok", choice: answer.choice, confidence: answer.confidence, margin: chosen - runnerUp };
 }
 
-/**
- * One client per check run, so a run's navigation calls share its connection settings. `fetch` replaces the global
- * fetch for the client's HTTP transport; production leaves it unset.
- */
+/** Creates the client for one check run's navigation calls. `fetch` overrides the global fetch; production omits it. */
 export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
   const config: TypeSafeClientConfig = {
     apiKey: key,
@@ -148,10 +142,10 @@ export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
 }
 
 /**
- * Asks Jev which offered step, if any, advances the lookup. Callers bound the candidate count. A rate-limited request
- * is tried at most twice within `remainingRequests` and `deadline`; any other failure ends the call. The reply is
- * parsed in full before the confidence and margin thresholds apply, so a reply that omits an offered label or reports
- * values outside 0 to 1 is `malformed_response`, never a chosen step.
+ * Asks Jev which offered step, if any, advances the lookup. Callers bound the candidate count. Makes at most two
+ * requests within `remainingRequests` and `deadline`, retrying only after a rate limit; any other failure ends the
+ * call. The reply is parsed in full before the confidence and margin thresholds apply, so a reply that omits an
+ * offered label or reports values outside 0 to 1 is `malformed_response`, never a chosen step.
  */
 export async function chooseNavigation(input: {
   client: TypeSafeClient;

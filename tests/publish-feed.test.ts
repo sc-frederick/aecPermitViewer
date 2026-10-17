@@ -56,13 +56,13 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     chmodSync(path.join(bin, "aws"), 0o755);
 
     return {
-      /** Builds a signed release in the job's output directory. */
+      /** Writes a signed installer, its manifest, and a placeholder Mac zip to the job's output directory. */
       build(version: string, installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
         writeFileSync(path.join(out, "release-manifest.json"), manifest(version, installer));
         writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), `mac ${version}`);
       },
-      /** Adds the zipped Mac app the macOS job builds. */
+      /** Replaces the Mac zip with the bytes the macOS job would build. */
       buildMac(zip: string): void {
         writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), zip);
       },
@@ -70,7 +70,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
       replaceInstaller(installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
       },
-      /** Stores an object as an earlier release (or an older publisher that recorded no hash) left it. */
+      /** Stores an object as an earlier release left it; omit `sha256` to model one stored without a recorded hash. */
       seed(key: string, body: string, metadata: { sha256?: string } = {}): void {
         writeFileSync(path.join(store, BUCKET, key), body);
         writeFileSync(

@@ -28,7 +28,7 @@ export interface SearchObservation {
   candidates: Candidate[];
 }
 
-/** A portal family whose search, results, and record are driven by its own module, for one requested number. */
+/** Drives one portal family's search, results, and record pages for a single requested number. */
 export interface PortalAdapter {
   observe(): Promise<SearchObservation>;
   /** True once the search for the requested number has finished without it. */

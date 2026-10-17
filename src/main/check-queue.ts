@@ -12,7 +12,7 @@ export interface StartedCheck {
   cancel: () => void;
 }
 
-/** What the queue needs from the rest of the app. Each is a narrow question or action about one permit. */
+/** What the queue needs from the rest of the app. */
 export interface CheckQueuePorts {
   /** The portal pacing scope a permit's checks share, such as the host several authorities sit behind; null when it can't be checked. */
   scopeOf: (permitId: string) => string | null;
@@ -23,7 +23,8 @@ export interface CheckQueuePorts {
   /**
    * Starts the browser check. `finished` rejects only when its result couldn't be saved. `stillWanted` answers whether
    * the check should still go ahead: false once it was cancelled, the queue stopped, or scheduled work stopped qualifying.
-   * Call it after any wait of your own and immediately before the run begins, and settle `finished` with null when false.
+   * The starter calls it after its own waits, immediately before the run begins, and settles `finished` with null when
+   * it returns false.
    */
   start: (permitId: string, key: string, stillWanted: () => boolean) => StartedCheck;
   /** A cancelled check that never started waits for the permit's next scheduled slot instead of being picked up again. */
@@ -255,7 +256,7 @@ export class CheckQueue {
         () => "unreadable" as const,
       );
 
-      // A replacement during a delayed read invalidates its answer, including missing/unreadable answers.
+      // A key saved during the read invalidates its answer, including a missing or unreadable one.
       while (generation !== this.keyGeneration && !this.stopped && !current.cancelled) {
         generation = this.keyGeneration;
         key = await this.ports.readKey().then(

@@ -12,12 +12,12 @@ function localDay(value: string): string {
 }
 
 /**
- * One entry per calendar day, newest first. Each day shows its latest status the portal
- * returned; a day with no successful read shows its latest check instead.
+ * One entry per calendar day, newest first. Each day shows its latest status the portal returned; a day with no
+ * successful read shows its latest check instead. Expects `history.runs` newest first, as the store returns them.
  */
 export function dailyHistory(history: PermitHistory, dayOf: (value: string) => string = localDay): HistoryDay[] {
   const days = new Map<string, HistoryDay>();
-  // Each run has at most one observation; index them once rather than searching per run.
+  // A run has at most one observation, so index observations by run id once.
   const observationByRun = new Map(history.observations.map((entry) => [entry.runId, entry]));
 
   for (const run of history.runs) {

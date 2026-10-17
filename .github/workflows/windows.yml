@@ -62,7 +62,7 @@ jobs:
       # Renderer and worker tests run in the staged browser.
       - run: npm run browser:stage
       - run: npm test -- --exclude tests/history-growth.test.ts
-      # Keep the 100 ms responsiveness budget without competing with parallel browser/SQLite test workers.
+      # Runs alone so its 100 ms responsiveness budget doesn't compete with parallel browser and SQLite test workers.
       - run: npm run benchmark:history
       - run: npm run make:win
       - name: Test packaged browser HTTPS path
@@ -99,7 +99,7 @@ jobs:
       # Renderer and worker tests run in the staged browser, which is the Mac headless shell here.
       - run: npm run browser:stage
       - run: npm test -- --exclude tests/history-growth.test.ts
-      # Run the timing benchmark alone; its latency limit and retained-history assertions remain unchanged.
+      # Runs alone so its responsiveness budget doesn't compete with parallel test workers.
       - run: npm run benchmark:history
       - run: npm run package:mac
       # Packaging edits Electron's Info.plist, which breaks the bundle's seal, and Gatekeeper calls an app with a broken
@@ -164,9 +164,9 @@ jobs:
             UPDATE_INSTALLER_URL="$UPDATE_SERVER_URL/PermitMonitorSetup-${GITHUB_REF_NAME#v}.exe" \
             node scripts/sign-release-manifest.mjs
           rm -f "$key_file"
-      # Cloudflare challenges GitHub runner IPs on the Worker hosts, so CI writes to R2's S3 endpoint
-      # directly. Installer first, manifest last. publish-feed.mjs never replaces a versioned installer with
-      # other bytes and only moves the manifest to a newer version (infra/update-server/src/release-policy.ts).
+      # Cloudflare challenges GitHub runner IPs on the Worker hosts, so CI writes to R2's S3 endpoint directly.
+      # Installer and Mac zip first, manifest last. publish-feed.mjs never replaces a versioned artifact with other
+      # bytes and only moves the manifest to a newer version (infra/update-server/src/release-policy.ts).
       - name: Publish to update feed
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

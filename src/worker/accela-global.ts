@@ -15,7 +15,7 @@ const NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
 
 const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 
-/** Global Search results with bounded page identity kept local to the worker's fingerprint. */
+/** Accela Global Search results. `pageIdentity` hashes the visible rows and pager for the worker's fingerprint only. */
 export interface AccelaGlobalResults {
   /** Offers only an exact record or the next results page; other row numbers never enter the model observation. */
   observe(): Promise<SearchObservation & { pageIdentity: string }>;

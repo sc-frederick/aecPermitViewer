@@ -47,7 +47,7 @@ function searchButton(page: Page): Locator {
   return page.locator("ng-reg-search button").filter({ hasText: /^\s*Search\s*$/ });
 }
 
-/** Result links whose displayed number exactly matches, by prefix, number, and sequence, with that number. */
+/** Visible result links whose number matches `requested` exactly (prefix, number, and sequence), with their text. */
 async function exactLinks(page: Page, requested: string): Promise<Array<{ link: Locator; text: string }>> {
   const links = page.locator(RESULT_LINK).filter({ visible: true });
   const texts = (await links.allInnerTexts()).map((text) => text.trim());
@@ -242,7 +242,7 @@ async function submitEpermitSearch(page: Page, requested: string): Promise<void>
     .waitFor({ state: "hidden", timeout: 20_000 })
     .catch(() => undefined);
 
-  // If the form cleared itself after the numbers went in, the same numbers go back in before searching.
+  // The form can clear itself after the numbers go in; if it did, enter them again before searching.
   if (!(await criteriaEntered(page, requested))) await fillEpermitSearch(page, requested);
 
   if (
@@ -254,7 +254,7 @@ async function submitEpermitSearch(page: Page, requested: string): Promise<void>
       ))
   )
     return;
-  // Results render after the search request returns, which St. Johns River's own search can take close to a minute to do.
+  // St. Johns River's search request can take close to a minute to return.
   await Promise.any([
     page.locator(RESULT_LINK).first().waitFor({ state: "visible", timeout: 90_000 }),
     page.getByText(NO_RESULTS, { exact: true }).waitFor({ state: "visible", timeout: 90_000 }),

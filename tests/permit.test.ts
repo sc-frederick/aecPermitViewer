@@ -135,7 +135,7 @@ describe("verified portal observation", () => {
       }),
     ).toMatchObject({ _tag: "ok" });
     expect(parsePortalUrl(detailUrl.replaceAll("Building", "Licenses"), "detail", HILLSBOROUGH_ID)).toBeNull();
-    // Tampa still searches only its Building module.
+    // Tampa searches only its Building module.
     expect(parsePortalUrl(landDevelopment.replaceAll("HCFL", "TAMPA"), "detail", "tampa-building")).toBeNull();
     expect(
       parsePortalUrl(

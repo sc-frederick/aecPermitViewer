@@ -40,7 +40,7 @@ const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
 
 const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 
-// Accela's Global Search box (Pasco replaces it with its own, injected after load) and the results page it opens.
+// Accela's Global Search box (Pasco injects its own after load) and the record links on its results page.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
 
 const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
@@ -122,7 +122,7 @@ function portalAdapter(): PortalAdapter | null {
   }
 }
 
-/** Read the record's displayed number, status, and status label, and the record link to save. */
+/** Reads the record's displayed number, status, and status label, and the record link to save. */
 async function readRecord(): Promise<DisplayedRecord> {
   const adapter = portalAdapter();
 
@@ -350,7 +350,7 @@ async function observe(): Promise<Observed> {
     }
   }
 
-  // Only the start of the page is needed, so it is cut down before it leaves the browser.
+  // Only the start of the page is checked, so it is truncated before it leaves the browser.
   const challengeText = await page.evaluate(() => document.body?.innerText.slice(0, 3000) ?? "").catch(() => "");
 
   if (/captcha|verify you are human|are you a human|access denied|sign in|log in to continue/i.test(challengeText)) {

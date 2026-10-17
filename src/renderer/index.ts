@@ -76,25 +76,25 @@ let historyGeneration = 0;
 
 let loadedHistory: PermitHistory | null = null;
 
-/** The check state the displayed history reflects, so snapshots about other permits don't refetch it. */
+/** `historyKey` of the history on screen, so snapshots that don't change it skip the refetch. */
 let historyShown: string | null = null;
 
-/** The check state a history request is under way for, so snapshots that arrive meanwhile don't request it again. */
+/** `historyKey` of the request in flight, so snapshots arriving meanwhile don't send a duplicate. */
 let historyLoading: string | null = null;
 
-/** The check state whose history read failed, so snapshots about other permits leave the failure and its retry shown. */
+/** `historyKey` whose read failed, so snapshots that don't change it leave the failure and its retry on screen. */
 let historyFailed: string | null = null;
 
 let noticeTimer: number | null = null;
 
 let filter: Filter = "all";
 
-/** The permits in the last snapshot, so a row for any other permit is marked as new. */
+/** Permit ids in the last rendered snapshot; a row for any other id animates in as new. */
 let knownPermitIds: ReadonlySet<string> = new Set();
 
 let firstRender = true;
 
-/** The page element with this id, checked to be the kind the code expects. */
+/** Looks up an element by id; throws if it is missing or not an instance of `type`. */
 function element(id: string): HTMLElement;
 
 function element<T extends Element>(id: string, type: new () => T): T;
@@ -143,14 +143,14 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "nu
 
 const dateFormatWithYear = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
-/** "Sep 24, 12:17 PM", adding the year only for earlier years. */
+/** "Sep 24, 12:17 PM", with the year added when it isn't the current one. */
 function stamp(value: string): string {
   const date = new Date(value);
 
   return (date.getFullYear() === new Date().getFullYear() ? stampFormat : stampFormatWithYear).format(date);
 }
 
-/** "Sep 24", adding the year only for earlier years. */
+/** "Sep 24", with the year added when it isn't the current one. */
 function dateOnly(value: string): string {
   const date = new Date(value);
 
@@ -202,9 +202,9 @@ function icon(name: string, className = "icon"): SVGSVGElement {
 }
 
 /**
- * Keeps the notice inside the dialog in front, if one is open. A modal dialog paints over the rest of the page and
- * makes it inert, so a notice left outside could be neither seen nor announced. The small dialogs only ever open over
- * a sheet, never under one, so an open one is the one in front.
+ * Moves the notice into the frontmost open modal dialog, or back to the body. A modal dialog covers the page and makes
+ * it inert, so a notice outside it could be neither seen nor announced. Confirm dialogs only open over a sheet, never
+ * under one, so an open confirm dialog is always in front.
  */
 function placeNotice(): void {
   const node = element("notice", HTMLDivElement);
@@ -297,7 +297,7 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   return wrap;
 }
 
-/** Who the verified status waits on, as a small badge; an unclassified status shows a dash. AEC? marks a guess. */
+/** Badge for who the verified status waits on, or a dash when unclassified. Tentative (AEC?) badges are marked. */
 function actionBadge(classified: StatusAction | null): HTMLElement {
   if (!classified) return make("span", "muted", "—");
   const badge = make("span", "action");
@@ -378,16 +378,16 @@ interface PermitRowView {
   attempt: HTMLTableCellElement;
   check: HTMLButtonElement;
   record: HTMLButtonElement;
-  /** What the row was last drawn from; an unchanged permit is skipped. */
+  /** Serialized inputs of the last draw; `updateRow` skips the row while they match. */
   source: string;
 }
 
 const rowViews = new Map<string, PermitRowView>();
 
-/** One tbody per project group (or one for the ungrouped list), kept like the rows. */
+/** One tbody per project group, or one for the ungrouped list, kept across renders like `rowViews`. */
 const groupBodies = new Map<string, HTMLTableSectionElement>();
 
-/** Replaces a cell's content only when what it shows has changed. */
+/** Rebuilds a cell's content only when `source` differs from the one it was last built from. */
 function setCell(cell: HTMLElement, source: string, build: () => Node[]): void {
   if (cell.dataset.source === source) return;
   cell.dataset.source = source;
@@ -427,7 +427,7 @@ function updateRow(
   classified: StatusAction | null,
   monitoring: AppSnapshot["monitoring"],
 ): void {
-  // The year matters because timestamps only show a year when it isn't the current one.
+  // The year is part of the key because timestamps show a year only when it isn't the current one.
   const year = new Date().getFullYear();
   const source = JSON.stringify([permit, monitoring, year]);
 
@@ -586,7 +586,7 @@ function renderTable(
   }
 }
 
-/** AEC action includes the cautious AEC? badges, so nothing marked to be safe drops out of it. */
+/** The AEC action filter includes tentative AEC? classifications, so nothing flagged out of caution is hidden. */
 function matchesFilter(permit: PermitRow, which: Filter, classified: StatusAction | null): boolean {
   if (which === "applicant") return classified?.action === "applicant";
 
@@ -631,7 +631,10 @@ function keyStateCopy(state: Exclude<KeyState, "configured">): KeyStateCopy {
   }
 }
 
-/** The key banner stays up for as long as checks are held back for want of a key, whatever the notification settings. */
+/**
+ * Shows the key banner whenever a key problem holds checks back, regardless of notification settings, and updates the
+ * key form in Settings to match.
+ */
 function renderKey(state: KeyState): void {
   const copy = state === "configured" ? null : keyStateCopy(state);
   element("key-banner").hidden = copy === null;
@@ -712,7 +715,7 @@ function renderCheckTimeRows(times: readonly string[]): void {
   markIncompleteCheckTime(null);
 }
 
-/** Numbers the rows, keeps the last one from being removed, and allows adding up to the limit. */
+/** Labels the rows by position, disables Remove on a lone row, and disables Add at `MAX_CHECK_TIMES`. */
 function syncCheckTimeRows(): void {
   const rows = [...element("check-time-list", HTMLUListElement).querySelectorAll("li")];
 
@@ -741,7 +744,7 @@ function editedCheckTimes(): string[] {
   return [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].map((input) => input.value);
 }
 
-/** The first row without a full time. It has to be filled in or removed before the rows can be saved. */
+/** The first row without a full time; it must be filled in or removed before the rows can be saved. */
 function incompleteCheckTime(): HTMLInputElement | null {
   return (
     [...element("check-time-list", HTMLUListElement).querySelectorAll("input")].find((input) => !input.value) ?? null
@@ -774,8 +777,8 @@ async function saveCheckTimes(times: string[]): Promise<void> {
 }
 
 /**
- * Shows a snapshot from main unless one with a higher revision is already shown, since pushed snapshots and direct
- * replies can arrive out of order. Returns whether it was shown.
+ * Renders a snapshot from main unless one with the same or a higher revision is already shown, since pushed snapshots
+ * and direct replies can arrive out of order. Returns whether it rendered.
  */
 function applySnapshot(snapshot: AppSnapshot): boolean {
   if (currentSnapshot && snapshot.revision <= currentSnapshot.revision) return false;
@@ -784,7 +787,7 @@ function applySnapshot(snapshot: AppSnapshot): boolean {
   return true;
 }
 
-/** Settings' shared-list section: start sharing or follow, the code while sharing, or the followed list's state. */
+/** Settings' shared-list section: start and follow controls, the share code, or the followed list's state. */
 function renderShare(share: ShareState): void {
   const status = element("share-status");
   element("share-off").hidden = share.mode !== "off" || !share.available;
@@ -824,7 +827,7 @@ function renderShare(share: ShareState): void {
 
 let desktopShortcutAsked = false;
 
-/** The installer can't ask, so the first launch after installing does. Either answer is saved as the setting. */
+/** Asks on the first launch after installing, since the installer can't. Either answer is saved as the setting. */
 async function askDesktopShortcut(): Promise<void> {
   desktopShortcutAsked = true;
 
@@ -855,7 +858,7 @@ function render(snapshot: AppSnapshot): void {
   element("version").textContent = `Version ${snapshot.appVersion}`;
 
   const total = snapshot.permits.length;
-  // Each permit is classified once per render, for its badge, the AEC count, and the filter.
+  // Classify each permit once per render; the badge, the AEC count, and the filter all share the result.
   const classified = new Map(snapshot.permits.map((permit) => [permit.id, permitAction(permit)]));
   const failed = snapshot.permits.filter((permit) => matchesFilter(permit, "failed", null)).length;
   const unverified = snapshot.permits.filter((permit) => matchesFilter(permit, "unverified", null)).length;
@@ -1046,7 +1049,7 @@ function renderHistory(history: PermitHistory): void {
   }
 }
 
-/** Says the history read failed, which an empty list would misreport as a permit never checked, and offers to ask again. */
+/** Shows a failed history read with a retry button. An empty list would misreport the permit as never checked. */
 function renderHistoryFailure(message: string): void {
   const item = make("li", "timeline-error");
   const body = make("div");
@@ -1058,15 +1061,15 @@ function renderHistoryFailure(message: string): void {
   element("history-list", HTMLOListElement).replaceChildren(item);
 }
 
-/** A permit's history only changes when its latest attempt or verified status does. */
+/** Cache key for a permit's history, which changes only when its latest attempt or verified status does. */
 function historyKey(permit: PermitRow): string {
   return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
 }
 
 /**
- * Fetches and shows a permit's history unless a request for the same check state is already under way. A newer
- * request, a different permit, or a closed sheet makes an older answer stale, and it is dropped. A failed read is
- * shown in the history list with a retry, never as an empty history. Never rejects.
+ * Fetches and renders a permit's history, or the page older than `before`, unless a request for the same `historyKey`
+ * is in flight. A reply made stale by a newer request, a different permit, or a closed sheet is dropped. A failed first
+ * page shows in the list with a retry, never as an empty history; a failed older page shows as a notice. Never rejects.
  */
 async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   const key = historyKey(permit);
@@ -1075,7 +1078,7 @@ async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   const generation = ++historyGeneration;
   historyLoading = key;
 
-  // A rejected call never got an answer from main. It is shown like a failure main reported, so it can be retried.
+  // A rejected call got no answer from main; treat it like a reported failure so it can be retried.
   const result = await api
     .history(permit.id, before)
     .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: "The app didn't answer." }));
@@ -1120,7 +1123,7 @@ function openDetails(permitId: string): void {
 
   if (!sheet.open) sheet.showModal();
 
-  // Reopening the permit already shown keeps its history, or the request already on its way.
+  // Reopening the permit already shown keeps its history, or the request already in flight.
   if (switching || historyKey(permit) !== historyShown) {
     element("history-list", HTMLOListElement).replaceChildren();
     historyShown = null;
@@ -1269,7 +1272,7 @@ function askProjectNumber(permit: PermitRow): Promise<string | null> {
   const others = currentSnapshot?.permits.filter((entry) => entry.id !== permit.id) ?? [];
   const recent = recentProjects(others, 5);
   const input = element("project-input", HTMLInputElement);
-  // Permits tend to arrive a project at a time, so offer the last one used, selected so typing replaces it.
+  // Permits tend to arrive a project at a time, so prefill the last one used, selected so typing replaces it.
   input.value = recent[0] ?? "";
   element("project-recent").hidden = recent.length < 2;
   element("project-recent-list", HTMLUListElement).replaceChildren(
@@ -1489,14 +1492,14 @@ checkTimeList.addEventListener("click", (event) => {
   const row = eventButton(event, "button[data-remove-time]")?.closest("li");
 
   if (!row || checkTimeList.children.length === 1) return;
-  // The rows kept are found by leaving out the clicked row itself, so a cleared row can't shift which time goes.
+  // Exclude the clicked row by identity, not by value, so a cleared row can't change which time is removed.
   const kept = [...checkTimeList.querySelectorAll("input")].filter((input) => !row.contains(input));
   const incomplete = kept.find((input) => !input.value);
 
-  // Focus moves before the row goes: removing the focused button would count as leaving the list, which puts the
-  // saved times back.
+  // Move focus before removing the row: removing the focused button counts as leaving the list, which restores the
+  // saved times.
   if (incomplete) {
-    // Nothing is saved until the cleared row holds a time. Focus stays in the list, which keeps the edit in place.
+    // Nothing saves until the cleared row holds a time. Keeping focus in the list keeps the edit on screen.
     incomplete.focus();
     row.remove();
     syncCheckTimeRows();
@@ -1506,7 +1509,7 @@ checkTimeList.addEventListener("click", (event) => {
   }
 
   const times = kept.map((input) => input.value);
-  // Focus leaves the list so the refreshed list can replace it.
+  // Move focus out of the list so the next snapshot can redraw it.
   element("add-check-time", HTMLButtonElement).focus();
   void saveCheckTimes(times);
 });
@@ -1525,7 +1528,7 @@ element("add-check-time", HTMLButtonElement).addEventListener("click", () => {
   const taken = new Set(times);
   const last = parseCheckTime(times[times.length - 1] ?? "") ?? { hour: 8, minute: 0 };
 
-  // Suggest an hour after the latest time, wrapping to the first free hour of the day.
+  // Add the first free slot in whole-hour steps after the last row's time, wrapping past midnight.
   for (let step = 1; step <= 24; step += 1) {
     const candidate = formatCheckTime({ hour: (last.hour + step) % 24, minute: last.minute });
 
@@ -1607,7 +1610,7 @@ detailsProject.addEventListener("keydown", (event) => {
   if (event.key === "Enter") detailsProject.blur();
 });
 
-// Saves when the field is committed (Enter or leaving it), like the other details settings.
+// Saves on commit (Enter or blur), like the other details settings.
 detailsProject.addEventListener("change", async () => {
   const permitId = detailsPermitId;
   const permit = currentSnapshot?.permits.find((entry) => entry.id === permitId);
@@ -1686,8 +1689,8 @@ element("history-list", HTMLOListElement).addEventListener("click", async (event
   if (!result.ok) notice(result.error);
 });
 
-// Dialogs close on Escape, backdrop click, and their own buttons. State is reset here rather
-// than in a "close" listener so it never depends on that event being delivered.
+// Sheets close on Escape, a backdrop click, or their close button. State resets in closeSheet
+// rather than in a "close" listener so it doesn't depend on that event being delivered.
 for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet")) {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) closeSheet(dialog);

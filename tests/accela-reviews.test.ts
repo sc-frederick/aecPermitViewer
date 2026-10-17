@@ -13,8 +13,8 @@ import { workerToMainSchema } from "../src/shared/worker-protocol.js";
 import { readDetail } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
 
-// Captured from the reported live permit on September 28, 2026. Only record fields and the workflow table remain;
-// comments, scripts, links, and images were removed. Nested/collapsed rows and status fields retain Accela's markup.
+// Captured from a live Hillsborough permit on September 28, 2026, keeping only the record fields and workflow table.
+// Comments, scripts, links, and images are stripped; nested and collapsed rows and status fields keep Accela's markup.
 const html = readFileSync("tests/fixtures/hillsborough/processing-status.html", "utf8");
 
 const number = "HC-SITECON-26-0000004";

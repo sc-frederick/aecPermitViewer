@@ -10,7 +10,7 @@ const browserManifestSchema = z.object({
   files: z.array(z.object({ path: z.string(), sha256: z.string() })),
 });
 
-/** Files hashed at once; overlapping reads keeps the disk busy while earlier chunks are hashed. */
+/** Files hashed concurrently, so disk reads overlap hashing. */
 const CONCURRENCY = 4;
 
 const READ_CHUNK_BYTES = 1024 * 1024;
@@ -22,8 +22,7 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
 
-    // Only the known regular log file is mutable. Symlinks, directories and
-    // every code/payload file continue through the existing integrity checks.
+    // Skip Chromium's runtime debug.log only as a regular file; anything else at that path is still checked.
     if (entry.isFile() && isBrowserDiagnosticFile(relative)) continue;
 
     if (entry.isDirectory()) files.push(...(await filesIn(path.join(directory, entry.name), relative)));
@@ -35,13 +34,12 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
 }
 
 /**
- * Check a staged browser directory against its packaged `sha256-manifest.json` before the browser is launched.
+ * Checks a staged browser directory against its packaged `sha256-manifest.json` before launch. Chromium's Windows
+ * debug.log is runtime data and isn't checked.
  *
  * @param directory - The browser payload directory, which holds the manifest.
- * @throws Error when the manifest is malformed, the directory holds a file (or entry) the manifest does not list or
- *   lacks one it does, or any file's SHA-256 differs. Chromium's known Windows
- *   diagnostic log is runtime data; it is excluded from the payload file list.
- *   The payload is treated as tampered and must not be launched.
+ * @throws Error when the manifest is malformed, the file list differs from the manifest's, an entry is neither a file
+ *   nor a directory, or any file's SHA-256 differs. The payload is then treated as tampered and must not be launched.
  */
 export async function verifyBrowserPayload(directory: string): Promise<void> {
   const parsed = browserManifestSchema.safeParse(

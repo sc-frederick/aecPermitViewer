@@ -44,7 +44,7 @@ export interface PermitRow {
   projectNumber: string | null;
   monitoringEnabled: boolean;
   lastStatus: string | null;
-  /** Workflow history from the latest successful check; null before review tracking or on other portal families. */
+  /** Workflow history from the latest successful check; null when none was read, as on non-Accela portals. */
   reviews: ReviewEntry[] | null;
   lastObservedAt: string | null;
   lastRecordUrl: string | null;
@@ -374,7 +374,10 @@ export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string
   return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${recordClass} ${number.toUpperCase()}`)}`;
 }
 
-/** Click2Gov removes leading zeros from the displayed application serial, and WMIS from its permit serials. */
+/**
+ * Whether the displayed number is the requested one under the jurisdiction's rules. Click2Gov drops leading zeros from
+ * the displayed application serial and WMIS from its permit serials; other portals compare parsed or exact forms.
+ */
 export function sameJurisdictionPermitNumber(
   requested: string,
   displayed: string,
@@ -399,7 +402,10 @@ export function sameJurisdictionPermitNumber(
   return Boolean(input && shown && input.year === shown.year && Number(input.serial) === Number(shown.serial));
 }
 
-/** Store the zero-padded, displayed, and (for SWFWMD ERP) prefixed forms of one number as one permit. */
+/**
+ * The key that makes equivalent forms of one number the same permit: zero-padded or not, and with or without an
+ * SWFWMD ERP or ePermit prefix.
+ */
 export function permitComparisonValue(number: string, jurisdictionId: JurisdictionId): string {
   const profile = getJurisdiction(jurisdictionId);
 
@@ -485,7 +491,7 @@ function wmisLinkMatches(recordUrl: URL, displayed: string, module: string): boo
   return shown.permit === value("permit");
 }
 
-/** Accept only pages on the chosen authority's public permit portal. */
+/** Parses `value` and returns it if it is the authority's public `page` over HTTPS without credentials, else null. */
 export function parsePortalUrl(value: string, page: "search" | "detail", jurisdictionId: JurisdictionId): URL | null {
   const profile = getJurisdiction(jurisdictionId);
 
@@ -661,8 +667,9 @@ export function statusLabels(profile: AutomatedJurisdictionProfile): readonly [s
 /**
  * Decide whether what the worker read from a record page can be saved as the permit's status. The displayed number
  * must match the requested one under the jurisdiction's comparison rules, the label must be one of its record-level
- * status labels (for SFWMD, the one for the record's kind), the status must be nonblank plain text, the record link
- * must be the portal's own detail link for this same record, and `observedAt` must be a canonical ISO timestamp.
+ * status labels (for SFWMD, the one for the record's kind), the status must be nonblank plain text, any reviews must
+ * parse, the record link must be the portal's own detail link for this same record, and `observedAt` must be a
+ * canonical ISO timestamp.
  *
  * @returns The observation to save, or the run outcome that explains why nothing was saved.
  */

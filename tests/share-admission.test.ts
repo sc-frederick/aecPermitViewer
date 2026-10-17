@@ -17,7 +17,7 @@ const servers: Server[] = [];
 
 const publishers: SharePublisher[] = [];
 
-/** A real HTTP boundary over the production router/admission policy and SQLite-backed room fixture. */
+/** Serves the production router and admission policy over real HTTP, backed by the SQLite room fixture. */
 async function serve(rooms: MemoryRooms, responses: number[]): Promise<ShareService> {
   const server = createServer((incoming, outgoing) => {
     void (async () => {
