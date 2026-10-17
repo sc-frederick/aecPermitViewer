@@ -13,6 +13,7 @@ import {
   toBase64Url,
 } from "../src/shared/share-protocol.js";
 import { MemoryRooms } from "./fixtures/memory-rooms.js";
+import { defined } from "./support/defined.js";
 
 const publishedSchema = z.object({ revision: z.number().int().positive(), publishedAt: z.string() });
 
@@ -57,6 +58,20 @@ function retainedRooms(rooms: MemoryRooms): number {
   return retained;
 }
 
+/** How many rows the admission coordinator keeps in `table`. */
+function admissionRows(rooms: MemoryRooms, table: "admitted_rooms" | "admission_sources"): number {
+  const [row] = rooms.admissionStorage.sql.exec(`SELECT count(*) AS count FROM ${table}`).toArray();
+
+  return z.object({ count: z.number() }).parse(row).count;
+}
+
+/** The room the write key made of 32 bytes of `fill` publishes to. */
+async function roomForKey(fill: number): Promise<string> {
+  const token = defined(await readTokenFor(toBase64Url(new Uint8Array(32).fill(fill))), "a read token");
+
+  return defined(await roomNameFor(token), "a room name");
+}
+
 function pendingPublication(key: number, source: string | null = "192.0.2.1"): Request {
   const headers = new Headers({ authorization: `Bearer ${toBase64Url(new Uint8Array(32).fill(key))}` });
 
@@ -66,11 +81,7 @@ function pendingPublication(key: number, source: string | null = "192.0.2.1"): R
 }
 
 async function readToken(): Promise<string> {
-  const token = await readTokenFor(WRITE_KEY);
-
-  if (!token) throw new Error("write key should be valid");
-
-  return token;
+  return defined(await readTokenFor(WRITE_KEY), "a read token for WRITE_KEY");
 }
 
 describe("share protocol", () => {
@@ -83,7 +94,7 @@ describe("share protocol", () => {
     expect(fromBase64Url(text, 15)).toBeNull();
     // The last character carries unused low bits; changing only those must not name the same bytes.
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    const lowBitFlipped = alphabet[alphabet.indexOf(text.slice(-1)) ^ 1] ?? "";
+    const lowBitFlipped = defined(alphabet[alphabet.indexOf(text.slice(-1)) ^ 1], "a neighboring base64url character");
     expect(fromBase64Url(`${text.slice(0, -1)}${lowBitFlipped}`, 16)).toBeNull();
     expect(fromBase64Url(`${text.slice(0, -1)}+`, 16)).toBeNull();
   });
@@ -114,12 +125,12 @@ describe("share protocol", () => {
   it("formats and parses share codes, ignoring surrounding whitespace", async () => {
     const token = await readToken();
     const key = new Uint8Array(32).fill(9);
-    const code = formatShareCode(token, key);
+    const code = defined(formatShareCode(token, key), "a share code");
 
     expect(code).toMatch(/^PMS1-[A-Za-z0-9_-]{64}$/);
     expect(parseShareCode(`  ${code}\n`)).toEqual({ readToken: token, contentKey: key });
     expect(parseShareCode(`${code}A`)).toBeNull();
-    expect(parseShareCode(code?.replace("PMS1-", "PMS2-") ?? "")).toBeNull();
+    expect(parseShareCode(code.replace("PMS1-", "PMS2-"))).toBeNull();
   });
 });
 
@@ -132,7 +143,7 @@ describe("sync Worker", () => {
     // Reading a room nobody published to stores nothing.
     expect(
       rooms.storages
-        .get((await roomNameFor(token)) ?? "")
+        .get(defined(await roomNameFor(token), "a room name"))
         ?.sql.exec("SELECT count(*) AS n FROM sqlite_master")
         .toArray(),
     ).toEqual([{ n: 0 }]);
@@ -191,7 +202,7 @@ describe("sync Worker", () => {
     const token = await readToken();
     await call(rooms, "PUT", WRITE_KEY, { body: body("list") });
     const etag = (await call(rooms, "GET", token)).headers.get("etag");
-    const room = rooms.storages.get((await roomNameFor(token)) ?? "");
+    const room = rooms.storages.get(defined(await roomNameFor(token), "a room name"));
 
     expect(room?.alarm).toBe(rooms.now + RETENTION_MS);
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
@@ -201,7 +212,9 @@ describe("sync Worker", () => {
     // holding the deleted list's etag gets the new contents, not a 304.
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect((await call(rooms, "PUT", WRITE_KEY, { body: body("again") })).status).toBe(200);
-    expect((await call(rooms, "GET", token, { ifNoneMatch: etag ?? "" })).status).toBe(200);
+    expect((await call(rooms, "GET", token, { ifNoneMatch: defined(etag, "the deleted list's etag") })).status).toBe(
+      200,
+    );
   });
 
   it("answers 503 when the Durable Object fails, and 404 or 405 off the list route", async () => {
@@ -217,7 +230,7 @@ describe("sync Worker", () => {
 });
 
 describe("sync admission through the HTTP router", () => {
-  it("stops 25 rotating valid keys at the source creation quota without reading rejected bodies or retaining their rooms", async () => {
+  it("holds one source to its daily creation quota without reading or storing rejected lists", async () => {
     const rooms = new MemoryRooms();
     const responses: number[] = [];
 
@@ -230,8 +243,7 @@ describe("sync admission through the HTTP router", () => {
         expect(request.bodyUsed).toBe(false);
         expect(Number(response.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
         expect(Number(response.headers.get("retry-after"))).toBeLessThanOrEqual(3600);
-        const token = await readTokenFor(toBase64Url(new Uint8Array(32).fill(index)));
-        const storage = rooms.storages.get(token ? ((await roomNameFor(token)) ?? "") : "");
+        const storage = rooms.storages.get(await roomForKey(index));
         expect(storage?.alarm).toBeNull();
         expect(storage?.sql.exec("SELECT count(*) AS count FROM sqlite_master").toArray()).toEqual([{ count: 0 }]);
       }
@@ -240,9 +252,7 @@ describe("sync admission through the HTTP router", () => {
     expect(responses.filter((status) => status === 200)).toHaveLength(5);
     expect(responses.filter((status) => status === 429)).toHaveLength(20);
     expect(retainedRooms(rooms)).toBe(5);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()).toEqual([
-      { count: 5 },
-    ]);
+    expect(admissionRows(rooms, "admitted_rooms")).toBe(5);
   });
 
   it("rejects request floods before room allocation and body reads, and recovers at the next minute", async () => {
@@ -315,13 +325,11 @@ describe("sync admission through the HTTP router", () => {
     results.forEach((result, index) => {
       if (result.status === 200) winners.push(index + 1);
     });
-    const [firstKey, secondKey] = winners;
-
-    if (firstKey === undefined || secondKey === undefined) throw new Error("two admitted fixture keys are required");
+    const firstKey = defined(winners[0], "the first admitted key");
+    const secondKey = defined(winners[1], "the second admitted key");
     const first = toBase64Url(new Uint8Array(32).fill(firstKey));
     expect((await call(rooms, "DELETE", first)).status).toBe(204);
-    const secondToken = await readTokenFor(toBase64Url(new Uint8Array(32).fill(secondKey)));
-    await rooms.directory(secondToken ? ((await roomNameFor(secondToken)) ?? "") : "").remove();
+    await rooms.directory(await roomForKey(secondKey)).remove();
     expect(retainedRooms(rooms)).toBe(0);
 
     const restarted = new ShareAdmission(rooms.admissionStorage, limits);
@@ -337,17 +345,13 @@ describe("sync admission through the HTTP router", () => {
     rooms.now += MIN_PUBLISH_INTERVAL_MS;
     expect((await route(pendingPublication(firstKey), rooms.directory, admission)).status).toBe(200);
     expect(retainedRooms(rooms)).toBe(1);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()).toEqual([
-      { count: 2 },
-    ]);
+    expect(admissionRows(rooms, "admitted_rooms")).toBe(2);
   });
 
   it("preserves pre-upgrade legacy rooms even when new admission capacity is exhausted", async () => {
     const rooms = new MemoryRooms({ ...DEFAULT_ADMISSION_LIMITS, registeredRooms: 1, sourceCreationsPerDay: 1 });
     const token = await readToken();
-    const name = await roomNameFor(token);
-
-    if (!name) throw new Error("fixture token should name a room");
+    const name = defined(await roomNameFor(token), "a room name");
     await rooms.directory(name).publish(body("legacy").buffer);
     expect((await route(pendingPublication(1), rooms.directory, rooms.admission)).status).toBe(200);
     rooms.now += MIN_PUBLISH_INTERVAL_MS;
@@ -355,9 +359,7 @@ describe("sync admission through the HTTP router", () => {
     expect(new TextDecoder().decode(await (await call(rooms, "GET", token)).arrayBuffer())).toBe(
       new TextDecoder().decode(body("legacy update")),
     );
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()).toEqual([
-      { count: 1 },
-    ]);
+    expect(admissionRows(rooms, "admitted_rooms")).toBe(1);
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     const fresh = pendingPublication(7);
     expect((await route(fresh, rooms.directory, rooms.admission)).status).toBe(429);
@@ -372,21 +374,15 @@ describe("sync admission through the HTTP router", () => {
         .status,
     ).toBe(413);
     expect(rooms.storages.size).toBe(0);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()).toEqual([
-      { count: 0 },
-    ]);
+    expect(admissionRows(rooms, "admitted_rooms")).toBe(0);
     const rejected = pendingPublication(2, "192.0.2.3");
     expect((await route(rejected, rooms.directory, rooms.admission)).status).toBe(429);
     expect(rejected.bodyUsed).toBe(false);
     expect(rooms.storages.size).toBe(0);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admission_sources").toArray()).toEqual([
-      { count: 2 },
-    ]);
+    expect(admissionRows(rooms, "admission_sources")).toBe(2);
     rooms.now += 86_400_000;
     expect((await route(pendingPublication(2, "192.0.2.3"), rooms.directory, rooms.admission)).status).toBe(200);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admission_sources").toArray()).toEqual([
-      { count: 1 },
-    ]);
+    expect(admissionRows(rooms, "admission_sources")).toBe(1);
   });
 
   it("fails closed before body or room access when the admission coordinator is unavailable", async () => {
@@ -422,9 +418,7 @@ describe("sync admission through the HTTP router", () => {
     expect(fresh.bodyUsed).toBe(false);
     rooms.now += MIN_PUBLISH_INTERVAL_MS;
     expect((await route(pendingPublication(1), rooms.directory, rooms.admission)).status).toBe(200);
-    expect(rooms.admissionStorage.sql.exec("SELECT count(*) AS count FROM admitted_rooms").toArray()).toEqual([
-      { count: 1 },
-    ]);
+    expect(admissionRows(rooms, "admitted_rooms")).toBe(1);
   });
 
   it("bounds per-room Retry-After too, even if the service clock moves backwards", async () => {

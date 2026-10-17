@@ -1,15 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runCheck, type CheckWorker } from "../src/main/check-runner.js";
 import { getAutomatedJurisdiction } from "../src/shared/jurisdictions.js";
-import type { PermitRow } from "../src/shared/permit.js";
 import type { MainToWorker, WorkerToMain } from "../src/shared/worker-protocol.js";
 import { accelaGlobalResultsAdapter } from "../src/worker/accela-global.js";
 import { readDetail } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
+import { permitRow } from "./support/permit-row.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const profile = defined(getAutomatedJurisdiction("hillsborough-county-building"), "Hillsborough");
 
@@ -154,23 +153,7 @@ class BrowserWorker implements CheckWorker {
 }
 
 async function checkResults() {
-  const permit: PermitRow = {
-    id: "00000000-0000-4000-8000-000000000001",
-    jurisdictionId: profile.id,
-    permitNumber: NUMBER,
-    projectNumber: null,
-    reviews: null,
-    monitoringEnabled: true,
-    lastStatus: null,
-    lastObservedAt: null,
-    lastRecordUrl: null,
-    latestAttemptAt: null,
-    latestOutcome: null,
-    nextDueAt: null,
-    checking: true,
-  };
-
-  const directory = mkdtempSync(path.join(tmpdir(), "permit-global-fixture-"));
+  const permit = permitRow({ jurisdictionId: profile.id, permitNumber: NUMBER, checking: true });
   const worker = new BrowserWorker();
 
   const active = runCheck({
@@ -178,7 +161,7 @@ async function checkResults() {
     permit,
     key: "unused-fixture-key",
     browserPath: "/unused",
-    cacheRoot: directory,
+    cacheRoot: temporaryDirectory("permit-global-fixture-"),
     startWorker: () => ({ _tag: "started", worker }),
     report: (_operation, cause) => {
       worker.failures.push(cause);
@@ -193,7 +176,6 @@ async function checkResults() {
     return { result, choices: worker.choices };
   } finally {
     active.cancel();
-    rmSync(directory, { recursive: true, force: true });
   }
 }
 

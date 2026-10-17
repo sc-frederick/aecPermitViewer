@@ -6,6 +6,7 @@ import { getAutomatedJurisdiction } from "../src/shared/jurisdictions.js";
 import { parseDisplayedStatus } from "../src/shared/permit.js";
 import type { DisplayedRecord } from "../src/worker/adapter.js";
 import { readDetail, tylerFoundNothing, waitForLanding, waitForTylerResults } from "../src/worker/detail.js";
+import { defined } from "./support/defined.js";
 
 // Recorded Hernando pages are served at the portal's own address in the bundled Chromium, so the worker reads the same
 // markup it reads live.
@@ -15,7 +16,7 @@ const PERMIT_URL = `${BASE}#/permit/f3a325c7-9779-4de4-9b08-3a6aff019939`;
 
 const PLAN_URL = `${BASE}#/plan/5cc7d3ff-b001-4913-9fb1-0043d864fd54`;
 
-const hernando = getAutomatedJurisdiction("hernando-county-building");
+const hernando = defined(getAutomatedJurisdiction("hernando-county-building"), "the Hernando profile");
 
 let browser: Browser;
 
@@ -70,7 +71,7 @@ function watch(wait: Promise<void>): WatchedWait {
 function verify(record: DisplayedRecord, requestedNumber: string): ReturnType<typeof parseDisplayedStatus> {
   const { displayedNumber, statusLabel, statusValue, recordUrl } = record;
 
-  if (!displayedNumber || !statusLabel || !statusValue || !recordUrl || !hernando) throw new Error("Record incomplete");
+  if (!displayedNumber || !statusLabel || !statusValue || !recordUrl) throw new Error("Record incomplete");
 
   return parseDisplayedStatus({
     jurisdictionId: hernando.id,
@@ -97,7 +98,6 @@ afterAll(async () => {
 
 describe("Hernando record pages", () => {
   it("reads a permit's number and status from permit fields, and passes main's verification", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PERMIT_URL, fixture("permit-detail.html"));
 
     const record = await readDetail(page, hernando, "BLDC-000576-2026");
@@ -114,7 +114,6 @@ describe("Hernando record pages", () => {
   });
 
   it("reads a plan's number and status from plan fields, and passes main's verification", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, fixture("plan-detail.html"));
 
     const record = await readDetail(page, hernando, "DEVP-000011-2026");
@@ -131,7 +130,6 @@ describe("Hernando record pages", () => {
   });
 
   it("reads nothing when the page's fields don't belong to the kind of record its address names", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, fixture("permit-detail.html"));
 
     expect(await readDetail(page, hernando, "BLDC-000576-2026")).toMatchObject({
@@ -141,10 +139,13 @@ describe("Hernando record pages", () => {
   });
 
   it("refuses an ambiguous status", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     const plan = fixture("plan-detail.html");
-    const block = /<div class="form-group" id="label-PlanDetail-Status"[\s\S]*?<\/div>/.exec(plan)?.[0] ?? "";
-    expect(block).not.toBe("");
+
+    const block = defined(
+      /<div class="form-group" id="label-PlanDetail-Status"[\s\S]*?<\/div>/.exec(plan)?.[0],
+      "the plan's status field",
+    );
+
     await serve(PLAN_URL, plan.replace(block, block + block.replace("Deficient", "Approved")));
 
     expect(await readDetail(page, hernando, "DEVP-000011-2026")).toMatchObject({
@@ -154,7 +155,6 @@ describe("Hernando record pages", () => {
   });
 
   it("reads nothing from record kinds the app doesn't check", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(`${BASE}#/case/5cc7d3ff-b001-4913-9fb1-0043d864fd54`, fixture("plan-detail.html"));
 
     expect(await readDetail(page, hernando, "DEVP-000011-2026")).toEqual({
@@ -168,7 +168,6 @@ describe("Hernando record pages", () => {
   // The record page has no search controls, so a wait on them would hold the landing for its full 12 seconds, past
   // the 5-second test timeout on Linux and macOS. Nothing else here depends on speed.
   it("lands on a saved record link once the record renders, without waiting on search controls", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, renderedLater(fixture("plan-detail.html")));
 
     const landing = watch(waitForLanding(page, hernando));
@@ -187,7 +186,6 @@ describe("Hernando record pages", () => {
 
 describe("Hernando search", () => {
   it("lands on the search page once its keyword field renders", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(
       `${BASE}#/search`,
       renderedLater('<!doctype html><html><body><input id="SearchKeyword"></body></html>'),

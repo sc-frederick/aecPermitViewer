@@ -1,15 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { dailyHistory } from "../src/shared/history.js";
 import { defined } from "./support/defined.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 function setup() {
-  const root = mkdtempSync(path.join(tmpdir(), "permit-daily-"));
-  const file = path.join(root, "data.sqlite");
+  const file = path.join(temporaryDirectory("permit-daily-"), "data.sqlite");
   const store = new PermitStore(file);
   const db = new DatabaseSync(file);
   const added = store.addPermit("HC-BLD-26-0087599");
@@ -23,7 +21,6 @@ function setup() {
     close: () => {
       db.close();
       store.close();
-      rmSync(root, { recursive: true, force: true });
     },
   };
 }
@@ -155,7 +152,7 @@ describe("bounded daily store reads", () => {
       db.prepare("UPDATE status_observations SET reviews = 'broken json' WHERE run_id = ?").run(`${id}-0`);
       expect(store.dailyHistory(id, 1).runs[0]?.id).toBe(`${id}-3`);
       expect(store.dailyHistory(id, 1).observations[0]?.reviews).toHaveLength(1);
-      expect(() => store.history(id)).toThrow();
+      expect(() => store.history(id)).toThrow(SyntaxError);
     } finally {
       close();
     }

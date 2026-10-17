@@ -1,21 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { verifyBrowserPayload } from "../src/main/browser-integrity.js";
 import { defined } from "./support/defined.js";
-
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
-});
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 describe("bundled browser integrity", () => {
   it("accepts Chromium's changing Windows diagnostic log while rejecting extra code and a log symlink", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-log-test-"));
-    temporary.push(directory);
+    const directory = temporaryDirectory("permit-browser-log-test-");
     const content = "browser binary fixture";
     await writeFile(path.join(directory, "chrome.exe"), content);
     await writeFile(
@@ -46,8 +39,7 @@ describe("bundled browser integrity", () => {
   });
 
   it("accepts the staged file list and rejects changed or additional files", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-test-"));
-    temporary.push(directory);
+    const directory = temporaryDirectory("permit-browser-test-");
     const content = "browser binary fixture";
     await writeFile(path.join(directory, "chrome.exe"), content);
     await writeFile(
@@ -65,8 +57,7 @@ describe("bundled browser integrity", () => {
   });
 
   it("checks every file when there are more files than parallel readers", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "permit-browser-test-"));
-    temporary.push(directory);
+    const directory = temporaryDirectory("permit-browser-test-");
     const names = Array.from({ length: 12 }, (_, index) => `file-${String(index).padStart(2, "0")}.bin`);
 
     for (const name of names) await writeFile(path.join(directory, name), name);

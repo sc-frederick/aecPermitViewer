@@ -1,4 +1,3 @@
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type FeedEnv } from "../infra/update-server/src/index.js";
 import type { FeedPutOptions } from "../infra/update-server/src/bucket.js";
@@ -11,38 +10,14 @@ import {
 } from "../infra/update-server/src/release-policy.js";
 import { MemoryBucket } from "./fixtures/memory-bucket.js";
 import { LocalFixedLengthStream } from "./fixtures/fixed-length-stream.js";
+import { defined } from "./support/defined.js";
+import { FEED_ORIGIN, releaseManifest, sha256 } from "./support/release-manifest.js";
 
 Object.defineProperty(globalThis, "FixedLengthStream", { value: LocalFixedLengthStream, configurable: true });
-
-const ORIGIN = "https://permitmon-updates.example.test";
 
 const TOKEN = "upload-token";
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
-
-const keys = generateKeyPairSync("ed25519");
-
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-/** A manifest signed the way scripts/sign-release-manifest.mjs signs one. */
-function manifest(version: string, installer: string, publisher = ""): string {
-  const signed = Buffer.from(
-    JSON.stringify({
-      version,
-      url: `${ORIGIN}/PermitMonitorSetup-${version}.exe`,
-      sha256: sha256(installer),
-      size: Buffer.byteLength(installer),
-      publisher,
-    }),
-  );
-
-  return JSON.stringify({
-    signed: signed.toString("base64"),
-    signature: sign(null, signed, keys.privateKey).toString("base64"),
-  });
-}
 
 /** A bucket and the Worker bindings that serve it. */
 interface TestFeed {
@@ -55,7 +30,7 @@ function feed(bucket = new MemoryBucket()): TestFeed {
 }
 
 function call(env: FeedEnv, path: string, init: RequestInit = {}): Promise<Response> {
-  return worker.fetch(new Request(`${ORIGIN}${path}`, init), env);
+  return worker.fetch(new Request(`${FEED_ORIGIN}${path}`, init), env);
 }
 
 function uploadCall(env: FeedEnv, path: string, method: string, body?: BodyInit): Promise<Response> {
@@ -96,6 +71,11 @@ async function uploadInstaller(env: FeedEnv, version: string, installer: string,
     "POST",
     JSON.stringify({ ...claim, parts }),
   );
+}
+
+/** Silences the Worker's storage-failure log for a test that causes one on purpose; `vi.restoreAllMocks` undoes it. */
+function quietStorageLog(): void {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
 }
 
 function version(text: string): VersionedManifest["version"] {
@@ -161,13 +141,9 @@ describe("update feed downloads", () => {
   function withInstaller(): TestFeed {
     const setup = feed();
     setup.bucket.seed("PermitMonitorSetup-0.7.0.exe", "0123456789", INSTALLER_TYPE, sha256("0123456789"));
-    setup.bucket.seed("release-manifest.json", manifest("0.7.0", "0123456789"), "application/json");
+    setup.bucket.seed("release-manifest.json", releaseManifest("0.7.0", "0123456789"), "application/json");
 
     return setup;
-  }
-
-  function quietStorageLog(): void {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
   }
 
   it("serves a whole installer and the manifest with their cache policies", async () => {
@@ -180,7 +156,7 @@ describe("update feed downloads", () => {
 
     const feedManifest = await call(env, "/release-manifest.json");
     expect(feedManifest.headers.get("cache-control")).toBe("no-cache");
-    expect(await feedManifest.text()).toBe(manifest("0.7.0", "0123456789"));
+    expect(await feedManifest.text()).toBe(releaseManifest("0.7.0", "0123456789"));
   });
 
   it("answers a storage failure on an ordinary GET with a retryable 503, not 416", async () => {
@@ -248,7 +224,7 @@ describe("update feed downloads", () => {
     const { bucket, env } = withInstaller();
     const response = await call(env, "/");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`${ORIGIN}/PermitMonitorSetup-0.7.0.exe`);
+    expect(response.headers.get("location")).toBe(`${FEED_ORIGIN}/PermitMonitorSetup-0.7.0.exe`);
 
     quietStorageLog();
     bucket.failing.add("get");
@@ -259,7 +235,7 @@ describe("update feed downloads", () => {
     const { bucket, env } = withInstaller();
     const response = await call(env, "/mac");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
+    expect(response.headers.get("location")).toBe(`${FEED_ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
 
     bucket.seed("PermitMonitor-0.7.0-mac-arm64.zip", "zipped", "application/zip", sha256("zipped"));
     const zip = await call(env, "/PermitMonitor-0.7.0-mac-arm64.zip");
@@ -292,7 +268,7 @@ describe("manual installer upload", () => {
     expect(response.status).toBe(401);
     expect(
       (
-        await worker.fetch(new Request(`${ORIGIN}/upload/release-manifest.json`, { method: "PUT" }), {
+        await worker.fetch(new Request(`${FEED_ORIGIN}/upload/release-manifest.json`, { method: "PUT" }), {
           BUCKET: new MemoryBucket(),
         })
       ).status,
@@ -339,16 +315,21 @@ describe("manual installer upload", () => {
     ]);
 
     expect(responses.map((response) => response.status).sort()).toEqual(identical ? [200, 200] : [200, 409]);
-    const winner = bucket.storedText("PermitMonitorSetup-0.8.0.exe");
+    const winner = defined(bucket.storedText("PermitMonitorSetup-0.8.0.exe"), "the winning installer");
     expect(winner).toBe(identical ? "AAAA" : ["AAAA", "BBBB"][responses[0]?.status === 200 ? 0 : 1]);
     expect(bucket.openUploads).toBe(0);
     bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
 
-    if (!winner) throw new Error("Winning artifact is absent");
-    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", winner))).status).toBe(200);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", winner))).status).toBe(200);
     expect(
-      (await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", winner === "AAAA" ? "BBBB" : "AAAA")))
-        .status,
+      (
+        await uploadCall(
+          env,
+          "release-manifest.json",
+          "PUT",
+          releaseManifest("0.8.0", winner === "AAAA" ? "BBBB" : "AAAA"),
+        )
+      ).status,
     ).toBe(409);
     expect(await (await call(env, "/PermitMonitorSetup-0.8.0.exe")).text()).toBe(winner);
   });
@@ -600,7 +581,7 @@ describe("manual installer upload", () => {
 
   it("answers storage failures during an upload with a retryable 503", async () => {
     const { bucket, env } = feed();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    quietStorageLog();
     const key = "PermitMonitorSetup-0.8.0.exe";
     bucket.failing.add("createMultipartUpload");
     const refused = await uploadCall(env, key, "POST", JSON.stringify({ sha256: sha256("abc"), size: 3 }));
@@ -639,40 +620,40 @@ describe("manual manifest upload", () => {
     setup.bucket.seed("PermitMonitor-0.7.0-mac-arm64.zip", "mac seven", "application/zip", sha256("mac seven"));
     setup.bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
     setup.bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE, sha256("eight"));
-    setup.bucket.seed("release-manifest.json", manifest("0.7.0", "seven"), "application/json");
+    setup.bucket.seed("release-manifest.json", releaseManifest("0.7.0", "seven"), "application/json");
 
     return setup;
   }
 
   it("replaces the manifest with a newer version", async () => {
     const { bucket, env } = published();
-    const response = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    const response = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ version: "0.8.0", status: "published" });
-    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
+    expect(bucket.storedText("release-manifest.json")).toBe(releaseManifest("0.8.0", "eight"));
   });
 
   it("keeps the known-good Mac download when the new release has no Mac archive", async () => {
     const { bucket, env } = published();
     await bucket.delete("PermitMonitor-0.8.0-mac-arm64.zip");
-    const refused = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    const refused = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"));
     expect(refused.status).toBe(409);
     const redirect = await call(env, "/mac");
-    expect(redirect.headers.get("location")).toBe(`${ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
+    expect(redirect.headers.get("location")).toBe(`${FEED_ORIGIN}/PermitMonitor-0.7.0-mac-arm64.zip`);
     expect((await call(env, "/PermitMonitor-0.7.0-mac-arm64.zip")).status).toBe(200);
-    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.7.0", "seven"));
+    expect(bucket.storedText("release-manifest.json")).toBe(releaseManifest("0.7.0", "seven"));
   });
 
   it("never moves the feed back to an older version", async () => {
     const { bucket, env } = published();
-    await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
-    const older = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.7.0", "seven"));
+    await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"));
+    const older = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.7.0", "seven"));
     expect(older.status).toBe(409);
-    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
+    expect(bucket.storedText("release-manifest.json")).toBe(releaseManifest("0.8.0", "eight"));
   });
 
   it("does not overwrite a manifest first published while this upload was in progress", async () => {
-    const newer = manifest("0.9.0", "nine");
+    const newer = releaseManifest("0.9.0", "nine");
 
     class ManifestAppearsOnPut extends MemoryBucket {
       override async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions) {
@@ -686,38 +667,38 @@ describe("manual manifest upload", () => {
     bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE, sha256("eight"));
     bucket.seed("PermitMonitor-0.8.0-mac-arm64.zip", "mac eight", "application/zip", sha256("mac eight"));
     const { env } = feed(bucket);
-    const response = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    const response = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"));
     expect(response.status).toBe(409);
     expect(bucket.storedText("release-manifest.json")).toBe(newer);
   });
 
   it("accepts an identical retry and refuses a different manifest for the published version", async () => {
     const { bucket, env } = published();
-    const retry = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.7.0", "seven"));
+    const retry = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.7.0", "seven"));
     expect(await retry.json()).toEqual({ version: "0.7.0", status: "unchanged" });
 
     const conflicting = await uploadCall(
       env,
       "release-manifest.json",
       "PUT",
-      manifest("0.7.0", "seven", "Other Publisher"),
+      releaseManifest("0.7.0", "seven", "Other Publisher"),
     );
 
     expect(conflicting.status).toBe(409);
-    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.7.0", "seven"));
+    expect(bucket.storedText("release-manifest.json")).toBe(releaseManifest("0.7.0", "seven"));
   });
 
   it("refuses a manifest whose installer is missing or has other bytes", async () => {
     const { env } = published();
-    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.9.0", "nine"))).status).toBe(409);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.9.0", "nine"))).status).toBe(409);
     // Same size as the stored 0.8.0 installer, different hash.
-    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "EIGHT"))).status).toBe(409);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "EIGHT"))).status).toBe(409);
   });
 
   it("matches installers stored without a recorded hash by size", async () => {
     const { bucket, env } = published();
     bucket.seed("PermitMonitorSetup-0.8.0.exe", "eight", INSTALLER_TYPE);
-    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"))).status).toBe(200);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"))).status).toBe(200);
   });
 
   it("counts the size limit in bytes, not UTF-16 code units", async () => {
@@ -749,7 +730,7 @@ describe("manual manifest upload", () => {
       duplex: "half",
     };
 
-    const response = await worker.fetch(new Request(`${ORIGIN}/upload/release-manifest.json`, init), env);
+    const response = await worker.fetch(new Request(`${FEED_ORIGIN}/upload/release-manifest.json`, init), env);
     expect(response.status).toBe(413);
     expect(state.cancelled).toBe(true);
     expect(state.pulled).toBeLessThan(20);
@@ -765,7 +746,7 @@ describe("manual manifest upload", () => {
     const signed = Buffer.from(
       JSON.stringify({
         version: "0.8.0",
-        url: `${ORIGIN}/%E0%A4%A`,
+        url: `${FEED_ORIGIN}/%E0%A4%A`,
         sha256: sha256("eight"),
         size: 5,
         publisher: "",
@@ -780,17 +761,17 @@ describe("manual manifest upload", () => {
   it("leaves an unreadable published manifest for a person to replace", async () => {
     const { bucket, env } = published();
     bucket.seed("release-manifest.json", "corrupt", "application/json");
-    expect((await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"))).status).toBe(500);
+    expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"))).status).toBe(500);
     expect(bucket.storedText("release-manifest.json")).toBe("corrupt");
   });
 
   it("answers a storage failure while publishing with a retryable 503", async () => {
     const { bucket, env } = published();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    quietStorageLog();
     bucket.failing.add("put");
-    const response = await uploadCall(env, "release-manifest.json", "PUT", manifest("0.8.0", "eight"));
+    const response = await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "eight"));
     expect(response.status).toBe(503);
     expect(response.headers.get("retry-after")).toBe("5");
-    expect(bucket.storedText("release-manifest.json")).toBe(manifest("0.7.0", "seven"));
+    expect(bucket.storedText("release-manifest.json")).toBe(releaseManifest("0.7.0", "seven"));
   });
 });

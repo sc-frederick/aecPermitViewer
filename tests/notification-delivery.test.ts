@@ -60,15 +60,15 @@ describe("notification delivery", () => {
     expect(app.inApp).toEqual([]);
   });
 
-  it.each([{ windowInFront: true }, { desktop: false }])(
-    "surfaces the notice in-app when appropriate: %j",
-    async (state) => {
-      const app = delivery(state);
-      await app.notifier.announce(review);
-      expect(app.inApp).toHaveLength(1);
-      expect(app.desktop).toEqual([]);
-    },
-  );
+  it.each<[string, Partial<NotificationState>]>([
+    ["the window is in front", { windowInFront: true }],
+    ["the app posts no desktop notifications", { desktop: false }],
+  ])("shows the notice in the window instead of the desktop when %s", async (_situation, state) => {
+    const app = delivery(state);
+    await app.notifier.announce(review);
+    expect(app.inApp).toHaveLength(1);
+    expect(app.desktop).toEqual([]);
+  });
 
   it("respects the separate status and failure preferences", async () => {
     const app = delivery({ statusChanges: false });

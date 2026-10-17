@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
@@ -7,6 +5,7 @@ import { buildSharedList, type SharedList } from "../src/main/share-list.js";
 import { sealList, ShareService, type FetchReply } from "../src/main/share-service.js";
 import { cachedListSchema, ShareFollower } from "../src/main/share-sync.js";
 import { PermitStore } from "../src/main/store.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 class RevisionService extends ShareService {
   readonly requests: Array<number | null> = [];
@@ -32,8 +31,7 @@ class RevisionService extends ShareService {
 
 describe("shared-list local persistence", () => {
   it("retries the unacknowledged revision, announces once, and restores it offline after restart", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "share-cache-"));
-    const file = path.join(root, "data.sqlite");
+    const file = path.join(temporaryDirectory("share-cache-"), "data.sqlite");
     const store = new PermitStore(file);
     const db = new DatabaseSync(file);
     const key = new Uint8Array(32).fill(7);
@@ -113,7 +111,6 @@ describe("shared-list local persistence", () => {
       await follower.stop();
       db.close();
       store.close();
-      rmSync(root, { recursive: true, force: true });
     }
   });
 });

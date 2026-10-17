@@ -1,23 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { groupByProject, recentProjects } from "../src/shared/projects.js";
 import { projectNumberSchema, type PermitRow } from "../src/shared/permit.js";
+import { permitRow } from "./support/permit-row.js";
 
 function permit(id: string, projectNumber: string | null): PermitRow {
-  return {
-    id,
-    jurisdictionId: "hillsborough-county-building",
-    permitNumber: id,
-    projectNumber,
-    reviews: null,
-    monitoringEnabled: true,
-    lastStatus: null,
-    lastObservedAt: null,
-    lastRecordUrl: null,
-    latestAttemptAt: null,
-    latestOutcome: null,
-    nextDueAt: null,
-    checking: false,
-  };
+  return permitRow({ id, permitNumber: id, projectNumber });
 }
 
 describe("project groups", () => {

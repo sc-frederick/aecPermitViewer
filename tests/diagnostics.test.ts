@@ -1,27 +1,14 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { classifyCause, DiagnosticLog, type Diagnostic } from "../src/main/diagnostics.js";
 import { PermitStore } from "../src/main/store.js";
-
-const directories: string[] = [];
-
-afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
-});
-
-function temporaryDirectory(): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-diagnostics-"));
-  directories.push(directory);
-
-  return directory;
-}
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 /** The driver error a real store keeps as the cause when the same permit is added twice. */
 function duplicatePermitError(): Error {
-  const store = new PermitStore(path.join(temporaryDirectory(), "data.sqlite"));
+  const store = new PermitStore(path.join(temporaryDirectory("permit-monitor-diagnostics-"), "data.sqlite"));
 
   try {
     store.addPermit("HC-BLD-26-0087599");
@@ -52,7 +39,7 @@ describe("classifying causes", () => {
   });
 
   it("recognizes a failed system call", async () => {
-    const missing = path.join(temporaryDirectory(), "missing");
+    const missing = path.join(temporaryDirectory("permit-monitor-diagnostics-"), "missing");
     const cause = await rename(missing, `${missing}.moved`).catch((cause: unknown) => cause);
 
     expect(classifyCause(cause)).toMatchObject({ class: "system", code: "ENOENT", syscall: "rename" });
@@ -84,7 +71,7 @@ describe("classifying causes", () => {
 
 describe("the diagnostic log", () => {
   it("records the operation, run, and classified cause, but never the message or free-text fields", () => {
-    const file = path.join(temporaryDirectory(), "logs", "diagnostics.jsonl");
+    const file = path.join(temporaryDirectory("permit-monitor-diagnostics-"), "logs", "diagnostics.jsonl");
     const log = new DiagnosticLog(file, () => new Date("2026-09-28T12:00:00.000Z"));
 
     const leaky = Object.assign(new Error("key sk-live-secret at C:\\Users\\someone"), {
@@ -114,7 +101,7 @@ describe("the diagnostic log", () => {
   });
 
   it("moves a full log aside instead of growing it", () => {
-    const file = path.join(temporaryDirectory(), "diagnostics.jsonl");
+    const file = path.join(temporaryDirectory("permit-monitor-diagnostics-"), "diagnostics.jsonl");
     writeFileSync(file, "x".repeat(300 * 1024));
 
     new DiagnosticLog(file).record("permit:snapshot", null, new TypeError("boom"));
@@ -124,7 +111,7 @@ describe("the diagnostic log", () => {
   });
 
   it("records nothing while stopped, so a deleted data folder isn't recreated, and records again after a restart", () => {
-    const logs = path.join(temporaryDirectory(), "logs");
+    const logs = path.join(temporaryDirectory("permit-monitor-diagnostics-"), "logs");
     const file = path.join(logs, "diagnostics.jsonl");
     const log = new DiagnosticLog(file);
 
@@ -138,7 +125,7 @@ describe("the diagnostic log", () => {
   });
 
   it("stays quiet when the log can't be written", () => {
-    const blocker = path.join(temporaryDirectory(), "not-a-directory");
+    const blocker = path.join(temporaryDirectory("permit-monitor-diagnostics-"), "not-a-directory");
     writeFileSync(blocker, "");
 
     expect(() =>

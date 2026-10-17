@@ -101,58 +101,63 @@ async function populate(number: string, status = "Issued"): Promise<void> {
   );
 }
 
+/** Each kind of SFWMD record: a sample number, the label its status field carries, and its record class. */
+const RECORD_KINDS: Array<[string, string, string]> = [
+  ["260901-67337", "Application Status", "SFWMD-REG-PERMIT-WORK"],
+  ["48-112909-P", "Permit Status", "SFWMD-REG-PERMIT-WORK"],
+  ["260902-67338", "App Status", "SFWMD-REG-WUPERMIT-WORK"],
+];
+
 describe("SFWMD asynchronously populated records", () => {
-  it.each([
-    ["260901-67337", "Application Status", "SFWMD-REG-PERMIT-WORK"],
-    ["48-112909-P", "Permit Status", "SFWMD-REG-PERMIT-WORK"],
-    ["260902-67338", "App Status", "SFWMD-REG-WUPERMIT-WORK"],
-  ])("waits for a saved %s record's exact identity and %s value", async (number, statusLabel, recordClass) => {
-    const url = await serve(number, statusLabel, false, recordClass);
-    expect(await regPermittingRecordShown(page, 500)).toBe(true);
-    const adapter = regPermittingAdapter(page, regProfile(), number, url, 2_000);
-    let finished = false;
+  it.each(RECORD_KINDS)(
+    "waits for a saved %s record's exact identity and %s value",
+    async (number, statusLabel, recordClass) => {
+      const url = await serve(number, statusLabel, false, recordClass);
+      expect(await regPermittingRecordShown(page, 500)).toBe(true);
+      const adapter = regPermittingAdapter(page, regProfile(), number, url, 2_000);
+      let finished = false;
 
-    const reading = adapter.read().then((record) => {
-      finished = true;
+      const reading = adapter.read().then((record) => {
+        finished = true;
 
-      return record;
-    });
+        return record;
+      });
 
-    await page.waitForTimeout(50);
-    expect(finished).toBe(false);
-    await populate(number, "");
-    await page.waitForTimeout(50);
-    expect(finished).toBe(false);
-    await populate(number);
-    const record = await reading;
-    expect(record).toMatchObject({ displayedNumber: number, statusLabel, statusValue: "Issued", recordUrl: url });
-    expect(verify(record, number)._tag).toBe("ok");
-  });
+      await page.waitForTimeout(50);
+      expect(finished).toBe(false);
+      await populate(number, "");
+      await page.waitForTimeout(50);
+      expect(finished).toBe(false);
+      await populate(number);
+      const record = await reading;
+      expect(record).toMatchObject({ displayedNumber: number, statusLabel, statusValue: "Issued", recordUrl: url });
+      expect(verify(record, number)._tag).toBe("ok");
+    },
+  );
 
-  it.each([
-    ["260901-67337", "Application Status", "SFWMD-REG-PERMIT-WORK"],
-    ["48-112909-P", "Permit Status", "SFWMD-REG-PERMIT-WORK"],
-    ["260902-67338", "App Status", "SFWMD-REG-WUPERMIT-WORK"],
-  ])("shares the field wait with %s search results and %s", async (number, statusLabel, recordClass) => {
-    const url = await serve(number, statusLabel, true, recordClass);
-    const adapter = regPermittingAdapter(page, regProfile(), number, null, 2_000);
-    expect((await adapter.observe()).candidates.map((candidate) => candidate.id)).toEqual(["open_exact_result"]);
-    await adapter.openResult();
-    let finished = false;
+  it.each(RECORD_KINDS)(
+    "shares the field wait with %s search results and %s",
+    async (number, statusLabel, recordClass) => {
+      const url = await serve(number, statusLabel, true, recordClass);
+      const adapter = regPermittingAdapter(page, regProfile(), number, null, 2_000);
+      expect((await adapter.observe()).candidates.map((candidate) => candidate.id)).toEqual(["open_exact_result"]);
+      await adapter.openResult();
+      let finished = false;
 
-    const reading = adapter.read().then((record) => {
-      finished = true;
+      const reading = adapter.read().then((record) => {
+        finished = true;
 
-      return record;
-    });
+        return record;
+      });
 
-    await page.waitForTimeout(50);
-    expect(finished).toBe(false);
-    await populate(number);
-    const record = await reading;
-    expect(record.recordUrl).toBe(url);
-    expect(verify(record, number)._tag).toBe("ok");
-  });
+      await page.waitForTimeout(50);
+      expect(finished).toBe(false);
+      await populate(number);
+      const record = await reading;
+      expect(record.recordUrl).toBe(url);
+      expect(verify(record, number)._tag).toBe("ok");
+    },
+  );
 
   it("returns missing fields within its bound instead of waiting indefinitely", async () => {
     const number = "48-112909-P";

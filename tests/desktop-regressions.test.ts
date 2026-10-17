@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckQueue } from "../src/main/check-queue.js";
@@ -10,22 +8,18 @@ import { PermitStore } from "../src/main/store.js";
 import type { RunOutcome } from "../src/shared/permit.js";
 import { checkScope, getAutomatedJurisdiction, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
-
-const directories: string[] = [];
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const RUN = { appVersion: "test", playwrightVersion: "test", requestedModel: "test", promptVersion: "test" };
 
 function newStore() {
-  const root = mkdtempSync(path.join(tmpdir(), "permit-events-"));
-  directories.push(root);
+  const file = path.join(temporaryDirectory("permit-events-"), "data.sqlite");
 
-  return { store: new PermitStore(path.join(root, "data.sqlite")), file: path.join(root, "data.sqlite") };
+  return { store: new PermitStore(file), file };
 }
 
 afterEach(() => {
   vi.useRealTimers();
-
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 describe("completed check announcements", () => {
@@ -104,7 +98,7 @@ describe("completed check announcements", () => {
 });
 
 describe("permit insertion broadcasts", () => {
-  it("announces each manual jurisdiction without requiring a later mutation and coalesces automated queue snapshots", async () => {
+  it("broadcasts one snapshot per added permit, whether or not it starts a check", async () => {
     const { store } = newStore();
     const snapshots: Array<{ permits: number; checking: number }> = [];
     const publications: number[] = [];

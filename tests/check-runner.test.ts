@@ -1,41 +1,21 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCheck, type CheckOperation, type CheckWorker, type WorkerStart } from "../src/main/check-runner.js";
 import { classifyCause } from "../src/main/diagnostics.js";
-import { HILLSBOROUGH_ID, type PermitRow } from "../src/shared/permit.js";
 import type { MainToWorker, WorkerToMain } from "../src/shared/worker-protocol.js";
+import { permitRow } from "./support/permit-row.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const RUN_ID = "run-1";
 
-const PERMIT: PermitRow = {
-  id: "00000000-0000-4000-8000-000000000001",
-  jurisdictionId: HILLSBOROUGH_ID,
-  permitNumber: "HC-BLD-26-0087599",
-  projectNumber: null,
-  reviews: null,
-  monitoringEnabled: true,
-  lastStatus: null,
-  lastObservedAt: null,
-  lastRecordUrl: null,
-  latestAttemptAt: null,
-  latestOutcome: null,
-  nextDueAt: null,
-  checking: true,
-};
+const PERMIT = permitRow({ checking: true });
 
 const RECORD_URL =
   "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&capID1=26CAP&capID2=00000&capID3=01Y33&agencyCode=HCFL";
 
-const directories: string[] = [];
-
 afterEach(() => {
   vi.useRealTimers();
-
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 /** How the stand-in worker answers what main sends it. `environment` is what the worker process was started with. */
@@ -94,8 +74,7 @@ function check(
   start: (environment: NodeJS.ProcessEnv) => WorkerStart,
   removeCache?: (cachePath: string) => Promise<void>,
 ) {
-  const cacheRoot = mkdtempSync(path.join(tmpdir(), "permit-monitor-check-"));
-  directories.push(cacheRoot);
+  const cacheRoot = temporaryDirectory("permit-monitor-check-");
   const reports: Array<{ operation: CheckOperation; code: string | null }> = [];
 
   const active = runCheck({

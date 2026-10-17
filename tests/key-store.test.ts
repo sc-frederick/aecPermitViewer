@@ -1,14 +1,8 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { KeyStore, type KeyEncryption } from "../src/main/key-store.js";
-
-const directories: string[] = [];
-
-afterEach(async () => {
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
-});
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 function gate() {
   let open: () => void = () => undefined;
@@ -51,8 +45,7 @@ class Encryption implements KeyEncryption {
 }
 
 async function setup() {
-  const directory = await mkdtemp(path.join(tmpdir(), "permit-key-"));
-  directories.push(directory);
+  const directory = temporaryDirectory("permit-key-");
   const encryption = new Encryption();
   const store = new KeyStore(directory, encryption);
   expect(await store.save("old-fixture-key")).toEqual({ _tag: "saved" });

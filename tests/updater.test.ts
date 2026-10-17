@@ -1,8 +1,7 @@
-import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { generateKeyPairSync, type KeyObject } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createServer } from "node:https";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -14,6 +13,8 @@ import {
   UpdateSuperseded,
   verifyReleaseEnvelope,
 } from "../src/main/updater.js";
+import { sha256, signedEnvelope, type ReleasePayload } from "./support/release-manifest.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 describe("signed update metadata", () => {
   const keys = generateKeyPairSync("ed25519");
@@ -27,13 +28,8 @@ describe("signed update metadata", () => {
     publisher: "Permit Monitor LLC",
   };
 
-  function envelope(value: typeof payload): string {
-    const signed = Buffer.from(JSON.stringify(value));
-
-    return JSON.stringify({
-      signed: signed.toString("base64"),
-      signature: sign(null, signed, keys.privateKey).toString("base64"),
-    });
+  function envelope(value: ReleasePayload): string {
+    return signedEnvelope(value, keys.privateKey);
   }
 
   it("accepts a signed installer hash and expected publisher", () => {
@@ -43,42 +39,41 @@ describe("signed update metadata", () => {
   it("accepts an unsigned-build manifest only when no publisher is expected", () => {
     const unsigned = { ...payload, publisher: "" };
     expect(verifyReleaseEnvelope(envelope(unsigned), publicKey, "")).toEqual(unsigned);
-    expect(() => verifyReleaseEnvelope(envelope(unsigned), publicKey, "Permit Monitor LLC")).toThrow();
-    expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "")).toThrow();
+    expect(() => verifyReleaseEnvelope(envelope(unsigned), publicKey, "Permit Monitor LLC")).toThrow(
+      "Update manifest target invalid",
+    );
+    expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "")).toThrow("Update manifest target invalid");
   });
 
   it("rejects a manifest signed by another key", () => {
     const other = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
-    expect(() => verifyReleaseEnvelope(envelope(payload), other, "Permit Monitor LLC")).toThrow();
+    expect(() => verifyReleaseEnvelope(envelope(payload), other, "Permit Monitor LLC")).toThrow(
+      "Update manifest signature invalid",
+    );
   });
 
   it("rejects altered metadata, wrong publisher, and non-HTTPS installer", () => {
     const valid = JSON.parse(envelope(payload));
     valid.signed = Buffer.from(JSON.stringify({ ...payload, sha256: "b".repeat(64) })).toString("base64");
-    expect(() => verifyReleaseEnvelope(JSON.stringify(valid), publicKey, "Permit Monitor LLC")).toThrow();
-    expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "Other Publisher")).toThrow();
+    expect(() => verifyReleaseEnvelope(JSON.stringify(valid), publicKey, "Permit Monitor LLC")).toThrow(
+      "Update manifest signature invalid",
+    );
+    expect(() => verifyReleaseEnvelope(envelope(payload), publicKey, "Other Publisher")).toThrow(
+      "Update manifest target invalid",
+    );
     expect(() =>
       verifyReleaseEnvelope(
         envelope({ ...payload, url: "http://updates.example.test/app.exe" }),
         publicKey,
         "Permit Monitor LLC",
       ),
-    ).toThrow();
+    ).toThrow("Update manifest target invalid");
   });
 });
 
 describe("installer download", () => {
-  const directories: string[] = [];
-
-  afterEach(() => {
-    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
-  });
-
   function target(): string {
-    const directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-update-"));
-    directories.push(directory);
-
-    return path.join(directory, "setup.partial.exe");
+    return path.join(temporaryDirectory("permit-monitor-update-"), "setup.partial.exe");
   }
 
   /** A download that sends `chunks`, then ends or fails; `cancelled` records whether the app released it. */
@@ -106,14 +101,14 @@ describe("installer download", () => {
     const file = target();
     const { body } = stream(["Permit", "Monitor"], "end");
     const hash = await saveDownload(body, file, 13, () => undefined);
-    expect(hash).toBe(createHash("sha256").update("PermitMonitor").digest("hex"));
+    expect(hash).toBe(sha256("PermitMonitor"));
     expect(readFileSync(file, "utf8")).toBe("PermitMonitor");
   });
 
   it("removes the partial file when the connection fails partway", async () => {
     const file = target();
     const { body } = stream(["Permit"], "fail");
-    await expect(saveDownload(body, file, 13, () => undefined)).rejects.toThrow();
+    await expect(saveDownload(body, file, 13, () => undefined)).rejects.toThrow("connection reset");
     expect(existsSync(file)).toBe(false);
   });
 
@@ -144,7 +139,7 @@ describe("installer download", () => {
   it("releases the connection when the file can't be written", async () => {
     const { body, state } = stream(["Permit"], "end");
     const blocked = path.join(target(), "missing-folder", "setup.partial.exe");
-    await expect(saveDownload(body, blocked, 6, () => undefined)).rejects.toThrow();
+    await expect(saveDownload(body, blocked, 6, () => undefined)).rejects.toMatchObject({ code: "ENOENT" });
     expect(state.cancelled).toBe(true);
   });
 });
@@ -214,22 +209,12 @@ async function updateServer(signingKey: KeyObject) {
     publish(version: string, bytes: Buffer): void {
       installers.set(version, { bytes, release: Promise.resolve(), drop: false });
 
-      const signed = Buffer.from(
-        JSON.stringify({
-          version,
-          url: `${origin}/installer/${version}`,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          size: bytes.length,
-          publisher: "",
-        }),
-      );
-
       feed = {
         status: 200,
-        body: JSON.stringify({
-          signed: signed.toString("base64"),
-          signature: sign(null, signed, signingKey).toString("base64"),
-        }),
+        body: signedEnvelope(
+          { version, url: `${origin}/installer/${version}`, sha256: sha256(bytes), size: bytes.length, publisher: "" },
+          signingKey,
+        ),
       };
     },
     /** Holds `version`'s installer after its first half until the returned function is called. */
@@ -263,7 +248,6 @@ async function updateServer(signingKey: KeyObject) {
 describe("update operations", () => {
   const trusted = getCACertificates("default");
   const keys = generateKeyPairSync("ed25519");
-  const directories: string[] = [];
   const servers: Array<{ close(): Promise<void> }> = [];
 
   beforeAll(() => {
@@ -276,16 +260,13 @@ describe("update operations", () => {
 
   afterEach(async () => {
     for (const server of servers.splice(0)) await server.close();
-
-    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
   });
 
   /** A running feed server and an UpdateManager for app version 1.0.0 that reads it, with its own data folder. */
   async function setup() {
     const server = await updateServer(keys.privateKey);
     servers.push(server);
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "permit-monitor-updates-"));
-    directories.push(dataRoot);
+    const dataRoot = temporaryDirectory("permit-monitor-updates-");
     const config = path.join(dataRoot, "update-config.json");
     writeFileSync(
       config,
@@ -319,7 +300,7 @@ describe("update operations", () => {
     await vi.waitFor(() => expect(server.requests).toEqual(["1.1.0"]));
 
     server.failFeed(503);
-    await expect(updates.check()).rejects.toThrow();
+    await expect(updates.check()).rejects.toThrow("Update manifest unavailable");
     release();
 
     await expect(download).resolves.toBe("1.1.0");
@@ -369,7 +350,7 @@ describe("update operations", () => {
     await updates.check();
 
     server.serve("1.1.0", first, "drop");
-    await expect(updates.download()).rejects.toThrow();
+    await expect(updates.download()).rejects.toThrow("terminated");
     server.serve("1.1.0", second, "end");
     await expect(updates.download()).rejects.toThrow("Update hash mismatch");
     await expect(updates.installerForApprovedHandoff()).rejects.toBeInstanceOf(UpdateNotReady);

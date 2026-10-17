@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { AppEvent, BridgeResult } from "../src/shared/bridge.js";
 import type { AppSnapshot, PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
+import { permitRow } from "./support/permit-row.js";
 
 /** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
@@ -43,6 +44,14 @@ declare global {
     keptRows: Set<Element>;
   }
 }
+
+/** Content types for the bundle's files by extension; anything else is served as HTML. */
+const CONTENT_TYPES = new Map([
+  [".js", "text/javascript"],
+  [".css", "text/css"],
+  [".woff2", "font/woff2"],
+  [".svg", "image/svg+xml"],
+]);
 
 // The real renderer bundle runs in the bundled Chromium against a controlled bridge that stands in for main.
 let browser: Browser;
@@ -85,18 +94,7 @@ beforeAll(async () => {
 
     void readFile(file).then(
       (body) => {
-        response.setHeader(
-          "Content-Type",
-          relative.endsWith(".js")
-            ? "text/javascript"
-            : relative.endsWith(".css")
-              ? "text/css"
-              : relative.endsWith(".woff2")
-                ? "font/woff2"
-                : relative.endsWith(".svg")
-                  ? "image/svg+xml"
-                  : "text/html",
-        );
+        response.setHeader("Content-Type", CONTENT_TYPES.get(path.extname(relative)) ?? "text/html");
         response.end(body);
       },
       () => {
@@ -117,23 +115,18 @@ afterAll(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+/** A verified Hillsborough permit numbered by `index`, with `overrides` applied. */
 function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
-  return {
+  return permitRow({
     id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    jurisdictionId: "hillsborough-county-building",
     permitNumber: `HC-BLD-26-${String(index).padStart(7, "0")}`,
-    projectNumber: null,
-    reviews: null,
-    monitoringEnabled: true,
     lastStatus: "In Process",
     lastObservedAt: "2026-09-24T12:00:00.000Z",
     lastRecordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx",
     latestAttemptAt: "2026-09-24T12:00:00.000Z",
     latestOutcome: "success",
-    nextDueAt: null,
-    checking: false,
     ...overrides,
-  };
+  });
 }
 
 let revision = 0;
@@ -281,7 +274,6 @@ async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<vo
         "setMonitoring",
         "setPermitMonitoring",
         "setProjectNumber",
-        "setPreference",
         "checkForUpdate",
         "downloadUpdate",
         "installUpdate",
@@ -509,7 +501,7 @@ describe("notification surfaces", () => {
 });
 
 describe("AEC filter", () => {
-  it("shows review-driven AEC action and the latest discipline statuses while preserving the portal's In Process wording", async () => {
+  it("marks a permit AEC from an outstanding review while keeping the portal's status wording", async () => {
     const reviews = [
       {
         process: "Natural Resources Review",
@@ -972,11 +964,10 @@ describe("workspace accessibility", () => {
     await page.waitForFunction(() => (document.querySelector(".table-scroll")?.scrollLeft ?? 0) > 0);
     const last = page.locator("#permit-table tbody tr").last().getByRole("button", { name: "Check now" });
     await last.focus();
-    const box = await last.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box?.x).toBeGreaterThanOrEqual(0);
-    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(820);
-    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(560);
+    const box = defined(await last.boundingBox(), "the last row's Check now button");
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(820);
+    expect(box.y + box.height).toBeLessThanOrEqual(560);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(820);
     await page.keyboard.press("Enter");
     expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);

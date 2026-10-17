@@ -1,22 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { describeCheckEvent, describeSharedUpdate } from "../src/main/notifications.js";
 import type { PermitRow } from "../src/shared/permit.js";
+import { permitRow } from "./support/permit-row.js";
 
-const base: PermitRow = {
-  id: "00000000-0000-4000-8000-000000000001",
-  jurisdictionId: "hillsborough-county-building",
-  permitNumber: "HC-BLD-26-0087599",
-  projectNumber: null,
-  reviews: null,
-  monitoringEnabled: true,
-  lastStatus: null,
-  lastObservedAt: null,
-  lastRecordUrl: null,
-  latestAttemptAt: null,
-  latestOutcome: null,
-  nextDueAt: null,
-  checking: false,
-};
+const base = permitRow();
 
 const verified: PermitRow = {
   ...base,

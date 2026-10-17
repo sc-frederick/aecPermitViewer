@@ -1,30 +1,27 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
-const directories: string[] = [];
-
-afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
-});
+/** Set by `newStore`. A value left from an earlier test names a directory already removed, so using it fails. */
+let newestStoreDirectory: string | undefined;
 
 function newStore(): PermitStore {
-  const directory = mkdtempSync(path.join(tmpdir(), "permit-monitor-test-"));
-  directories.push(directory);
+  const directory = temporaryDirectory("permit-monitor-test-");
+  newestStoreDirectory = directory;
 
   return new PermitStore(path.join(directory, "data.sqlite"));
 }
 
 /** The directory of the store `newStore` created most recently. */
 function newestDirectory(): string {
-  return defined(directories.at(-1), "a store created by newStore");
+  return defined(newestStoreDirectory, "a store created by newStore");
 }
 
 /** Adds a permit the test expects to be new and returns its id; throws if the store refuses it. */
@@ -191,7 +188,7 @@ describe("permit removal", () => {
       expect(store.history(permitId)).toEqual({ runs: [], observations: [] });
       expect(store.getObservation(observationId)).toBeNull();
       expect(store.removePermit(permitId)).toBe(false);
-      expect(addPermit(store, "HC-BLD-26-0087599")).toBeTruthy();
+      expect(store.addPermit("HC-BLD-26-0087599")._tag).toBe("ok");
     } finally {
       store.close();
     }
@@ -394,7 +391,7 @@ describe("hand-checked permits", () => {
       const permitId = addPermit(store, "BLD2024-01234", "orange-county-building");
       expect(store.getPermit(permitId)?.monitoringEnabled).toBe(false);
       expect(store.duePermitIds(new Date().toISOString())).not.toContain(permitId);
-      expect(() => store.setPermitMonitoring(permitId, true)).toThrow();
+      expect(() => store.setPermitMonitoring(permitId, true)).toThrow("Permit is checked by hand");
 
       store.recordManualStatus({
         permitId,
@@ -428,7 +425,7 @@ describe("hand-checked permits", () => {
           appVersion: "test",
           recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx",
         }),
-      ).toThrow();
+      ).toThrow("Permit is not checked by hand");
     } finally {
       store.close();
     }
@@ -555,7 +552,7 @@ describe("migration backups", () => {
     expect(backups).toHaveLength(1);
     // Restoring means putting the backup where a fresh install would open it, with no WAL beside it.
     const restored = path.join(directory, "restored.sqlite");
-    copyFileSync(path.join(directory, backups[0] ?? ""), restored);
+    copyFileSync(path.join(directory, defined(backups[0], "the pre-v3 backup")), restored);
     const restoredStore = new PermitStore(restored);
 
     try {
@@ -774,7 +771,9 @@ describe("schedule edits", () => {
         );
       });
       const before = store.getCheckTimes();
-      expect(() => store.setCheckTimes([{ hour: 14, minute: 0 }], new Date(2026, 8, 29, 10))).toThrow();
+      expect(() => store.setCheckTimes([{ hour: 14, minute: 0 }], new Date(2026, 8, 29, 10))).toThrow(
+        "fixture failure",
+      );
       expect(store.getCheckTimes()).toEqual(before);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(due);
     } finally {

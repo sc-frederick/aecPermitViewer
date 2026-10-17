@@ -97,7 +97,7 @@ describe("review history", () => {
     },
   );
 
-  it("keeps old records compatible and falls back to the jurisdiction's wording when no review asks for a response", () => {
+  it("classifies by the listed portal status when no review asks for a response", () => {
     for (const reviews of [null, [], [{ ...correction, status: "Approved" }]]) {
       expect(
         permitAction({ jurisdictionId: "hillsborough-county-building", lastStatus: "In Process", reviews }),

@@ -1,65 +1,28 @@
 import { spawnSync } from "node:child_process";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { fakeAwsEnvironment, FEED_BUCKET, installFakeAwsCli } from "./support/fake-aws-cli.js";
+import { releaseManifest, sha256 } from "./support/release-manifest.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const SCRIPT = path.resolve("scripts/publish-feed.mjs");
 
-const FAKE_AWS = path.resolve("tests/fixtures/fake-aws.mjs");
-
-const BUCKET = "permitmon-updates";
-
-const keys = generateKeyPairSync("ed25519");
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function manifest(version: string, installer: string): string {
-  const signed = Buffer.from(
-    JSON.stringify({
-      version,
-      url: `https://permitmon-updates.example.test/PermitMonitorSetup-${version}.exe`,
-      sha256: sha256(installer),
-      size: Buffer.byteLength(installer),
-      publisher: "",
-    }),
-  );
-
-  return JSON.stringify({
-    signed: signed.toString("base64"),
-    signature: sign(null, signed, keys.privateKey).toString("base64"),
-  });
-}
-
 // The release job runs on Linux, and the fake CLI is reached through a shell wrapper on PATH.
 describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
-  const directories: string[] = [];
-
-  afterEach(() => {
-    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
-  });
-
   /** A release job workspace, a fake bucket, and an `aws` on PATH that writes to it. */
   function workspace() {
-    const root = mkdtempSync(path.join(tmpdir(), "permit-monitor-feed-"));
-    directories.push(root);
-    const bin = path.join(root, "bin");
-    const store = path.join(root, "store");
+    const root = temporaryDirectory("permit-monitor-feed-");
+    const aws = installFakeAwsCli(root);
+    const bucket = path.join(aws.store, FEED_BUCKET);
     const out = path.join(root, "work", "out", "make", "squirrel.windows", "x64");
-    mkdirSync(bin, { recursive: true });
-    mkdirSync(path.join(store, BUCKET), { recursive: true });
     mkdirSync(out, { recursive: true });
-    writeFileSync(path.join(bin, "aws"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_AWS}" "$@"\n`);
-    chmodSync(path.join(bin, "aws"), 0o755);
 
     return {
       /** Writes a signed installer, its manifest, and a placeholder Mac zip to the job's output directory. */
       build(version: string, installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
-        writeFileSync(path.join(out, "release-manifest.json"), manifest(version, installer));
+        writeFileSync(path.join(out, "release-manifest.json"), releaseManifest(version, installer));
         writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), `mac ${version}`);
       },
       /** Replaces the Mac zip with the bytes the macOS job would build. */
@@ -72,32 +35,27 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
       },
       /** Stores an object as an earlier release left it; omit `sha256` to model one stored without a recorded hash. */
       seed(key: string, body: string, metadata: { sha256?: string } = {}): void {
-        writeFileSync(path.join(store, BUCKET, key), body);
+        writeFileSync(path.join(bucket, key), body);
         writeFileSync(
-          path.join(store, BUCKET, `${key}.meta.json`),
+          path.join(bucket, `${key}.meta.json`),
           JSON.stringify({ contentType: "application/octet-stream", metadata }),
         );
       },
       stored(key: string): string | null {
-        const file = path.join(store, BUCKET, key);
+        const file = path.join(bucket, key);
 
         return existsSync(file) ? readFileSync(file, "utf8") : null;
       },
       recordedSha256(key: string): string | undefined {
-        return JSON.parse(readFileSync(path.join(store, BUCKET, `${key}.meta.json`), "utf8")).metadata.sha256;
+        return JSON.parse(readFileSync(path.join(bucket, `${key}.meta.json`), "utf8")).metadata.sha256;
       },
       writes(): string[] {
-        const log = path.join(store, "writes.log");
+        const log = path.join(aws.store, "writes.log");
 
         return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
       },
       publish(fail?: string, racedManifest?: string) {
-        const env: NodeJS.ProcessEnv = {
-          ...process.env,
-          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-          R2_ENDPOINT: "https://r2.example.test",
-          FAKE_AWS_ROOT: store,
-        };
+        const env = fakeAwsEnvironment(aws);
 
         if (fail) env.FAKE_AWS_FAIL = fail;
 
@@ -121,11 +79,11 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(result.status, result.output).toBe(0);
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
     expect(feed.recordedSha256("PermitMonitorSetup-0.8.0.exe")).toBe(sha256("eight"));
-    expect(feed.stored("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
+    expect(feed.stored("release-manifest.json")).toBe(releaseManifest("0.8.0", "eight"));
     expect(feed.writes()).toEqual([
-      `${BUCKET}/PermitMonitorSetup-0.8.0.exe`,
-      `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
-      `${BUCKET}/release-manifest.json`,
+      `${FEED_BUCKET}/PermitMonitorSetup-0.8.0.exe`,
+      `${FEED_BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
+      `${FEED_BUCKET}/release-manifest.json`,
     ]);
   });
 
@@ -138,9 +96,9 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(feed.stored("PermitMonitor-0.8.0-mac-arm64.zip")).toBe("mac eight");
     expect(feed.recordedSha256("PermitMonitor-0.8.0-mac-arm64.zip")).toBe(sha256("mac eight"));
     expect(feed.writes()).toEqual([
-      `${BUCKET}/PermitMonitorSetup-0.8.0.exe`,
-      `${BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
-      `${BUCKET}/release-manifest.json`,
+      `${FEED_BUCKET}/PermitMonitorSetup-0.8.0.exe`,
+      `${FEED_BUCKET}/PermitMonitor-0.8.0-mac-arm64.zip`,
+      `${FEED_BUCKET}/release-manifest.json`,
     ]);
 
     feed.buildMac("MAC EIGHT");
@@ -150,7 +108,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(feed.stored("PermitMonitor-0.8.0-mac-arm64.zip")).toBe("mac eight");
   });
 
-  it("skips both writes when an identical release is rerun", () => {
+  it("skips every write when an identical release is rerun", () => {
     const feed = workspace();
     feed.build("0.8.0", "eight");
     feed.publish();
@@ -169,7 +127,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(rerun.status).not.toBe(0);
     expect(rerun.output).toContain("already published with different bytes");
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
-    expect(feed.stored("release-manifest.json")).toBe(manifest("0.8.0", "eight"));
+    expect(feed.stored("release-manifest.json")).toBe(releaseManifest("0.8.0", "eight"));
   });
 
   it("keeps the newer manifest when an older release finishes last", () => {
@@ -181,13 +139,13 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     expect(older.status, older.output).toBe(0);
     expect(older.output).toContain("::warning::");
     expect(feed.stored("PermitMonitorSetup-0.8.0.exe")).toBe("eight");
-    expect(feed.stored("release-manifest.json")).toBe(manifest("0.9.0", "nine"));
+    expect(feed.stored("release-manifest.json")).toBe(releaseManifest("0.9.0", "nine"));
   });
 
   it("does not replace a newer manifest first published during the final upload", () => {
     const feed = workspace();
     feed.build("0.8.0", "eight");
-    const newer = manifest("0.9.0", "nine");
+    const newer = releaseManifest("0.9.0", "nine");
     const result = feed.publish(undefined, newer);
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("PreconditionFailed");
@@ -196,9 +154,9 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
 
   it("does not replace a manifest that changed after its etag was read", () => {
     const feed = workspace();
-    feed.seed("release-manifest.json", manifest("0.7.0", "seven"));
+    feed.seed("release-manifest.json", releaseManifest("0.7.0", "seven"));
     feed.build("0.8.0", "eight");
-    const newer = manifest("0.9.0", "nine");
+    const newer = releaseManifest("0.9.0", "nine");
     const result = feed.publish(undefined, newer);
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("PreconditionFailed");
@@ -211,7 +169,7 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     feed.publish();
     feed.build("0.10.0", "ten");
     expect(feed.publish().status).toBe(0);
-    expect(feed.stored("release-manifest.json")).toBe(manifest("0.10.0", "ten"));
+    expect(feed.stored("release-manifest.json")).toBe(releaseManifest("0.10.0", "ten"));
   });
 
   it("hashes an installer stored without a recorded hash before accepting it as identical", () => {
@@ -220,7 +178,10 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     feed.build("0.7.0", "seven");
     const identical = feed.publish();
     expect(identical.status, identical.output).toBe(0);
-    expect(feed.writes()).toEqual([`${BUCKET}/PermitMonitor-0.7.0-mac-arm64.zip`, `${BUCKET}/release-manifest.json`]);
+    expect(feed.writes()).toEqual([
+      `${FEED_BUCKET}/PermitMonitor-0.7.0-mac-arm64.zip`,
+      `${FEED_BUCKET}/release-manifest.json`,
+    ]);
 
     const other = workspace();
     other.seed("PermitMonitorSetup-0.7.0.exe", "SEVEN");

@@ -1,5 +1,4 @@
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +11,7 @@ import { latestReviews, outstandingReviews } from "../src/shared/reviews.js";
 import { workerToMainSchema } from "../src/shared/worker-protocol.js";
 import { readDetail } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 // Captured from a live Hillsborough permit on September 28, 2026, keeping only the record fields and workflow table.
 // Comments, scripts, links, and images are stripped; nested and collapsed rows and status fields keep Accela's markup.
@@ -47,7 +47,7 @@ async function serve(body: string): Promise<void> {
 }
 
 describe("Accela Processing Status", () => {
-  it("reads the reported permit's collapsed histories, saves them, classifies AEC, and announces each new request only once", async () => {
+  it("reads a site permit's collapsed review histories and announces each new correction request once", async () => {
     await serve(html);
     const record = await readDetail(page, profile, number);
     expect(record.statusValue).toBe("In Process");
@@ -84,8 +84,7 @@ describe("Accela Processing Status", () => {
     const parsed = parseDisplayedStatus({ ...message, jurisdictionId: profile.id, requestedNumber: number });
 
     if (parsed._tag === "err") throw new Error(parsed.outcome);
-    const directory = mkdtempSync(path.join(tmpdir(), "permit-review-test-"));
-    const store = new PermitStore(path.join(directory, "data.sqlite"));
+    const store = new PermitStore(path.join(temporaryDirectory("permit-review-test-"), "data.sqlite"));
 
     try {
       const added = store.addPermit(number);
@@ -133,23 +132,22 @@ describe("Accela Processing Status", () => {
       expect(store.getObservation(observation.id)?.reviews).toEqual(reviews);
     } finally {
       store.close();
-      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it("waits for lazy-loaded Processing Status before reading the disciplines", async () => {
-    const table = /<div id="divProcessingTable"[\s\S]*<\/div>/.exec(html)?.[0];
-    expect(table).toBeTruthy();
+    const table = defined(/<div id="divProcessingTable"[\s\S]*<\/div>/.exec(html)?.[0], "the Processing Status table");
     const encoded = JSON.stringify(table).replaceAll("<", "\\u003c");
     await serve(
       html
-        .replace(table ?? "", '<div id="divProcessingTable"></div>')
+        .replace(table, '<div id="divProcessingTable"></div>')
         .replace(
           "</body>",
           `<a data-control="tab-processing_status" onclick='setTimeout(() => document.querySelector("#divProcessingTable").outerHTML = ${encoded}, 50)'>Processing Status</a></body>`,
         ),
     );
-    expect(outstandingReviews((await readDetail(page, profile, number)).reviews ?? [])).toHaveLength(3);
+    const { reviews } = await readDetail(page, profile, number);
+    expect(outstandingReviews(defined(reviews, "the lazily loaded reviews"))).toHaveLength(3);
   });
 
   it("fails a check rather than treating a missing workflow as no outstanding corrections", async () => {

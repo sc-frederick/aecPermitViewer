@@ -245,7 +245,7 @@ describe("scheduled eligibility", () => {
     expect(started).toEqual(["a1"]);
   });
 
-  it("tells the starter scheduled work stopped qualifying while the browser was verified, but keeps manual requests", async () => {
+  it("lets the starter drop scheduled work that stops qualifying during browser verification", async () => {
     const browser = gate();
     const launched: string[] = [];
     const deferred: string[] = [];
@@ -394,7 +394,7 @@ describe("keys", () => {
     await finish("a1");
   });
 
-  it("drops work without recording failures while no key is saved, tells someone who asks, and resumes once one reads", async () => {
+  it("skips checks while no key is saved and resumes once a key reads", async () => {
     const { queue, started, keyNotices, state } = harness({ a1: "accela", h1: "tyler", s1: "click2gov" });
     state.key = null;
 

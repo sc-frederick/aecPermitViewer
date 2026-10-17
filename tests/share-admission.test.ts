@@ -1,6 +1,4 @@
-import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import { DEFAULT_ADMISSION_LIMITS } from "../infra/sync-server/src/admission.js";
 import { route } from "../infra/sync-server/src/router.js";
 import { openList, sealList, ShareService } from "../src/main/share-service.js";
@@ -8,63 +6,33 @@ import { SharePublisher } from "../src/main/share-sync.js";
 import { readTokenFor, toBase64Url } from "../src/shared/share-protocol.js";
 import { MemoryRooms } from "./fixtures/memory-rooms.js";
 import { defined } from "./support/defined.js";
+import { serveFetchHandler } from "./support/fetch-handler-server.js";
 
 const WRITE_KEY = toBase64Url(new Uint8Array(32).fill(10));
 
 const CONTENT_KEY = new Uint8Array(32).fill(11);
 
-const servers: Server[] = [];
-
 const publishers: SharePublisher[] = [];
 
-/** Serves the production router and admission policy over real HTTP, backed by the SQLite room fixture. */
+/**
+ * Serves the production router and admission policy over real HTTP, backed by the SQLite room fixture, with every
+ * request arriving from one address. Each response status is added to `responses`.
+ */
 async function serve(rooms: MemoryRooms, responses: number[]): Promise<ShareService> {
-  const server = createServer((incoming, outgoing) => {
-    void (async () => {
-      const chunks: Buffer[] = [];
+  const server = await serveFetchHandler(async (request) => {
+    request.headers.set("cf-connecting-ip", "192.0.2.1");
+    const response = await route(request, rooms.directory, rooms.admission);
+    responses.push(response.status);
 
-      for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
-      const headers = new Headers({ "cf-connecting-ip": "192.0.2.1" });
-
-      for (let index = 0; index + 1 < incoming.rawHeaders.length; index += 2) {
-        headers.append(
-          defined(incoming.rawHeaders[index], "header name"),
-          defined(incoming.rawHeaders[index + 1], "header value"),
-        );
-      }
-
-      const init: RequestInit = { method: incoming.method ?? "GET", headers };
-      const body = Buffer.concat(chunks);
-
-      if (body.length > 0) init.body = body;
-
-      const response = await route(
-        new Request(`http://127.0.0.1${incoming.url ?? "/"}`, init),
-        rooms.directory,
-        rooms.admission,
-      );
-
-      responses.push(response.status);
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
-    })().catch(() => {
-      outgoing.writeHead(500);
-      outgoing.end();
-    });
+    return response;
   });
 
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = z.object({ port: z.number() }).parse(server.address());
-
-  return new ShareService(new URL(`http://127.0.0.1:${port}`));
+  return new ShareService(new URL(server.origin));
 }
 
 afterEach(async () => {
   for (const publisher of publishers.splice(0)) await publisher.stop();
   vi.useRealTimers();
-
-  for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
 describe("sharing admission over real HTTP", () => {
@@ -81,7 +49,7 @@ describe("sharing admission over real HTTP", () => {
     expect(responses).toEqual([200, 429]);
   });
 
-  it("retries a rate-limited publication at Retry-After and eventually delivers the changed list without another user action", async () => {
+  it("retries a rate-limited publication on its own at the Retry-After time", async () => {
     const rooms = new MemoryRooms({ ...DEFAULT_ADMISSION_LIMITS, sourceWritesPerMinute: 1 });
     const responses: number[] = [];
     const service = await serve(rooms, responses);

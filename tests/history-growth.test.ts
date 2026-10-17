@@ -1,18 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js";
 import { PermitStore } from "../src/main/store.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 // CI runs this alone with `npm run benchmark:history`. The fixture models 75 permits with three daily checks and
 // 20 reviews per check. The two-minute timeout covers seeding 246,375 observations on Windows; publication must still
 // keep every event-loop turn under 100 ms.
 describe("history growth benchmark", () => {
   it("materializes only the retained daily window as discarded history grows", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "permit-history-growth-"));
-    const file = path.join(root, "data.sqlite");
+    const file = path.join(temporaryDirectory("permit-history-growth-"), "data.sqlite");
     const store = new PermitStore(file);
     const db = new DatabaseSync(file);
     const ids: string[] = [];
@@ -45,8 +45,7 @@ describe("history growth benchmark", () => {
       for (const [from, to] of [
         [0, 365],
         [365, 1095],
-      ]) {
-        if (from === undefined || to === undefined) throw new Error("fixture range missing");
+      ] as const) {
         db.exec("BEGIN");
 
         for (const permitId of ids) {
@@ -115,7 +114,6 @@ describe("history growth benchmark", () => {
     } finally {
       db.close();
       store.close();
-      rmSync(root, { recursive: true, force: true });
     }
   }, 120_000);
 });
