@@ -6,16 +6,17 @@ import { getAutomatedJurisdiction } from "../src/shared/jurisdictions.js";
 import { parseDisplayedStatus } from "../src/shared/permit.js";
 import type { DisplayedRecord } from "../src/worker/adapter.js";
 import { readDetail, tylerFoundNothing, waitForLanding, waitForTylerResults } from "../src/worker/detail.js";
+import { defined } from "./support/defined.js";
 
-// Recorded Hernando pages, served at the portal's own address in the bundled Chromium, so the worker's reading code
-// sees the markup it sees live.
+// Recorded Hernando pages are served at the portal's own address in the bundled Chromium, so the worker reads the same
+// markup it reads live.
 const BASE = "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod";
 
 const PERMIT_URL = `${BASE}#/permit/f3a325c7-9779-4de4-9b08-3a6aff019939`;
 
 const PLAN_URL = `${BASE}#/plan/5cc7d3ff-b001-4913-9fb1-0043d864fd54`;
 
-const hernando = getAutomatedJurisdiction("hernando-county-building");
+const hernando = defined(getAutomatedJurisdiction("hernando-county-building"), "the Hernando profile");
 
 let browser: Browser;
 
@@ -28,7 +29,9 @@ function fixture(name: string): string {
 /** Opens `url` with the portal answering every request with `html`. */
 async function serve(url: string, html: string): Promise<void> {
   page = await browser.newPage();
-  await page.route("https://hernandocountyfl-energovweb.tylerhost.net/**", (route) => route.fulfill({ contentType: "text/html", body: html }));
+  await page.route("https://hernandocountyfl-energovweb.tylerhost.net/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: html }),
+  );
   await page.goto(url, { waitUntil: "domcontentloaded" });
 }
 
@@ -52,21 +55,33 @@ interface WatchedWait {
   done: () => boolean;
 }
 
-/** Runs `wait` and reports whether it has finished, so a test can show a wait holds until the page is ready. */
+/** Tracks whether `wait` has settled, so a test can show the wait holds until the page is ready. */
 function watch(wait: Promise<void>): WatchedWait {
   let done = false;
 
-  return { finished: wait.then(() => { done = true; }), done: () => done };
+  return {
+    finished: wait.then(() => {
+      done = true;
+    }),
+    done: () => done,
+  };
 }
 
-/** Main's verification of what the worker read, given the fields the worker requires before it reports a record. */
+/** Runs the main process's verification on a worker read; throws if a field the worker requires is missing. */
 function verify(record: DisplayedRecord, requestedNumber: string): ReturnType<typeof parseDisplayedStatus> {
   const { displayedNumber, statusLabel, statusValue, recordUrl } = record;
 
-  if (!displayedNumber || !statusLabel || !statusValue || !recordUrl || !hernando) throw new Error("Record incomplete");
+  if (!displayedNumber || !statusLabel || !statusValue || !recordUrl) throw new Error("Record incomplete");
 
-  return parseDisplayedStatus({ jurisdictionId: hernando.id, requestedNumber, displayedNumber, statusLabel, statusValue, recordUrl,
-    observedAt: "2026-09-28T12:00:00.000Z" });
+  return parseDisplayedStatus({
+    jurisdictionId: hernando.id,
+    requestedNumber,
+    displayedNumber,
+    statusLabel,
+    statusValue,
+    recordUrl,
+    observedAt: "2026-09-28T12:00:00.000Z",
+  });
 }
 
 beforeAll(async () => {
@@ -83,55 +98,83 @@ afterAll(async () => {
 
 describe("Hernando record pages", () => {
   it("reads a permit's number and status from permit fields, and passes main's verification", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PERMIT_URL, fixture("permit-detail.html"));
 
     const record = await readDetail(page, hernando, "BLDC-000576-2026");
-    expect(record).toEqual({ displayedNumber: "BLDC-000576-2026", statusValue: "Final", statusLabel: "Status:", recordUrl: PERMIT_URL });
-    expect(verify(record, "BLDC-000576-2026")).toMatchObject({ _tag: "ok", value: { statusValue: "Final", recordUrl: PERMIT_URL } });
+    expect(record).toEqual({
+      displayedNumber: "BLDC-000576-2026",
+      statusValue: "Final",
+      statusLabel: "Status:",
+      recordUrl: PERMIT_URL,
+    });
+    expect(verify(record, "BLDC-000576-2026")).toMatchObject({
+      _tag: "ok",
+      value: { statusValue: "Final", recordUrl: PERMIT_URL },
+    });
   });
 
   it("reads a plan's number and status from plan fields, and passes main's verification", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, fixture("plan-detail.html"));
 
     const record = await readDetail(page, hernando, "DEVP-000011-2026");
-    expect(record).toEqual({ displayedNumber: "DEVP-000011-2026", statusValue: "Deficient", statusLabel: "Status:", recordUrl: PLAN_URL });
-    expect(verify(record, "DEVP-000011-2026")).toMatchObject({ _tag: "ok", value: { statusValue: "Deficient", recordUrl: PLAN_URL } });
+    expect(record).toEqual({
+      displayedNumber: "DEVP-000011-2026",
+      statusValue: "Deficient",
+      statusLabel: "Status:",
+      recordUrl: PLAN_URL,
+    });
+    expect(verify(record, "DEVP-000011-2026")).toMatchObject({
+      _tag: "ok",
+      value: { statusValue: "Deficient", recordUrl: PLAN_URL },
+    });
   });
 
   it("reads nothing when the page's fields don't belong to the kind of record its address names", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, fixture("permit-detail.html"));
 
-    expect(await readDetail(page, hernando, "BLDC-000576-2026")).toMatchObject({ displayedNumber: null, statusValue: null });
+    expect(await readDetail(page, hernando, "BLDC-000576-2026")).toMatchObject({
+      displayedNumber: null,
+      statusValue: null,
+    });
   });
 
   it("refuses an ambiguous status", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     const plan = fixture("plan-detail.html");
-    const block = /<div class="form-group" id="label-PlanDetail-Status"[\s\S]*?<\/div>/.exec(plan)?.[0] ?? "";
-    expect(block).not.toBe("");
+
+    const block = defined(
+      /<div class="form-group" id="label-PlanDetail-Status"[\s\S]*?<\/div>/.exec(plan)?.[0],
+      "the plan's status field",
+    );
+
     await serve(PLAN_URL, plan.replace(block, block + block.replace("Deficient", "Approved")));
 
-    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toMatchObject({ displayedNumber: "DEVP-000011-2026", statusValue: null });
+    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toMatchObject({
+      displayedNumber: "DEVP-000011-2026",
+      statusValue: null,
+    });
   });
 
   it("reads nothing from record kinds the app doesn't check", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(`${BASE}#/case/5cc7d3ff-b001-4913-9fb1-0043d864fd54`, fixture("plan-detail.html"));
 
-    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toEqual({ displayedNumber: null, statusValue: null, statusLabel: null, recordUrl: null });
+    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toEqual({
+      displayedNumber: null,
+      statusValue: null,
+      statusLabel: null,
+      recordUrl: null,
+    });
   });
 
   // The record page has no search controls, so a wait on them would hold the landing for its full 12 seconds, past
-  // this test's 5-second budget. Nothing else here depends on speed.
+  // the 5-second test timeout on Linux and macOS. Nothing else here depends on speed.
   it("lands on a saved record link once the record renders, without waiting on search controls", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
     await serve(PLAN_URL, renderedLater(fixture("plan-detail.html")));
 
     const landing = watch(waitForLanding(page, hernando));
-    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toMatchObject({ displayedNumber: null, statusValue: null });
+    expect(await readDetail(page, hernando, "DEVP-000011-2026")).toMatchObject({
+      displayedNumber: null,
+      statusValue: null,
+    });
     expect(landing.done()).toBe(false);
 
     await render();
@@ -143,8 +186,10 @@ describe("Hernando record pages", () => {
 
 describe("Hernando search", () => {
   it("lands on the search page once its keyword field renders", async () => {
-    if (!hernando) throw new Error("Hernando profile missing");
-    await serve(`${BASE}#/search`, renderedLater('<!doctype html><html><body><input id="SearchKeyword"></body></html>'));
+    await serve(
+      `${BASE}#/search`,
+      renderedLater('<!doctype html><html><body><input id="SearchKeyword"></body></html>'),
+    );
 
     const landing = watch(waitForLanding(page, hernando));
     expect(await page.locator("#SearchKeyword").count()).toBe(0);
@@ -156,9 +201,13 @@ describe("Hernando search", () => {
   });
 
   // The count label is hidden until the search finishes, next to labels that stay hidden. A wait that picked a hidden
-  // label would hold for its full 12 seconds, past this test's 5-second budget.
+  // label would hold for its full 12 seconds, past the 5-second test timeout on Linux and macOS.
   it("settles on the result message once it shows, and tells a finished empty search apart", async () => {
-    const pending = fixture("search-one-result.html").replace('aria-hidden="false" class=""', 'aria-hidden="false" class="ng-hide"');
+    const pending = fixture("search-one-result.html").replace(
+      'aria-hidden="false" class=""',
+      'aria-hidden="false" class="ng-hide"',
+    );
+
     expect(pending).not.toBe(fixture("search-one-result.html"));
     await serve(`${BASE}#/search`, pending);
 

@@ -24,7 +24,7 @@ export class ShareRoomObject extends DurableObject<SyncEnv> {
     return this.room.publish(body, Date.now());
   }
 
-  /** Reports existing ciphertext without allocating persistent storage. */
+  /** True when the room holds ciphertext. Does not allocate storage. */
   exists(): boolean {
     return this.room.exists();
   }
@@ -39,7 +39,7 @@ export class ShareRoomObject extends DurableObject<SyncEnv> {
     return this.room.remove();
   }
 
-  /** The retention alarm: nobody has published for RETENTION_MS, so the list goes. */
+  /** Retention alarm: fires RETENTION_MS after the last publication and deletes the list. */
   override async alarm(): Promise<void> {
     await this.room.remove();
   }

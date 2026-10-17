@@ -11,7 +11,7 @@ const payloadSchema = z.object({
   url: z.url(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   size: z.number().int().positive().max(1_000_000_000),
-  // Empty until releases are Authenticode-signed; the Ed25519 manifest is then the only trust anchor.
+  // Empty for releases without an Authenticode signature, which leaves the Ed25519 manifest as the only trust anchor.
   publisher: z.string().max(200),
 });
 
@@ -27,6 +27,12 @@ const configSchema = z.object({
   publicKeySpkiBase64: z.string(),
   expectedPublisher: z.string(),
 });
+
+/** The most bytes read from the update feed, whose signed JSON envelope is far smaller. */
+const MAX_MANIFEST_BYTES = 32_768;
+
+/** A download that receives nothing for this long is aborted. */
+const DOWNLOAD_STALL_MS = 60_000;
 
 function newer(candidate: string, current: string): boolean {
   const a = candidate.split(".").map(Number);
@@ -55,7 +61,11 @@ function newer(candidate: string, current: string): boolean {
  * @throws Error or ZodError when the envelope or payload is malformed, the signature is invalid, the installer URL is
  *   not a plain HTTPS URL, or the publisher differs. Callers treat any throw as "no trustworthy update".
  */
-export function verifyReleaseEnvelope(text: string, publicKeySpkiBase64: string, expectedPublisher: string): UpdatePayload {
+export function verifyReleaseEnvelope(
+  text: string,
+  publicKeySpkiBase64: string,
+  expectedPublisher: string,
+): UpdatePayload {
   const envelope = envelopeSchema.parse(JSON.parse(text));
   const signedBytes = Buffer.from(envelope.signed, "base64");
   const signature = Buffer.from(envelope.signature, "base64");
@@ -64,7 +74,8 @@ export function verifyReleaseEnvelope(text: string, publicKeySpkiBase64: string,
   if (!verify(null, signedBytes, key, signature)) throw new Error("Update manifest signature invalid");
   const payload = payloadSchema.parse(JSON.parse(signedBytes.toString("utf8")));
 
-  if (!safeHttpsUrl(payload.url) || payload.publisher !== expectedPublisher) throw new Error("Update manifest target invalid");
+  if (!safeHttpsUrl(payload.url) || payload.publisher !== expectedPublisher)
+    throw new Error("Update manifest target invalid");
 
   return payload;
 }
@@ -81,7 +92,10 @@ function safeHttpsUrl(value: string): URL | null {
   }
 }
 
-/** Follows up to three HTTPS redirects by hand. Each redirect's body is released before the next request. */
+/**
+ * Fetches `url`, following up to three redirects by hand so each target must be a plain HTTPS URL. Each redirect's
+ * body is released before the next request.
+ */
 async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
   let current = url;
 
@@ -146,7 +160,12 @@ function sameHex(left: string, right: string): boolean {
  * the stream is cancelled, the file is closed, and the error is rethrown. The file is removed only if this call created
  * it; an existing file at `file` fails the call and is left alone. `onProgress` runs after each read.
  */
-export async function saveDownload(body: ReadableStream<Uint8Array>, file: string, size: number, onProgress: () => void): Promise<string> {
+export async function saveDownload(
+  body: ReadableStream<Uint8Array>,
+  file: string,
+  size: number,
+  onProgress: () => void,
+): Promise<string> {
   const reader = body.getReader();
   let handle: FileHandle | null = null;
   let created = false;
@@ -194,7 +213,12 @@ export async function saveDownload(body: ReadableStream<Uint8Array>, file: strin
 export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
-  constructor(readonly operation: "check" | "download" | "install", override readonly cause?: unknown) {
+  constructor(
+    /** The operation whose result was discarded. */
+    readonly operation: "check" | "download" | "install",
+    /** The error the operation stopped with, if it failed rather than finished. */
+    override readonly cause?: unknown,
+  ) {
     super(`Update ${operation} was superseded`);
   }
 }
@@ -203,7 +227,10 @@ export class UpdateSuperseded extends Error {
 export class UpdateNotReady extends Error {
   readonly _tag = "UpdateNotReady" as const;
 
-  constructor(readonly needed: "available" | "downloaded") {
+  constructor(
+    /** What was missing: an offered update or a finished download. */
+    readonly needed: "available" | "downloaded",
+  ) {
     super(needed === "available" ? "No verified update available" : "No verified update downloaded");
   }
 }
@@ -215,12 +242,22 @@ export class UpdateNotReady extends Error {
 type UpdateState =
   | { readonly _tag: "idle" }
   | { readonly _tag: "available"; readonly payload: UpdatePayload }
-  | { readonly _tag: "downloading"; readonly payload: UpdatePayload; readonly operation: Promise<string>; readonly abort: AbortController }
+  | {
+      readonly _tag: "downloading";
+      readonly payload: UpdatePayload;
+      readonly operation: Promise<string>;
+      readonly abort: AbortController;
+    }
   | { readonly _tag: "ready"; readonly payload: UpdatePayload; readonly file: string };
 
 function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
-  return left.version === right.version && left.url === right.url && left.sha256 === right.sha256 &&
-    left.size === right.size && left.publisher === right.publisher;
+  return (
+    left.version === right.version &&
+    left.url === right.url &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size &&
+    left.publisher === right.publisher
+  );
 }
 
 /**
@@ -229,7 +266,7 @@ function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
  * check that changes the offer stops the old download, and a failed check leaves the current offer untouched.
  */
 export class UpdateManager {
-  private readonly config: { feedUrl: string; publicKeySpkiBase64: string; expectedPublisher: string };
+  private readonly config: z.infer<typeof configSchema>;
   private state: UpdateState = { _tag: "idle" };
   /** Advances whenever the offer is replaced or withdrawn; work started under an older value is stale. */
   private generation = 0;
@@ -238,7 +275,12 @@ export class UpdateManager {
   /** Settles once the latest download has finished all its file work, successful or not. Never rejects. */
   private downloadSettled: Promise<void> = Promise.resolve();
 
-  constructor(private readonly dataRoot: string, private readonly currentVersion: string, private readonly scriptPath: string, configPath: string) {
+  constructor(
+    private readonly dataRoot: string,
+    private readonly currentVersion: string,
+    private readonly scriptPath: string,
+    configPath: string,
+  ) {
     this.config = configSchema.parse(JSON.parse(readFileSync(configPath, "utf8")));
   }
 
@@ -257,12 +299,12 @@ export class UpdateManager {
     if (!feed || !this.config.publicKeySpkiBase64) return { state: "unavailable" };
     const response = await fetchHttps(feed, AbortSignal.timeout(10_000));
 
-    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 32_768) {
+    if (!response.ok || Number(response.headers.get("content-length") ?? 0) > MAX_MANIFEST_BYTES) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error("Update manifest unavailable");
     }
 
-    const text = await boundedText(response, 32_768);
+    const text = await boundedText(response, MAX_MANIFEST_BYTES);
     const payload = verifyReleaseEnvelope(text, this.config.publicKeySpkiBase64, this.config.expectedPublisher);
 
     if (sequence !== this.checkSequence || generation !== this.generation) throw new UpdateSuperseded("check");
@@ -278,7 +320,7 @@ export class UpdateManager {
     return { state: "available", version: payload.version, size: payload.size };
   }
 
-  /** The feed's link to the newest macOS build, which the Mac app sends people to instead of installing; null with no feed. */
+  /** The download page for the newest macOS build, derived from the feed URL; null when this build has no feed. */
   macDownloadUrl(): string | null {
     const feed = safeHttpsUrl(this.config.feedUrl);
 
@@ -306,18 +348,24 @@ export class UpdateManager {
     // update folder at once.
     const operation = this.downloadSettled
       .then(() => this.saveInstaller(payload, abort.signal))
-      .then((file) => {
-        if (generation !== this.generation) throw new UpdateSuperseded("download");
-        this.state = { _tag: "ready", payload, file };
+      .then(
+        (file) => {
+          if (generation !== this.generation) throw new UpdateSuperseded("download");
+          this.state = { _tag: "ready", payload, file };
 
-        return payload.version;
-      }, (cause) => {
-        if (generation !== this.generation) throw new UpdateSuperseded("download", cause);
-        this.state = { _tag: "available", payload };
-        throw cause;
-      });
+          return payload.version;
+        },
+        (cause) => {
+          if (generation !== this.generation) throw new UpdateSuperseded("download", cause);
+          this.state = { _tag: "available", payload };
+          throw cause;
+        },
+      );
 
-    this.downloadSettled = operation.then(() => undefined, () => undefined);
+    this.downloadSettled = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     this.state = { _tag: "downloading", payload, operation, abort };
 
     return operation;
@@ -334,7 +382,8 @@ export class UpdateManager {
 
   /**
    * Re-verifies the downloaded installer's size, hash, and publisher just before it is launched and returns its path.
-   * Rejects with `UpdateNotReady` when no download finished for the current offer.
+   * Rejects with `UpdateNotReady` when no download finished for the current offer, and with `UpdateSuperseded` when the
+   * offer changes during verification.
    */
   async installerForApprovedHandoff(): Promise<string> {
     const state = this.state;
@@ -376,7 +425,7 @@ export class UpdateManager {
     if (!installerUrl) throw new Error("Update URL invalid");
     // The installer is large, so abort on a stalled connection rather than a fixed total time.
     const stall = new AbortController();
-    let stallTimer = setTimeout(() => stall.abort(), 60_000);
+    let stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
     let hash: string;
 
     try {
@@ -389,7 +438,7 @@ export class UpdateManager {
 
       hash = await saveDownload(response.body, temporary, payload.size, () => {
         clearTimeout(stallTimer);
-        stallTimer = setTimeout(() => stall.abort(), 60_000);
+        stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
       });
     } catch (cause) {
       // Aborting ends the connection, whatever step failed.
@@ -415,8 +464,11 @@ export class UpdateManager {
       await rename(temporary, final);
 
       for (const entry of await readdir(updateDir)) {
-        if ((entry.startsWith("PermitMonitorSetup-") && entry.endsWith(".exe") && entry !== path.basename(final)) ||
-          entry.endsWith(".partial.exe")) await rm(path.join(updateDir, entry), { force: true });
+        if (
+          (entry.startsWith("PermitMonitorSetup-") && entry.endsWith(".exe") && entry !== path.basename(final)) ||
+          entry.endsWith(".partial.exe")
+        )
+          await rm(path.join(updateDir, entry), { force: true });
       }
     } catch (cause) {
       await rm(temporary, { force: true });
@@ -427,17 +479,31 @@ export class UpdateManager {
   }
 
   private async verifyPublisher(file: string, publisher: string, signal?: AbortSignal): Promise<void> {
-    // verifyReleaseEnvelope already required publisher === config.expectedPublisher, so an empty value
-    // only reaches here from an unsigned-build configuration.
+    // verifyReleaseEnvelope required publisher to equal the configured expectedPublisher, so an empty value means this
+    // build is configured for unsigned releases.
     if (!publisher) return;
 
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", this.scriptPath,
-        "-InstallerPath", file, "-ExpectedPublisher", publisher], { windowsHide: true, stdio: "ignore", signal });
+      const child = spawn(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-File",
+          this.scriptPath,
+          "-InstallerPath",
+          file,
+          "-ExpectedPublisher",
+          publisher,
+        ],
+        { windowsHide: true, stdio: "ignore", signal },
+      );
 
       child.once("error", reject);
-      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error("Update publisher verification failed")));
+      child.once("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error("Update publisher verification failed")),
+      );
     });
   }
 }

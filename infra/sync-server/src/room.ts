@@ -7,7 +7,9 @@ import * as z from "zod/mini";
 export type SqlValue = string | number | null | ArrayBuffer;
 
 /** A result row, keyed by column name. */
-export interface SqlRow { readonly [column: string]: SqlValue }
+export interface SqlRow {
+  readonly [column: string]: SqlValue;
+}
 
 /**
  * The part of a SQLite-backed Durable Object's storage the room uses. Cloudflare's DurableObjectStorage satisfies it
@@ -27,10 +29,12 @@ export const RETENTION_MS = 180 * 86_400_000;
 /** The shortest gap between two publications. The app publishes at most once a minute. */
 export const MIN_PUBLISH_INTERVAL_MS = 10_000;
 
+/** A stored publication with its new revision, or how long to wait when it came too soon after the last one. */
 export type PublishResult =
   | { readonly _tag: "published"; readonly revision: number; readonly publishedAt: string }
   | { readonly _tag: "too_soon"; readonly retryAfterSeconds: number };
 
+/** The stored list, `unchanged` when the reader already has its revision, or `absent` when nothing is stored. */
 export type ReadResult =
   | { readonly _tag: "absent" }
   | { readonly _tag: "unchanged"; readonly revision: number }
@@ -65,7 +69,9 @@ export class ShareRoom {
   constructor(private readonly storage: RoomStorage) {}
 
   private hasTable(): boolean {
-    const row = this.storage.sql.exec("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'list'").toArray()[0];
+    const row = this.storage.sql
+      .exec("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'list'")
+      .toArray()[0];
 
     return tableCountSchema.parse(row).tables > 0;
   }
@@ -104,9 +110,13 @@ export class ShareRoom {
       published_at TEXT NOT NULL,
       body BLOB NOT NULL
     )`);
-    this.storage.sql.exec(`INSERT INTO list (id, revision, published_at, body) VALUES (1, ?, ?, ?)
+    this.storage.sql.exec(
+      `INSERT INTO list (id, revision, published_at, body) VALUES (1, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, published_at = excluded.published_at, body = excluded.body`,
-    revision, publishedAt, body);
+      revision,
+      publishedAt,
+      body,
+    );
     await this.storage.setAlarm(now + RETENTION_MS);
 
     return { _tag: "published", revision, publishedAt };

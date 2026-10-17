@@ -1,10 +1,11 @@
 import type { GpuFailureReason, shaderRendererGPU } from "shaders/core";
 
-const REDUCED_EFFECTS = "(prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce), (forced-colors: active)";
+const REDUCED_EFFECTS =
+  "(prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce), (forced-colors: active)";
 
 type FallbackReason = GpuFailureReason | "reduced-effects" | "timeout";
 
-/** Starts a decorative still frame; missing GPU support always leaves the CSS background visible. */
+/** Paints the backdrop as one still frame and returns a stop function. Any GPU failure leaves the CSS background. */
 function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   let renderer: ReturnType<typeof shaderRendererGPU> | null = null;
   let observer: ResizeObserver | null = null;
@@ -75,7 +76,10 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
   function schedulePaint(): void {
     if (stopped || frame !== null) return;
     dirty = true;
-    frame = requestAnimationFrame(() => { frame = null; void paint(); });
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      void paint();
+    });
   }
 
   function onVisibility(): void {
@@ -103,10 +107,12 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
         return;
       }
 
-      // Probe before importing: unsupported GPUs never load the engine. The public
-      // manual renderer has no animation loop or telemetry, and stays frame locked.
+      // Probe the adapter before importing so unsupported GPUs never load the engine.
+      // The manual renderer has no animation loop or telemetry and stays frame-locked.
       const [core, gradient, grain] = await Promise.all([
-        import("shaders/core"), import("shaders/core/MultiPointGradient"), import("shaders/core/FilmGrain"),
+        import("shaders/core"),
+        import("shaders/core/MultiPointGradient"),
+        import("shaders/core/FilmGrain"),
       ]);
 
       if (stopped) return;
@@ -124,29 +130,53 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
 
       if (current.getFailureReason()) return;
       current.registerNode("warm-root", core.rootPassthrough.fragment, null, null, {}, core.rootPassthrough);
-      const grainProps = { strength: 0.025, bias: 0, animated: false } satisfies import("shaders/core/FilmGrain").ComponentProps;
-      // SAFETY: the SDK bridge erases shader-specific transform inputs to unknown.
-      // The unchanged definition only receives values checked against its published props.
+
+      const grainProps = {
+        strength: 0.025,
+        bias: 0,
+        animated: false,
+      } satisfies import("shaders/core/FilmGrain").ComponentProps;
+
+      // SAFETY: the SDK's bridge type erases shader-specific transform inputs to unknown. The
+      // definition is passed unchanged and only receives grainProps, checked against its props.
       // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       const grainBridge = grain.componentDefinition as unknown as Parameters<typeof core.createGpuUniformsMap>[0];
-      current.registerNode("warm-grain", grain.componentDefinition.fragment, "warm-root", null,
-        core.createGpuUniformsMap(grainBridge, grainProps, "warm-grain"), grain.componentDefinition);
+      current.registerNode(
+        "warm-grain",
+        grain.componentDefinition.fragment,
+        "warm-root",
+        null,
+        core.createGpuUniformsMap(grainBridge, grainProps, "warm-grain"),
+        grain.componentDefinition,
+      );
 
       const gradientProps = {
-        colorA: "#f3bd92", positionA: { x: 0.12, y: 0.02 },
-        colorB: "#f9deac", positionB: { x: 0.94, y: 0.08 },
-        colorC: "#f7f2ec", positionC: { x: 0.12, y: 0.92 },
-        colorD: "#f1d0ad", positionD: { x: 0.86, y: 0.96 },
-        colorE: "#f7f3ee", positionE: { x: 0.5, y: 0.52 },
-        smoothness: 1.8, colorSpace: "oklab",
+        colorA: "#f3bd92",
+        positionA: { x: 0.12, y: 0.02 },
+        colorB: "#f9deac",
+        positionB: { x: 0.94, y: 0.08 },
+        colorC: "#f7f2ec",
+        positionC: { x: 0.12, y: 0.92 },
+        colorD: "#f1d0ad",
+        positionD: { x: 0.86, y: 0.96 },
+        colorE: "#f7f3ee",
+        positionE: { x: 0.5, y: 0.52 },
+        smoothness: 1.8,
+        colorSpace: "oklab",
       } satisfies import("shaders/core/MultiPointGradient").ComponentProps;
 
-      // SAFETY: the same SDK variance mismatch applies here; gradientProps retains
-      // and checks the shader-specific value types passed to the unchanged definition.
+      // SAFETY: same SDK variance mismatch as above. gradientProps is checked against the
+      // gradient's props, and the definition is passed unchanged.
       // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       const gradientBridge = gradient.componentDefinition as unknown as Parameters<typeof core.createGpuUniformsMap>[0];
-      current.registerNode("warm-field", gradient.componentDefinition.fragment, "warm-grain", null,
-        core.createGpuUniformsMap(gradientBridge, gradientProps, "warm-field"), gradient.componentDefinition);
+      current.registerNode(
+        "warm-field",
+        gradient.componentDefinition.fragment,
+        "warm-grain",
+        null,
+        core.createGpuUniformsMap(gradientBridge, gradientProps, "warm-field"),
+        gradient.componentDefinition,
+      );
       await paint();
 
       if (stopped) return;
@@ -168,7 +198,10 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
   return stop;
 }
 
-/** Mounts the shared warm backdrop and releases GPU resources when preferences change or the window closes. */
+/**
+ * Mounts the warm backdrop, or the CSS fallback while a reduced-effects preference is on, and restarts when that
+ * preference changes. The returned function releases GPU resources.
+ */
 export function mountWarmBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   const preference = window.matchMedia(REDUCED_EFFECTS);
   let stop: () => void = () => undefined;
@@ -187,5 +220,8 @@ export function mountWarmBackground(host: HTMLElement, canvas: HTMLCanvasElement
   preference.addEventListener("change", refresh);
   refresh();
 
-  return () => { preference.removeEventListener("change", refresh); stop(); };
+  return () => {
+    preference.removeEventListener("change", refresh);
+    stop();
+  };
 }

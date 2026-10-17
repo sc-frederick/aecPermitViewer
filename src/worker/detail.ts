@@ -1,5 +1,11 @@
 import type { Page } from "playwright";
-import { expectedStatusLabel, parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
+import {
+  expectedStatusLabel,
+  parseApplicationNumber,
+  parsePortalUrl,
+  sameJurisdictionPermitNumber,
+} from "../shared/permit.js";
+import { DETAIL_NUMBER } from "./accela-global.js";
 import { readAccelaReviews } from "./accela-reviews.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
@@ -13,7 +19,7 @@ interface DetailFields {
 }
 
 const ACCELA_FIELDS: DetailFields = {
-  number: "#ctl00_PlaceHolderMain_lblPermitNumber",
+  number: DETAIL_NUMBER,
   status: "#ctl00_PlaceHolderMain_lblRecordStatus",
   label: "#ctl00_PlaceHolderMain_lblRecordStatusTitle",
 };
@@ -55,15 +61,18 @@ function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
 /** The fields to read on this record page, or null when the family or page isn't read by these generic steps. */
 function detailFields(profile: AutomatedJurisdictionProfile, url: string): DetailFields | null {
   switch (profile.portalFamily) {
-    case "accela": return ACCELA_FIELDS;
-    case "click2gov": return CLICK2GOV_FIELDS;
+    case "accela":
+      return ACCELA_FIELDS;
+    case "click2gov":
+      return CLICK2GOV_FIELDS;
     case "tyler-civic-access": {
       const kind = tylerRecordKind(url);
 
       return kind ? TYLER_FIELDS[kind] : null;
     }
 
-    default: return null;
+    default:
+      return null;
   }
 }
 
@@ -72,14 +81,18 @@ function detailFields(profile: AutomatedJurisdictionProfile, url: string): Detai
  * nothing matches, more than one element does, or the match isn't visible (no size, or hidden by style).
  */
 async function visibleText(page: Page, selector: string): Promise<string | null> {
-  const texts = await page.locator(selector).evaluateAll((nodes) => nodes.map((node) => {
-    if (!(node instanceof HTMLElement)) return null;
-    const box = node.getBoundingClientRect();
+  const texts = await page.locator(selector).evaluateAll((nodes) =>
+    nodes.map((node) => {
+      if (!(node instanceof HTMLElement)) return null;
+      const box = node.getBoundingClientRect();
 
-    return box.width > 0 && box.height > 0 && node.checkVisibility({ visibilityProperty: true }) ? node.innerText.trim() : null;
-  }));
+      return box.width > 0 && box.height > 0 && node.checkVisibility({ visibilityProperty: true })
+        ? node.innerText.trim()
+        : null;
+    }),
+  );
 
-  return texts.length === 1 ? texts[0] ?? null : null;
+  return texts.length === 1 ? (texts[0] ?? null) : null;
 }
 
 /** St. Petersburg's record link, rebuilt from the application number because Click2Gov's own address is a form post. */
@@ -97,7 +110,11 @@ function stPeteRecordUrl(number: string): string | null {
 }
 
 /** The record page's displayed number, status, status label, and the record link to save. */
-export async function readDetail(page: Page, profile: AutomatedJurisdictionProfile, requestedNumber: string): Promise<DisplayedRecord> {
+export async function readDetail(
+  page: Page,
+  profile: AutomatedJurisdictionProfile,
+  requestedNumber: string,
+): Promise<DisplayedRecord> {
   const fields = detailFields(profile, page.url());
 
   if (!fields) return NOTHING_DISPLAYED;
@@ -109,8 +126,11 @@ export async function readDetail(page: Page, profile: AutomatedJurisdictionProfi
     recordUrl: profile.portalFamily === "click2gov" ? stPeteRecordUrl(requestedNumber) : page.url(),
   };
 
-  if (profile.portalFamily === "accela" && record.displayedNumber &&
-    sameJurisdictionPermitNumber(requestedNumber, record.displayedNumber, profile.id)) {
+  if (
+    profile.portalFamily === "accela" &&
+    record.displayedNumber &&
+    sameJurisdictionPermitNumber(requestedNumber, record.displayedNumber, profile.id)
+  ) {
     const reviews = await readAccelaReviews(page);
 
     if (reviews._tag === "err") return { ...record, statusValue: null };
@@ -120,14 +140,18 @@ export async function readDetail(page: Page, profile: AutomatedJurisdictionProfi
   return record;
 }
 
-/** Tyler renders a record after load, so this waits until its number and status hold text. Other families load ready. */
+/** Waits for a Tyler record's number and status to hold text; Tyler renders after load. Other families load ready. */
 export async function waitForDetail(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const fields = profile.portalFamily === "tyler-civic-access" ? detailFields(profile, page.url()) : null;
 
   if (!fields) return;
 
   for (const selector of [fields.number, fields.status]) {
-    await page.locator(selector).filter({ hasText: /\S/ }).waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+    await page
+      .locator(selector)
+      .filter({ hasText: /\S/ })
+      .waitFor({ state: "visible", timeout: 12_000 })
+      .catch(() => undefined);
   }
 }
 
@@ -152,14 +176,14 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
 }
 
 /**
- * Waits for the page a run just opened, its start page or a saved record link, to be ready to observe. A record page
- * waits for its number and status (see `waitForDetail`), and a Tyler search page for its keyword field. A record page
- * has no search controls, so it never waits on them. Other families' start pages are the worker's to wait on.
+ * Waits for the page a run just opened (its start page or a saved record link) to be ready to observe: a record page
+ * for its number and status (see `waitForDetail`), a Tyler search page for its keyword field. The worker waits on
+ * other families' start pages itself.
  */
 export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const url = page.url();
 
-  // The worker's own order: an address the portal uses for its search is a search page even if it could show a record.
+  // Same precedence as the worker: a search address is a search page even if it could also show a record.
   if (parsePortalUrl(url, "search", profile.id)) {
     if (profile.portalFamily === "tyler-civic-access") await waitForTylerSearch(page);
 
@@ -171,8 +195,12 @@ export async function waitForLanding(page: Page, profile: AutomatedJurisdictionP
 
 /** Waits for Tyler's visible result count or no-results message after a search. */
 export async function waitForTylerResults(page: Page): Promise<void> {
-  await page.locator(TYLER_RESULT_MESSAGE).filter({ visible: true }).first()
-    .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+  await page
+    .locator(TYLER_RESULT_MESSAGE)
+    .filter({ visible: true })
+    .first()
+    .waitFor({ state: "visible", timeout: 12_000 })
+    .catch(() => undefined);
 }
 
 /** True when Tyler's finished search says it found nothing. */

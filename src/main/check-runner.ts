@@ -11,8 +11,7 @@ export type VerifiedObservation = Omit<ObservationRow, "id" | "runId" | "permitI
 
 /** How a check ended: only a success carries an observation, and every success does. */
 export type CheckEnding =
-  | { outcome: "success"; observation: VerifiedObservation }
-  | { outcome: Exclude<RunOutcome, "success"> };
+  { outcome: "success"; observation: VerifiedObservation } | { outcome: Exclude<RunOutcome, "success"> };
 
 /** A finished check: how it ended, and what it cost. */
 export type CheckResult = CheckEnding & {
@@ -41,7 +40,7 @@ export interface CheckWorker {
   onError(listener: () => void): void;
 }
 
-/** Starting the worker process gave either the worker or why the process couldn't be created. */
+/** The started worker, or why its process couldn't be created. */
 export type WorkerStart = { _tag: "started"; worker: CheckWorker } | { _tag: "failed"; cause: unknown };
 
 /** Local steps of a check whose failure is reported for diagnosis. */
@@ -103,16 +102,23 @@ export function runCheck(input: {
   const deadline = Date.now() + DEADLINE_MS;
   let cancel = () => controller.abort();
   let markClosed: () => void = () => undefined;
-  const closed = new Promise<void>((resolve) => { markClosed = resolve; });
+
+  const closed = new Promise<void>((resolve) => {
+    markClosed = resolve;
+  });
+
   const cachePath = path.join(input.cacheRoot, input.runId);
   mkdirSync(cachePath, { recursive: true });
 
   // A folder that can't be removed is reported and left behind; `closed` settles either way.
   const removeCache = () => {
-    void (input.removeCache?.(cachePath) ?? rm(cachePath, { recursive: true, force: true })).then(markClosed, (cause: unknown) => {
-      markClosed();
-      input.report("cache-cleanup", cause);
-    });
+    void (input.removeCache?.(cachePath) ?? rm(cachePath, { recursive: true, force: true })).then(
+      markClosed,
+      (cause: unknown) => {
+        markClosed();
+        input.report("cache-cleanup", cause);
+      },
+    );
   };
 
   const result = new Promise<CheckResult>((resolve) => {
@@ -136,8 +142,7 @@ export function runCheck(input: {
     if (started._tag === "failed") {
       input.report("start-worker", started.cause);
       removeCache();
-      resolve({ outcome: "browser_error", actionCount: 0, requestCount: 0,
-        actualModel: null, browserVersion: null });
+      resolve({ outcome: "browser_error", actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null });
 
       return;
     }
@@ -153,9 +158,15 @@ export function runCheck(input: {
       if (settleTimer) clearTimeout(settleTimer);
 
       if (!exited) {
-        try { worker.send({ kind: "cancel", runId: input.runId }); } catch { /* already exited */ }
+        try {
+          worker.send({ kind: "cancel", runId: input.runId });
+        } catch {
+          /* already exited */
+        }
 
-        forceKillTimer = setTimeout(() => { worker.kill(); }, 5_000);
+        forceKillTimer = setTimeout(() => {
+          worker.kill();
+        }, 5_000);
         forceKillTimer.unref();
       }
 
@@ -172,7 +183,9 @@ export function runCheck(input: {
       if (!done) finish({ outcome: "browser_error" });
       removeCache();
     });
-    worker.onError(() => { if (!done) finish({ outcome: "browser_error" }); });
+    worker.onError(() => {
+      if (!done) finish({ outcome: "browser_error" });
+    });
 
     // Service and model failures come back from chooseNavigation as decisions, so a failure here is local: the worker
     // couldn't be reached or main failed. That isn't a TypeSafe outage, so it isn't recorded or retried as one.
@@ -285,21 +298,23 @@ export function runCheck(input: {
 
           decisionPending = true;
 
-          // A lone step the worker's own checks established needs no model call. The worker still revalidates the
-          // page before acting. Repeated established steps settle locally above: a model cannot authorize an action
-          // that loop protection would reject. Jev is reserved for genuinely unresolved choices.
+          // A lone step the worker's own checks established needs no model call; the worker still revalidates the page
+          // before acting. Repeated established steps are handled above, so the model can't authorize an action that
+          // loop protection would reject. Jev is only asked about unresolved choices.
           const decision: NavigationDecision = established
             ? { _tag: "chosen", candidateId: only.id, attempts: 0, actualModel: null }
             : await chooseNavigation({
-              client: client ??= navigationClient(input.key),
-              jurisdictionId: input.permit.jurisdictionId,
-              observation,
-              requestedNumber: input.permit.permitNumber,
-              signal: controller.signal,
-              remainingRequests: MAX_REQUESTS - requestCount,
-              deadline,
-              onAttempt: () => { requestCount += 1; },
-            });
+                client: (client ??= navigationClient(input.key)),
+                jurisdictionId: input.permit.jurisdictionId,
+                observation,
+                requestedNumber: input.permit.permitNumber,
+                signal: controller.signal,
+                remainingRequests: MAX_REQUESTS - requestCount,
+                deadline,
+                onAttempt: () => {
+                  requestCount += 1;
+                },
+              });
 
           decisionPending = false;
 
@@ -307,8 +322,12 @@ export function runCheck(input: {
 
           if (decision.actualModel) actualModel = decision.actualModel;
 
-          if (decision._tag === "authentication_error" || decision._tag === "api_unavailable" || decision._tag === "unsupported_page" ||
-            decision._tag === "cancelled") {
+          if (
+            decision._tag === "authentication_error" ||
+            decision._tag === "api_unavailable" ||
+            decision._tag === "unsupported_page" ||
+            decision._tag === "cancelled"
+          ) {
             finish({ outcome: decision._tag });
 
             return;
@@ -343,7 +362,7 @@ export function runCheck(input: {
             return;
           }
 
-          worker.send({
+          sendOrFail({
             kind: "choose",
             runId: input.runId,
             fingerprint: observation.fingerprint,

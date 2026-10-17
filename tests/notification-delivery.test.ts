@@ -1,16 +1,34 @@
 import { describe, expect, it } from "vitest";
 import type { AppEvent } from "../src/shared/bridge.js";
-import { CheckNotifier, DesktopNotificationFailed, type DesktopDelivery, type NotificationState } from "../src/main/notification-delivery.js";
+import {
+  CheckNotifier,
+  DesktopNotificationFailed,
+  type DesktopDelivery,
+  type NotificationState,
+} from "../src/main/notification-delivery.js";
 import { keyNotice, type CheckEvent } from "../src/main/notifications.js";
 
-const review: CheckEvent = { kind: "review-action", permitId: "permit-one", title: "HC-SITECON-26-0000004",
-  body: "Natural Resources Review: Corrections Required · Action: AEC" };
+const review: CheckEvent = {
+  kind: "review-action",
+  permitId: "permit-one",
+  title: "HC-SITECON-26-0000004",
+  body: "Natural Resources Review: Corrections Required · Action: AEC",
+};
 
-interface DeliveryResult { value: DesktopDelivery }
+interface DeliveryResult {
+  value: DesktopDelivery;
+}
 
 /** Real routing policy with observable in-memory notification destinations. */
 function delivery(overrides: Partial<NotificationState> = {}) {
-  const state: NotificationState = { statusChanges: true, failures: true, desktop: true, windowInFront: false, ...overrides };
+  const state: NotificationState = {
+    statusChanges: true,
+    failures: true,
+    desktop: true,
+    windowInFront: false,
+    ...overrides,
+  };
+
   const inApp: AppEvent[] = [];
   const desktop: AppEvent[] = [];
   const failures: DesktopNotificationFailed[] = [];
@@ -18,13 +36,17 @@ function delivery(overrides: Partial<NotificationState> = {}) {
 
   const notifier = new CheckNotifier({
     state: () => state,
-    inApp: (notice) => { inApp.push(notice); },
+    inApp: (notice) => {
+      inApp.push(notice);
+    },
     desktop: async (notice) => {
       desktop.push(notice);
 
       return result.value;
     },
-    failed: (error) => { failures.push(error); },
+    failed: (error) => {
+      failures.push(error);
+    },
   });
 
   return { state, inApp, desktop, failures, result, notifier };
@@ -38,7 +60,10 @@ describe("notification delivery", () => {
     expect(app.inApp).toEqual([]);
   });
 
-  it.each([{ windowInFront: true }, { desktop: false }])("surfaces the notice in-app when appropriate: %j", async (state) => {
+  it.each<[string, Partial<NotificationState>]>([
+    ["the window is in front", { windowInFront: true }],
+    ["the app posts no desktop notifications", { desktop: false }],
+  ])("shows the notice in the window instead of the desktop when %s", async (_situation, state) => {
     const app = delivery(state);
     await app.notifier.announce(review);
     expect(app.inApp).toHaveLength(1);
@@ -60,18 +85,21 @@ describe("notification delivery", () => {
     expect(app.desktop.map((notice) => notice.tone)).toEqual(["error", "info"]);
   });
 
-  it.each(["unsupported", "failed", "not_shown"] as const)("preserves %s desktop delivery until the user returns", async (code) => {
-    const app = delivery();
-    app.result.value = { _tag: "failed", error: new DesktopNotificationFailed(code) };
-    await app.notifier.announce(review);
-    app.notifier.windowFocused();
-    expect(app.inApp).toEqual([]);
-    expect(app.failures.map((error) => error.code)).toEqual([code]);
-    app.state.windowInFront = true;
-    app.notifier.windowFocused();
-    app.notifier.windowFocused();
-    expect(app.inApp).toEqual([{ tone: "info", title: review.title, body: review.body, permitId: review.permitId }]);
-  });
+  it.each(["unsupported", "failed", "not_shown"] as const)(
+    "preserves %s desktop delivery until the user returns",
+    async (code) => {
+      const app = delivery();
+      app.result.value = { _tag: "failed", error: new DesktopNotificationFailed(code) };
+      await app.notifier.announce(review);
+      app.notifier.windowFocused();
+      expect(app.inApp).toEqual([]);
+      expect(app.failures.map((error) => error.code)).toEqual([code]);
+      app.state.windowInFront = true;
+      app.notifier.windowFocused();
+      app.notifier.windowFocused();
+      expect(app.inApp).toEqual([{ tone: "info", title: review.title, body: review.body, permitId: review.permitId }]);
+    },
+  );
 
   it("surfaces a late native failure if the user already returned to the app", async () => {
     const app = delivery();

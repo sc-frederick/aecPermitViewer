@@ -7,15 +7,9 @@ export interface ProjectGroup {
   permits: PermitRow[];
 }
 
-/** A project number as typed: letters and digits first, then those with spaces and - . _ /. Empty clears it. */
-export const PROJECT_NUMBER_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9 ._/-]*)?$/;
-
-/** The longest project number accepted, in characters. */
-export const PROJECT_NUMBER_MAX = 40;
-
 const projectOrder = new Intl.Collator("en-US", { numeric: true, sensitivity: "base" });
 
-/** The same project typed in a different case or with stray spaces is one group. */
+/** Grouping key for a project number: case-insensitive, ignoring leading and trailing spaces. */
 export function projectKey(projectNumber: string): string {
   return projectNumber.trim().toLocaleUpperCase("en-US");
 }
@@ -31,12 +25,16 @@ export function groupByProject(permits: readonly PermitRow[]): ProjectGroup[] {
   for (const permit of permits) {
     const number = permit.projectNumber?.trim();
 
-    if (!number) { unassigned.push(permit); continue; }
+    if (!number) {
+      unassigned.push(permit);
+      continue;
+    }
 
     const key = projectKey(number);
     const group = groups.get(key);
 
-    if (group) group.permits.push(permit); else groups.set(key, { projectNumber: number, permits: [permit] });
+    if (group) group.permits.push(permit);
+    else groups.set(key, { projectNumber: number, permits: [permit] });
   }
 
   const sorted = [...groups.values()].sort((a, b) => projectOrder.compare(a.projectNumber, b.projectNumber));
@@ -44,7 +42,10 @@ export function groupByProject(permits: readonly PermitRow[]): ProjectGroup[] {
   return unassigned.length > 0 ? [...sorted, { projectNumber: null, permits: unassigned }] : sorted;
 }
 
-/** Distinct project numbers already in use, most recently added permit first. */
+/**
+ * Up to `limit` distinct project numbers, in the order of `permits`; given the window's newest-first list, the most
+ * recently added come first.
+ */
 export function recentProjects(permits: readonly PermitRow[], limit: number): string[] {
   const seen = new Map<string, string>();
 

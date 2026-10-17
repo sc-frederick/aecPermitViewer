@@ -1,18 +1,15 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { KeyStore, type KeyEncryption } from "../src/main/key-store.js";
-
-const directories: string[] = [];
-
-afterEach(async () => {
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
-});
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 function gate() {
   let open: () => void = () => undefined;
-  const promise = new Promise<void>((resolve) => { open = resolve; });
+
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
 
   return { promise, open };
 }
@@ -25,7 +22,9 @@ class Encryption implements KeyEncryption {
   failDecrypt = false;
   migrate = false;
 
-  async available(): Promise<boolean> { return true; }
+  async available(): Promise<boolean> {
+    return true;
+  }
 
   async encrypt(key: string): Promise<Buffer> {
     await this.encryptWait;
@@ -46,8 +45,7 @@ class Encryption implements KeyEncryption {
 }
 
 async function setup() {
-  const directory = await mkdtemp(path.join(tmpdir(), "permit-key-"));
-  directories.push(directory);
+  const directory = temporaryDirectory("permit-key-");
   const encryption = new Encryption();
   const store = new KeyStore(directory, encryption);
   expect(await store.save("old-fixture-key")).toEqual({ _tag: "saved" });
@@ -81,7 +79,9 @@ describe("encrypted key mutation ordering", () => {
     expect(await store.save("replacement-fixture-key")).toEqual({ _tag: "saved" });
     wait.open();
     expect(await reading).toBe("replacement-fixture-key");
-    expect(await readFile(path.join(directory, "secrets/typesafe-key.bin"), "utf8")).toBe("sealed:replacement-fixture-key");
+    expect(await readFile(path.join(directory, "secrets/typesafe-key.bin"), "utf8")).toBe(
+      "sealed:replacement-fixture-key",
+    );
     expect(await readdir(path.join(directory, "secrets"))).toEqual(["typesafe-key.bin"]);
   });
 

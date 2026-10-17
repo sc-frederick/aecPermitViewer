@@ -5,7 +5,10 @@ import type { CheckEvent } from "./notifications.js";
 export class DesktopNotificationFailed extends Error {
   readonly _tag = "DesktopNotificationFailed" as const;
 
-  constructor(readonly code: "unsupported" | "failed" | "not_shown") {
+  constructor(
+    /** The platform can't show notifications, showing one failed, or none appeared in time. */
+    readonly code: "unsupported" | "failed" | "not_shown",
+  ) {
     super("Desktop notification was not shown.");
   }
 }
@@ -30,22 +33,27 @@ export interface NotificationDelivery {
   failed(error: DesktopNotificationFailed): void;
 }
 
-/** Routes notices through the user's settings and preserves a failed desktop notice until the app is visible. */
+/** Routes notices through the user's settings and keeps a failed desktop notice until the window is in front. */
 export class CheckNotifier {
   private keyNoticeShown = false;
   private readonly pending = new Map<string, AppEvent>();
 
   constructor(private readonly delivery: NotificationDelivery) {}
 
-  /** A new key or an explicit check warrants explaining a key problem again. */
+  /** Lets the next key notice show again; called after a new key or an explicit check. */
   resetKeyNotice(): void {
     this.keyNoticeShown = false;
   }
 
-  /** Apply preferences, suppress repeated key notices, and deliver through the appropriate visible surface. */
+  /**
+   * Delivers a notice if the user's preferences allow it: in the window when it is in front or desktop notices are off,
+   * otherwise as a desktop notification. Repeat key notices are dropped until `resetKeyNotice`.
+   */
   async announce(event: CheckEvent): Promise<void> {
     const state = this.delivery.state();
-    const statusNotice = event.kind === "first-status" || event.kind === "status-changed" || event.kind === "review-action";
+
+    const statusNotice =
+      event.kind === "first-status" || event.kind === "status-changed" || event.kind === "review-action";
 
     if (!(statusNotice ? state.statusChanges : state.failures)) return;
 
@@ -82,7 +90,10 @@ export class CheckNotifier {
     } else this.pending.set(key, notice);
   }
 
-  /** Called when the window regains focus; the notice must not time out while the window is hidden. */
+  /**
+   * Shows the desktop notices that failed while the window was hidden, collapsing several into one summary. Called when
+   * the window regains focus.
+   */
   windowFocused(): void {
     if (!this.delivery.state().windowInFront || this.pending.size === 0) return;
     const notices = [...this.pending.values()];
@@ -90,9 +101,14 @@ export class CheckNotifier {
     const first = notices[0];
 
     if (!first) return;
-    this.delivery.inApp(notices.length === 1 ? first : {
-      tone: "error", title: "Desktop notifications could not be shown",
-      body: `${notices.length} permits or checks have updates. Review the permit list; check the system notification settings.`,
-    });
+    this.delivery.inApp(
+      notices.length === 1
+        ? first
+        : {
+            tone: "error",
+            title: "Desktop notifications could not be shown",
+            body: `${notices.length} permits or checks have updates. Review the permit list; check the system notification settings.`,
+          },
+    );
   }
 }

@@ -31,9 +31,12 @@ export interface ClassifiedCause {
 }
 
 /** An identifier-like value: codes, tags, and names never carry free text into the log. */
-const identifier = z.string().max(64).regex(/^[\w.-]+$/);
+const identifier = z
+  .string()
+  .max(64)
+  .regex(/^[\w.-]+$/);
 
-/** The structured fields read from a thrown value. Each falls back on its own, so one odd field doesn't hide the rest. */
+/** Structured fields read from a thrown value. Each falls back on its own, so one odd field doesn't hide the rest. */
 const causeFieldsSchema = z.object({
   name: identifier.catch("Error"),
   _tag: identifier.optional().catch(undefined),
@@ -48,13 +51,20 @@ const DEFECT_NAMES = new Set(["TypeError", "RangeError", "ReferenceError", "Synt
 export function classifyCause(cause: unknown): ClassifiedCause {
   const parsed = cause instanceof Error ? causeFieldsSchema.safeParse(cause) : null;
 
-  if (!parsed?.success) return { class: "unclassified", name: "non-error", tag: null, code: null, errcode: null, syscall: null };
+  if (!parsed?.success)
+    return { class: "unclassified", name: "non-error", tag: null, code: null, errcode: null, syscall: null };
   const { name, _tag: tag = null, code = null, errcode = null, syscall = null } = parsed.data;
 
   return { class: failureClass(name, tag, code, errcode, syscall), name, tag, code, errcode, syscall };
 }
 
-function failureClass(name: string, tag: string | null, code: string | null, errcode: number | null, syscall: string | null): FailureClass {
+function failureClass(
+  name: string,
+  tag: string | null,
+  code: string | null,
+  errcode: number | null,
+  syscall: string | null,
+): FailureClass {
   if (tag !== null) return "tagged";
 
   if (code === "ERR_SQLITE_ERROR" || errcode !== null) return "sqlite";
@@ -76,18 +86,21 @@ export interface Diagnostic {
 const MAX_LOG_BYTES = 256 * 1024;
 
 /**
- * Keeps a local, line-per-failure record of failures the user only sees as a generic message, so they can be told apart
- * later. The file lives with the app's data and is deleted along with it.
+ * A local JSON-lines log of failures the user sees only as a generic message, so they can be told apart later. It
+ * lives in the app's data folder and is deleted with it.
  */
 export class DiagnosticLog {
   /** True between `stop()` and `restart()`. */
   private stopped = false;
 
-  constructor(private readonly filePath: string, private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   /**
-   * Appends one diagnostic, unless the log is stopped. Never throws: when the log itself can't be written there is
-   * nowhere left to report that, and a diagnostics problem must not change the answer the user gets.
+   * Appends one diagnostic unless stopped. Never throws: a failed log write has nowhere to be reported, and must not
+   * change what the user is told.
    */
   record(operation: string, runId: string | null, cause: unknown): void {
     if (this.stopped) return;
@@ -100,13 +113,13 @@ export class DiagnosticLog {
       if (size > MAX_LOG_BYTES) renameSync(this.filePath, `${this.filePath}.1`);
       appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
     } catch {
-      // See above: the failure being recorded has already been answered, and this one has no other place to go.
+      // Ignored on purpose; see `record`.
     }
   }
 
   /**
-   * Drops every later record until `restart()`. Called before the data folder is deleted: failures after the store
-   * closes, such as a snapshot still on its way, would otherwise recreate the folder to record themselves.
+   * Drops records until `restart()`. Called before the data folder is deleted, so a late failure (such as a snapshot
+   * still in flight) doesn't recreate the folder.
    */
   stop(): void {
     this.stopped = true;

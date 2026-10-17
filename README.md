@@ -1,77 +1,111 @@
 # Permit Monitor
 
-Copyright (c) 2026 Stephen Frederick. All rights reserved. This project is proprietary; use, modification, and redistribution require written permission except as stated in [LICENSE](LICENSE). Third-party components retain their own licenses.
+Permit Monitor is a desktop app for Windows and macOS that tracks building permits across Florida's county and city permit portals and its five water management districts. You add a permit number once. The app then checks the issuing authority's public portal on a schedule, records the exact status the portal shows, and notifies you when it changes.
 
-Permit Monitor is a local desktop app for Windows and macOS (Apple silicon) for tracking public building permits from selected Florida authorities, and permits from Florida's five water management districts. It saves the status shown on a verified permit record, the observation time, and a record link. A failed check leaves the prior verified status and its original time intact.
+It was built for an engineering firm that follows dozens of permits at once across portals that have no shared API and look nothing alike.
 
-## Supported workflow
+![The main window, with permits grouped by project and an Action column showing who each status waits on](docs/main-window.png)
 
-- Select Hillsborough, Pasco, Pinellas, Hernando, Polk, Orange, or Baker County, or the cities of Tampa, St. Petersburg, or Palm Bay. Each choice searches its own issuing authority. See the [portal research](docs/FL_PERMIT_PORTALS.md) for search inputs and record coverage.
-- Water management district permits are listed separately in the jurisdiction menu. Southwest Florida (SWFWMD) has one choice each for environmental resource (ERP), water use, and well construction permits, because its public WMIS search has a page for each. South Florida (SFWMD), St. Johns River (SJRWMD), Suwannee River (SRWMD), and Northwest Florida (NWFWMD) each have one choice covering ERP, water use, and well construction. Each note under the menu gives the number format the district uses, such as `43047590.008` or App ID `1001157` for SWFWMD ERP, `48-112909-P` or `260901-67337` for SFWMD, and `ERP-123-255799-1` for SRWMD. SJRWMD, SRWMD, and NWFWMD share one ePermit system. For them, the app saves the district's Status and the record's Current Process Stage together, such as `Pending · Pending RAI Response`, because Status stays Pending through the whole review. SWFWMD's public ERP record shows `Incomplete` while an application is pending; its review stage appears only after signing in to the district's ePermitting. SFWMD's firewall rejects browsers that identify as headless Chrome, so for that portal only, the bundled browser reports an ordinary Chrome user agent.
-- Accela searches cover Hillsborough, Pasco, Tampa, Pinellas, and Polk. Hernando uses Tyler Civic Access, which covers both permits and plan records (numbers such as DEVP-, SUB-, CSC-, or REZ-); St. Petersburg uses Click2Gov. Palm Bay's iMS search requires a login, Orange County's Fast Track search requires a CAPTCHA, and Baker County's public Permit Search turns away automated browsers, so all three are checked by hand: Check now opens the portal search, copies the permit number, and asks for the status you see there. Scheduled checks skip them. Pasco and Hillsborough are searched with their portals' Global Search, so records in other modules, such as Pasco Planning or Hillsborough Land Development (site and utility permits like HC-UTLCON), are found too. Hernando's separate legacy portal is outside the automated search.
-- Add a full permit number, check now, review the history (one entry per day with that day's status, 120 days per page with older entries available), and open the verified record. Scheduled checks run at 8:30 AM, 12:30 PM, and 4:30 PM by default while Permit Monitor is running and the computer is awake; Settings lets you change, add, or remove times (up to eight a day). A time missed because the app was closed or the computer was asleep is made up once, but only between the first time and half an hour after the last (past midnight when the last time is after 11:30 PM), so nothing runs overnight. New permits are included automatically, and each can be excluded from its details. Choose Manual only to turn scheduling off.
-- Closing the window keeps Permit Monitor running in the Windows notification area or the Mac menu bar; quit from that icon. On Windows it can also start at sign-in, hidden in the tray.
-- Desktop notifications report when a portal status changes (quoting the old and new wording exactly), new requests for an applicant response in Accela review processes, and the first failure in a run of failed checks. Review notices name the process, its exact status, and the decision date; a later discipline or correction round notifies even if Record Status stays unchanged. Repeated checks of the same request stay quiet. Clicking a notification opens that permit. Both notification types can be turned off in Settings.
-- When Permit Monitor has focus, notices appear inside the app. Otherwise, the system shows a desktop notification. Native delivery failures are logged and retained as an in-app notice for the next time the window gains focus. The system's notification and Do Not Disturb (Focus on a Mac) settings control whether a delivered notification appears as a banner or only in Notification Center.
-- The displayed record status is preserved as written. For the counties and cities, an Action column shows who that wording waits on: **AEC** when the applicant owes something (Hillsborough and Tampa's “Awaiting Client Reply”, Polk's “Fees Due”, Hernando's “Requires Resubmittal”), **AHJ** while the authority is reviewing, and **None** once the record is issued, finished, or withdrawn. When in doubt it says **AEC?**: unclear wording, records that stopped short (expired, denied, revoked), and wording a portal hasn't been seen to use count as AEC, so nothing waiting on the firm is missed, but the question mark and a dashed frame set them apart from explicit requests. The badge's tooltip gives the reason. AEC and AEC? rows are marked in ember, and Show → AEC action lists both. A filter with nothing to show says "No matches." Water management district permits show a dash. See the [status survey](docs/PERMIT_STATUSES.md) for each portal's list and where a status can lag behind the portal's own review steps.
-- For Accela jurisdictions (Hillsborough, Pasco, Tampa, Pinellas, and Polk), checks also read **Record Info → Processing Status**, including each collapsed review history. A current “Corrections Required”, “Revisions Required”, “Awaiting Client Reply”, or equivalent request puts the permit in **AEC** action while other disciplines are pending. Details show each process’s latest status and date. A later approval or pending round supersedes that discipline’s older corrections; a later explicit resubmittal or routing event on an intake or coordination task clears requests from earlier rounds. A resubmittal to one discipline does not clear another discipline’s request. A payment or document upload alone does not clear a request. Failed workflow reads keep the previous verified status and review evidence. Existing history is retained when the database upgrades; review evidence fills in on the next successful check. Other portal families continue using their existing status checks.
-- Other people can follow the list read-only without setting anything up. **Settings → Shared list → Share this list** gives a code. Pasting it under **Follow a shared list** in another copy of Permit Monitor shows that list in place of the follower's own. The sharing app sends the list after each round of checks, and followers fetch it about 90 minutes after each of the owner's check times. **Sync now** in the header does either at once. The follower needs no TypeSafe key, and its own permits aren't shown or checked until it stops following. The list is encrypted before it leaves the sharing app, and the code holds the only key that decrypts it. **Stop sharing** deletes the stored copy, so the code stops working. See [shared lists](docs/SHARING.md) for the service design.
-- Each user pastes a TypeSafe API key into Settings. The window sends it once to the main process, where Electron safeStorage encrypts it for the current user (DPAPI on Windows, a Keychain-held key on a Mac). It is never shown again. Filtered page text goes to TypeSafe Jev only for a navigation step the browser's own checks don't settle; browser execution and history stay local. Checks need a saved key: without a readable one, checks are skipped with one notice (and a notice for each Check now) instead of recorded as failures, and they resume once a key reads. A key the service rejects pauses scheduled checks until a new key is saved.
+## Features
 
-The [product scope](PRODUCT.md) and [release qualification](docs/RELEASE.md) describe the boundaries in more detail.
+- **Ten local authorities and five water management districts.** Hillsborough, Pasco, Pinellas, Hernando, Polk, Orange, and Baker counties; Tampa, St. Petersburg, and Palm Bay; and SWFWMD, SFWMD, SJRWMD, SRWMD, and NWFWMD. Three portals that require a login, a CAPTCHA, or a human browser check are tracked by hand: the app opens the search, copies the number, and records the status you enter.
+- **Verified statuses only.** A status is saved only after the browser has matched the full permit number on the record page and read the record-level status field. A failed check never overwrites the last verified status or its time.
+- **Scheduled and on-demand checks.** Checks run at 8:30 AM, 12:30 PM, and 4:30 PM by default, configurable up to eight times a day. A time missed while the computer slept is made up once, but never overnight. Checks on the same portal are spaced at least 30 seconds apart.
+- **Action column.** Portal wording is shown exactly as written. Next to it, the app says who the status waits on: the applicant (**AEC**), the authority (**AHJ**), or no one. The mapping comes from a [survey of each portal's statuses](docs/PERMIT_STATUSES.md). Unknown wording is marked **AEC?** so nothing that might need a response is missed.
+- **Review tracking for Accela portals.** Checks read each review discipline's history and flag a current "Corrections Required" or equivalent, even while the overall record status is unchanged.
+- **Desktop notifications** for status changes, new correction requests, and the first failure in a run of failed checks.
+- **Shared read-only lists.** One person shares their list with a code, and coworkers follow it without an account or API key. The list is encrypted with AES-256-GCM before it leaves the app, and the code holds the only key.
+- **Signed auto-updates** on Windows from an Ed25519-signed release feed.
+
+![The details sheet for a Hillsborough permit, showing the Processing Status reviews](docs/permit-details.png)
+
+## How it works
+
+The app has three Electron processes with narrow, parsed interfaces between them.
+
+| Process                       | Owns                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Renderer (`src/renderer`)     | The UI, in plain TypeScript and DOM APIs. It talks to main only through a small preload bridge.                  |
+| Main (`src/main`)             | SQLite storage, the scheduler and check queue, the encrypted API key, update verification, and sharing.          |
+| Browser worker (`src/worker`) | Playwright and a bundled Chromium headless shell, in an Electron utility process. One adapter per portal family. |
+
+Each check starts a fresh browser context in its own worker process. The worker drives the portal's search, reads the record, and sends main a bounded observation. Main validates it again before saving: the permit number must match under the jurisdiction's comparison rules, the label must be a known record-level status label, and the record link must stay on the authority's approved portal.
+
+Most navigation steps are deterministic. When the worker offers a single step its own checks have established, such as a visible search field or an exact-match result, main approves it without a model call. When a page offers several possible actions, main sends filtered page text and the candidate actions to a hosted classification model, TypeSafe's Jev. The model can only pick one of the offered actions, and main accepts the choice only above a confidence and margin threshold. The worker checks the page again before acting.
+
+Portal families supported: Accela (five authorities), Tyler Civic Access, Click2Gov, SWFWMD's WMIS, SFWMD's RegPermitting, and the ePermit system shared by three districts. See the [portal research](docs/FL_PERMIT_PORTALS.md) for each portal's search inputs and quirks.
+
+Two Cloudflare Workers support the desktop app:
+
+- `infra/update-server` serves the signed update feed and installers from R2.
+- `infra/sync-server` stores shared lists, with one SQLite-backed Durable Object per list. It only ever sees ciphertext. See [shared lists](docs/SHARING.md).
+
+### Engineering choices
+
+- **Parse at every boundary.** IPC messages, worker messages, SQLite rows, and network responses are parsed with Zod where they enter. A strict Oxlint configuration, including the vendored [anti-slop](https://github.com/dmmulroy/anti-slop) rules in `tools/oxlint/anti-slop`, rejects unchecked type assertions, `unknown` parameters, and non-null assertions.
+- **No native modules.** Storage uses Node's built-in `node:sqlite`, so building the app needs neither Visual Studio nor Python.
+- **Secrets stay in main.** The API key is sent once from the settings field, encrypted with Electron `safeStorage` (DPAPI on Windows, the Keychain on macOS), and never returned to the renderer, passed to the browser worker, logged, or stored in the database.
+- **Supply-chain checks.** The bundled browser is verified against a SHA-256 manifest before it is launched. The update feed is signed with Ed25519, and each installer is checked against the SHA-256 hash in the signed manifest before it runs.
+- **Redacted diagnostics.** Failures the UI shows only generically are logged to `diagnostics.jsonl` as classified causes, without messages, paths, permit data, or keys.
 
 ## Development
 
-Use Node.js 24. Nothing in the project compiles native code. SQLite comes from Node's built-in `node:sqlite`, and the key is entered in the app, so neither Visual Studio nor Python is needed on any platform. End users of a qualified installer need no development tools. On Windows, run:
+Requires Node.js 24.
 
 ```sh
-npm ci --allow-git=all
-npm run browser:stage
+npm ci --allow-git=all     # the lockfile has a git dependency from Electron Forge
+npm run browser:stage      # download the pinned Chromium headless shell
 npm run typecheck
 npm run lint
+npm run format:check
 npm test
 npm run dev
 ```
 
-The renderer and worker tests run in the staged browser, so stage it before `npm test`.
+Renderer and worker tests run in the staged browser against recorded portal pages, so stage it before running `npm test`.
 
-`npm run lint` runs Oxlint with the vendored [anti-slop](https://github.com/dmmulroy/anti-slop) rules in `tools/oxlint/anti-slop/` (provenance in its `UPSTREAM.md`). They reject unchecked type assertions and `unknown` inputs, so values from IPC, the worker, SQLite, and the network are parsed with zod where they enter. Fix a finding rather than suppressing it.
-
-`npm run browser:stage` installs Playwright's pinned Chromium headless shell under `vendor/playwright-browsers`, then writes a SHA-256 manifest for the complete payload. The app and tests launch only the headless shell, so the full Chromium isn't staged. On Windows, `npm run make:win` creates the Squirrel installer. On a Mac, `npm run package:mac` builds the app. See [Mac builds](docs/RELEASE.md#mac-builds) for signing and installing. Key storage uses Windows encryption or the macOS Keychain, so saving a key works only on those two. Elsewhere, use the development key variable described below.
-
-On Linux, the same commands run the tests, a build, and `npm run smoke:portal`.
-
-### Testing on Windows from a WSL checkout
-
-Windows npm cannot run from a `\\wsl.localhost\...` folder: `cmd.exe` rejects UNC working directories, and that `node_modules` holds Linux binaries. Mirror the source to a Windows folder instead. `npm run sync:windows` copies it to `C:\Users\<you>\dev\aecPermitViewer` by default, and you can pass another `/mnt/c/...` path after `--`. Each side keeps its own `node_modules`, browser payload, and build output. Run it again after each change, then install and start as above in PowerShell in that folder. Paste your key under **Settings → TypeSafe key**. Start-at-sign-in and the desktop shortcut setting are available only in an installed build.
-
-### Running the app against live permits on Linux or WSL
-
-Saving a key needs Windows or macOS key storage, so an unpackaged development run elsewhere can take the TypeSafe key from the environment instead. Main reads it once at startup and removes it from its environment. It is never saved to disk, logged, or passed to the renderer or browser worker. Packaged builds ignore it.
+Saving an API key requires Windows or macOS key storage. On Linux or WSL, an unpackaged development run can read the key from the environment instead. Main reads it once at startup and removes it from its environment. Packaged builds ignore it.
 
 ```sh
-npm run browser:stage          # once, if vendor/playwright-browsers is missing
 TYPESAFE_API_KEY=... npm run dev
 ```
 
-With WSLg the window opens on the Windows desktop. Add a permit number under its issuing jurisdiction and use Check now. Checks run one at a time. Checks on the same portal host are at least 30 seconds apart, and a check on another portal can run in the meantime. On Linux, closing the window quits the app, and notices appear inside the window instead of as desktop notifications. Data is stored under `~/.config/Permit Monitor/PermitMonitorData`.
+To check a portal without an API key, run a live smoke check. It applies the same verification main does before saving and prints the result:
 
-To try shared lists locally, run the sync Worker with `npx wrangler dev --config infra/sync-server/wrangler.jsonc --port 8787` and start the app with `SHARE_SERVICE_URL=http://127.0.0.1:8787 npm run dev`. A second instance started with `electron . --user-data-dir=<another folder>` can follow the first. A build without `SHARE_SERVICE_URL` hides sharing.
+```sh
+npm run smoke:portal -- BLDR-004412-2026 hernando-county-building
+```
 
-To confirm a portal shows a permit without using TypeSafe, run `npm run smoke:portal -- <permit-number> <jurisdiction-id> [saved-record-link]`. The default is the Hillsborough sample. For example, `npm run smoke:portal -- BLDR-004412-2026 hernando-county-building`, `npm run smoke:portal -- 25-05001277 st-petersburg-building`, or `npm run smoke:portal -- 1001157 swfwmd-erp`. It applies the same verification main does before saving, then prints the verified number, exact status, and record link. Passing a record link from an earlier check exercises the path scheduled checks take, which opens the saved record instead of searching where the portal allows it.
+To try shared lists locally, run the sync Worker and point the app at it. A second instance with its own data folder can follow the first:
 
-`npm run smoke:portal` performs a live, public portal check of `HC-BLD-26-0087599`. It checks the identifier and current displayed status without expecting the historical trial wording. This smoke bypasses Jev to isolate portal and browser behavior; it is not a full TypeSafe integration test.
+```sh
+npx wrangler dev --config infra/sync-server/wrangler.jsonc --port 8787
+SHARE_SERVICE_URL=http://127.0.0.1:8787 npm run dev
+npx electron . --user-data-dir=/tmp/permit-monitor-2
+```
 
-## Architecture
+### Windows builds from WSL
 
-The renderer receives display data through a narrow preload bridge. Main owns the SQLite database, encrypted key, job queue, scheduler, TypeSafe client, and update verification. An Electron utility process owns Playwright and exposes only bounded observations and approved action IDs. The worker verifies the full identifier on the detail page and reads the record-level status field before main commits an observation. Where a water management district's record page lacks the full number or the status, the worker reads them from the exactly matching search result.
+Windows npm can't run from a `\\wsl.localhost\...` path. `npm run sync:windows` mirrors the source to `C:\Users\<you>\dev\aecPermitViewer`, where you can install and run as above in PowerShell. `npm run make:win` builds the Squirrel installer, and `npm run package:mac` builds the Mac app on a Mac.
 
-The browser is launched from the packaged Playwright payload in a fresh context. No personal browser profile, cloud browser, or local HTTP server is used. Browser redirects and record URLs must stay within the selected authority's approved portal. The browser handles page actions and exact record/status checks. A lone step the worker's own checks establish (a visible, enabled field; an exact-number result; the portal's own search link) runs without a model call. Otherwise Jev chooses only from the actions the browser offers. Either way the worker revalidates the page before acting.
+## Releases
 
-Shared lists go through the `permitmon-sync` Worker (`infra/sync-server`), with one SQLite-backed Durable Object per list. Main seals the list with AES-256-GCM before sending it, so the Worker stores only ciphertext. A follower's main fetches, decrypts, and parses the list with zod, then serves it to the window read-only. See [docs/SHARING.md](docs/SHARING.md).
+Pushing an annotated `vX.Y.Z` tag runs CI, which builds the Windows installer and the Mac app, publishes them to the update feed, and creates a GitHub release. Installed Windows copies update themselves from the signed feed. [docs/RELEASE.md](docs/RELEASE.md) covers signing keys, qualification, and the Mac build.
 
-Failures the window only shows as a generic message are recorded in `PermitMonitorData/logs/diagnostics.jsonl`, one JSON line each: the time, the operation (an IPC channel or check step), the check run ID where there is one, and the cause classified from its structured fields (SQLite code, system call and code, the app's error tag, or error name). Messages, stacks, paths, permit data, and the key are never written. The file is moved aside to `diagnostics.jsonl.1` at 256 KB and is removed with the rest of the local data.
+## Repository layout
 
-## Current qualification state
+```
+src/main        Electron main process
+src/preload     Preload bridge exposed to the renderer
+src/renderer    UI
+src/worker      Playwright browser worker and portal adapters
+src/shared      Domain logic and message schemas shared across processes
+infra/          Cloudflare Workers for updates and shared lists
+scripts/        Build, browser staging, release, and smoke-check scripts
+tests/          Vitest suites and recorded portal fixtures
+docs/           Portal research, status survey, design notes, and release process
+```
 
-Local type checking, tests, and build pass. Live worker smoke checks retrieved sample permit statuses from Hillsborough, Pasco Building and Permits, Tampa, Pinellas, Polk, Hernando, and St. Petersburg, and from all five water management districts. The new jurisdiction flows still need a TypeSafe-key-driven end-to-end check and Windows qualification. Pushing a `vX.Y.Z` tag publishes an unsigned installer to https://permitmon-updates.aeccloud.io/ and a GitHub release. Users click through SmartScreen on first install; after that the app updates itself from an Ed25519-signed feed. The same tag publishes an ad hoc-signed Mac app at https://permitmon-updates.aeccloud.io/mac, which users update by hand. See [docs/RELEASE.md](docs/RELEASE.md) for the release steps and the checks required before promoting a prerelease.
+## License
+
+Copyright (c) 2026 Stephen Frederick. All rights reserved. The source is published for reference only; see [LICENSE](LICENSE). Third-party components keep their own licenses.

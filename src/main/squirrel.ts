@@ -30,7 +30,9 @@ function shortcutArgs(action: "create" | "remove", locations: string): string[] 
 function installAppIcon(): void {
   try {
     copyFileSync(path.join(process.resourcesPath, "icon.ico"), path.join(path.dirname(updateExePath()), "app.ico"));
-  } catch { /* Installed apps keeps the previous icon */ }
+  } catch {
+    /* Installed apps keeps the previous icon */
+  }
 }
 
 /**
@@ -52,7 +54,11 @@ export function handleSquirrelEvent(argv: readonly string[], beforeUninstall: ()
 
       return true;
     case "--squirrel-uninstall":
-      try { beforeUninstall(); } catch { /* the uninstaller continues regardless */ }
+      try {
+        beforeUninstall();
+      } catch {
+        /* the uninstaller continues regardless */
+      }
 
       run(shortcutArgs("remove", "Desktop,StartMenu"));
 
@@ -64,6 +70,7 @@ export function handleSquirrelEvent(argv: readonly string[], beforeUninstall: ()
   }
 }
 
+/** Whether the installed Windows app has its desktop shortcut; always false elsewhere. */
 export function hasDesktopShortcut(): boolean {
   return installedApp() && existsSync(path.join(app.getPath("desktop"), SHORTCUT_FILE));
 }
@@ -71,5 +78,8 @@ export function hasDesktopShortcut(): boolean {
 /** Adds or removes the desktop shortcut through Update.exe, so it matches the one Squirrel would make. */
 export async function setDesktopShortcut(enabled: boolean): Promise<void> {
   if (!installedApp()) return;
-  await execFileAsync(updateExePath(), shortcutArgs(enabled ? "create" : "remove", "Desktop"), { timeout: 15_000, windowsHide: true });
+  await execFileAsync(updateExePath(), shortcutArgs(enabled ? "create" : "remove", "Desktop"), {
+    timeout: 15_000,
+    windowsHide: true,
+  });
 }

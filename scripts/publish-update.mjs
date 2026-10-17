@@ -14,7 +14,8 @@ const server = process.env.UPDATE_SERVER_URL;
 
 const token = process.env.UPDATE_UPLOAD_TOKEN;
 
-if (!server || !token || new URL(server).protocol !== "https:") throw new Error("Update upload configuration is incomplete.");
+if (!server || !token || new URL(server).protocol !== "https:")
+  throw new Error("Update upload configuration is incomplete.");
 
 const PART_BYTES = 64 * 1024 * 1024;
 
@@ -67,11 +68,17 @@ if (live.status !== 404) {
   const payload = parseManifest(text);
 
   if (!payload) throw new Error("The live manifest is unreadable; inspect the feed before publishing.");
-  const decision = decideManifestReplacement({ version: payload.version, text }, { version: release.payload.version, text: release.text });
 
-  if (decision._tag === "stale") throw new Error(`The feed already offers ${decision.published}, which is newer than ${version}.`);
+  const decision = decideManifestReplacement(
+    { version: payload.version, text },
+    { version: release.payload.version, text: release.text },
+  );
 
-  if (decision._tag === "conflict") throw new Error(`A different ${version} manifest is already published. Release a new version instead.`);
+  if (decision._tag === "stale")
+    throw new Error(`The feed already offers ${decision.published}, which is newer than ${version}.`);
+
+  if (decision._tag === "conflict")
+    throw new Error(`A different ${version} manifest is already published. Release a new version instead.`);
 }
 
 /** Uploads one artifact into private staging, then asks storage to publish its bytes conditionally. */
@@ -96,7 +103,9 @@ async function publishArtifact(filePath, key, claim) {
         if (bytesRead !== chunk.length) throw new Error("Short read from release artifact");
         const query = `${session}&partNumber=${partNumber}`;
         parts.push(partSchema.parse(await (await call("PUT", `/upload/${key}?${query}`, chunk)).json()));
-        process.stdout.write(`Uploaded part ${partNumber} (${Math.min(offset + chunk.length, size)} of ${size} bytes).\n`);
+        process.stdout.write(
+          `Uploaded part ${partNumber} (${Math.min(offset + chunk.length, size)} of ${size} bytes).\n`,
+        );
       }
 
       await call("POST", `/upload/${key}?${session}`, JSON.stringify({ ...claim, parts }));
@@ -113,10 +122,14 @@ await publishArtifact(installerPath, key, { sha256: release.payload.sha256, size
 
 await publishArtifact(macZipPath, mac.key, { sha256: mac.sha256, size: mac.size });
 
-const published = publishedSchema.parse(await (await call("PUT", "/upload/release-manifest.json", release.text)).json());
+const published = publishedSchema.parse(
+  await (await call("PUT", "/upload/release-manifest.json", release.text)).json(),
+);
 
 const current = await (await fetch(new URL("/release-manifest.json", server), { cache: "no-store" })).text();
 
 if (current !== release.text) throw new Error("Published manifest does not match the signed manifest.");
 
-process.stdout.write(`${published.status === "unchanged" ? "Already published" : "Published"} ${version} at ${new URL(`/${key}`, server)}.\n`);
+process.stdout.write(
+  `${published.status === "unchanged" ? "Already published" : "Published"} ${version} at ${new URL(`/${key}`, server)}.\n`,
+);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actionLabel, actionReason, STATUS_WORDING, statusAction, wordingKey } from "../src/shared/action.js";
+import { actionLabel, actionReason, STATUS_WORDING, statusAction } from "../src/shared/action.js";
+import { wordingKey } from "../src/shared/wording-key.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
 
@@ -15,7 +16,10 @@ describe("who a status waits on", () => {
     expect(actionOn("polk-county-building", "Inspections")).toBe("none");
     expect(actionOn("pinellas-county-building", "Awaiting Payment")).toBe("applicant");
     expect(actionOn("st-petersburg-building", "IN PROCESS")).toBe("authority");
-    expect(statusAction("hernando-county-building", "Requires Resubmittal")).toEqual({ action: "applicant", basis: "listed" });
+    expect(statusAction("hernando-county-building", "Requires Resubmittal")).toEqual({
+      action: "applicant",
+      basis: "listed",
+    });
   });
 
   it("ignores case and spacing, which differ between records and hand entry", () => {
@@ -44,13 +48,22 @@ describe("who a status waits on", () => {
     expect(described("Awaiting Client Reply")).toEqual({ label: "AEC", reason: null });
     expect(described("In Process")).toEqual({ label: "AHJ", reason: null });
     expect(described("Expired")).toEqual({ label: "AEC?", reason: expect.stringContaining("to be safe") });
-    expect(described("Corrections Required")).toEqual({ label: "AEC?", reason: expect.stringContaining("isn't on the jurisdiction's list") });
+    expect(described("Corrections Required")).toEqual({
+      label: "AEC?",
+      reason: expect.stringContaining("isn't on the jurisdiction's list"),
+    });
   });
 
   it("marks wording a county or city hasn't been seen to use as AEC's, and says it wasn't listed", () => {
-    expect(statusAction("hillsborough-county-building", "Corrections Required")).toEqual({ action: "applicant", basis: "unlisted" });
+    expect(statusAction("hillsborough-county-building", "Corrections Required")).toEqual({
+      action: "applicant",
+      basis: "unlisted",
+    });
     // Wording listed for one authority is not carried to another.
-    expect(statusAction("hillsborough-county-building", "Fees Due")).toEqual({ action: "applicant", basis: "unlisted" });
+    expect(statusAction("hillsborough-county-building", "Fees Due")).toEqual({
+      action: "applicant",
+      basis: "unlisted",
+    });
     expect(statusAction("pasco-county-building", "Issued")).toEqual({ action: "applicant", basis: "unlisted" });
     expect(statusAction("palm-bay-building", "Permit Ready")).toEqual({ action: "applicant", basis: "unlisted" });
   });

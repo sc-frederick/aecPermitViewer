@@ -1,5 +1,4 @@
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -12,14 +11,16 @@ import { latestReviews, outstandingReviews } from "../src/shared/reviews.js";
 import { workerToMainSchema } from "../src/shared/worker-protocol.js";
 import { readDetail } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
-// Captured from the reported live permit on September 28, 2026. Only record fields and the workflow table remain;
-// comments, scripts, links, and images were removed. Nested/collapsed rows and status fields retain Accela's markup.
+// Captured from a live Hillsborough permit on September 28, 2026, keeping only the record fields and workflow table.
+// Comments, scripts, links, and images are stripped; nested and collapsed rows and status fields keep Accela's markup.
 const html = readFileSync("tests/fixtures/hillsborough/processing-status.html", "utf8");
 
 const number = "HC-SITECON-26-0000004";
 
-const url = "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=LandDevelopment&TabName=LandDevelopment&capID1=26CAP&capID2=00000&capID3=00CKN&agencyCode=HCFL";
+const url =
+  "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=LandDevelopment&TabName=LandDevelopment&capID1=26CAP&capID2=00000&capID3=00CKN&agencyCode=HCFL";
 
 const profile = defined(getAutomatedJurisdiction("hillsborough-county-building"), "Hillsborough profile");
 
@@ -27,11 +28,17 @@ let browser: Browser;
 
 let page: Page;
 
-beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 60_000);
+beforeAll(async () => {
+  browser = await chromium.launch({ headless: true });
+}, 60_000);
 
-afterEach(async () => { await page?.close(); });
+afterEach(async () => {
+  await page?.close();
+});
 
-afterAll(async () => { await browser?.close(); });
+afterAll(async () => {
+  await browser?.close();
+});
 
 async function serve(body: string): Promise<void> {
   page = await browser.newPage();
@@ -40,28 +47,44 @@ async function serve(body: string): Promise<void> {
 }
 
 describe("Accela Processing Status", () => {
-  it("reads the reported permit's collapsed histories, saves them, classifies AEC, and announces each new request only once", async () => {
+  it("reads a site permit's collapsed review histories and announces each new correction request once", async () => {
     await serve(html);
     const record = await readDetail(page, profile, number);
     expect(record.statusValue).toBe("In Process");
     const reviews = defined(record.reviews, "workflow history");
-    expect(outstandingReviews(reviews)).toEqual(expect.arrayContaining([
-      { process: "Natural Resources Review", status: "Corrections Required", date: "2026-09-24", dueDate: "2026-09-22" },
-      { process: "Site Engineer Review", status: "Corrections Required", date: "2026-09-22", dueDate: "2026-09-22" },
-    ]));
+    expect(outstandingReviews(reviews)).toEqual(
+      expect.arrayContaining([
+        {
+          process: "Natural Resources Review",
+          status: "Corrections Required",
+          date: "2026-09-24",
+          dueDate: "2026-09-22",
+        },
+        { process: "Site Engineer Review", status: "Corrections Required", date: "2026-09-22", dueDate: "2026-09-22" },
+      ]),
+    );
     expect(outstandingReviews(reviews).some((review) => review.process === "Stormwater Review")).toBe(false);
     expect(outstandingReviews(reviews).some((review) => review.process === "Plans Coordination")).toBe(false);
-    expect(latestReviews(reviews).find((review) => review.process === "Stormwater Review"))
-      .toEqual({ process: "Stormwater Review", status: null, date: null, dueDate: "2026-09-22" });
+    expect(latestReviews(reviews).find((review) => review.process === "Stormwater Review")).toEqual({
+      process: "Stormwater Review",
+      status: null,
+      date: null,
+      dueDate: "2026-09-22",
+    });
 
-    const message = workerToMainSchema.parse({ ...record, kind: "verified", runId: "test", browserVersion: "test", observedAt: "2026-09-28T12:00:00.000Z" });
+    const message = workerToMainSchema.parse({
+      ...record,
+      kind: "verified",
+      runId: "test",
+      browserVersion: "test",
+      observedAt: "2026-09-28T12:00:00.000Z",
+    });
 
     if (message.kind !== "verified") throw new Error("Expected verified message");
     const parsed = parseDisplayedStatus({ ...message, jurisdictionId: profile.id, requestedNumber: number });
 
     if (parsed._tag === "err") throw new Error(parsed.outcome);
-    const directory = mkdtempSync(path.join(tmpdir(), "permit-review-test-"));
-    const store = new PermitStore(path.join(directory, "data.sqlite"));
+    const store = new PermitStore(path.join(temporaryDirectory("permit-review-test-"), "data.sqlite"));
 
     try {
       const added = store.addPermit(number);
@@ -71,9 +94,24 @@ describe("Accela Processing Status", () => {
       const before = defined(store.getPermit(permitId), "new permit");
 
       const finish = (outcome: "success" | "status_unavailable") => {
-        const runId = store.startRun({ permitId, appVersion: "test", playwrightVersion: "test", requestedModel: "test", promptVersion: "test" });
-        store.finishRun({ runId, permitId, outcome, actionCount: 0, requestCount: 0, actualModel: null, browserVersion: null,
-          observation: parsed.value });
+        const runId = store.startRun({
+          permitId,
+          appVersion: "test",
+          playwrightVersion: "test",
+          requestedModel: "test",
+          promptVersion: "test",
+        });
+
+        store.finishRun({
+          runId,
+          permitId,
+          outcome,
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+          observation: parsed.value,
+        });
 
         return defined(store.getPermit(permitId), "saved permit");
       };
@@ -81,8 +119,10 @@ describe("Accela Processing Status", () => {
       const after = finish("success");
       expect(after.reviews).toEqual(reviews);
       expect(permitAction(after)).toMatchObject({ action: "applicant", basis: "review" });
-      expect(describeCheckEvent({ ...before, lastStatus: "In Process" }, after, "success"))
-        .toMatchObject({ kind: "review-action", body: expect.stringContaining("Natural Resources Review: “Corrections Required” (2026-09-24)") });
+      expect(describeCheckEvent({ ...before, lastStatus: "In Process" }, after, "success")).toMatchObject({
+        kind: "review-action",
+        body: expect.stringContaining("Natural Resources Review: “Corrections Required” (2026-09-24)"),
+      });
       expect(describeCheckEvent(after, finish("success"), "success")).toBeNull();
       const failed = finish("status_unavailable");
       expect(failed.reviews).toEqual(reviews);
@@ -92,17 +132,22 @@ describe("Accela Processing Status", () => {
       expect(store.getObservation(observation.id)?.reviews).toEqual(reviews);
     } finally {
       store.close();
-      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it("waits for lazy-loaded Processing Status before reading the disciplines", async () => {
-    const table = /<div id="divProcessingTable"[\s\S]*<\/div>/.exec(html)?.[0];
-    expect(table).toBeTruthy();
+    const table = defined(/<div id="divProcessingTable"[\s\S]*<\/div>/.exec(html)?.[0], "the Processing Status table");
     const encoded = JSON.stringify(table).replaceAll("<", "\\u003c");
-    await serve(html.replace(table ?? "", '<div id="divProcessingTable"></div>')
-      .replace("</body>", `<a data-control="tab-processing_status" onclick='setTimeout(() => document.querySelector("#divProcessingTable").outerHTML = ${encoded}, 50)'>Processing Status</a></body>`));
-    expect(outstandingReviews((await readDetail(page, profile, number)).reviews ?? [])).toHaveLength(3);
+    await serve(
+      html
+        .replace(table, '<div id="divProcessingTable"></div>')
+        .replace(
+          "</body>",
+          `<a data-control="tab-processing_status" onclick='setTimeout(() => document.querySelector("#divProcessingTable").outerHTML = ${encoded}, 50)'>Processing Status</a></body>`,
+        ),
+    );
+    const { reviews } = await readDetail(page, profile, number);
+    expect(outstandingReviews(defined(reviews, "the lazily loaded reviews"))).toHaveLength(3);
   });
 
   it("fails a check rather than treating a missing workflow as no outstanding corrections", async () => {

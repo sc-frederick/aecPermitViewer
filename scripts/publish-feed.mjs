@@ -27,11 +27,13 @@ const ZIP_TYPE = "application/zip";
 
 const NOT_FOUND = /\(404\)|NoSuchKey|Not Found/;
 
-const headText = jsonText.pipe(z.object({
-  ContentLength: z.number().int().nonnegative(),
-  ETag: z.string().min(1),
-  Metadata: z.object({ sha256: z.string().optional() }).optional(),
-}));
+const headText = jsonText.pipe(
+  z.object({
+    ContentLength: z.number().int().nonnegative(),
+    ETag: z.string().min(1),
+    Metadata: z.object({ sha256: z.string().optional() }).optional(),
+  }),
+);
 
 /**
  * Runs the AWS CLI against the R2 endpoint and resolves with its exit code and output. Rejects only when the
@@ -69,17 +71,36 @@ async function headInstaller(key) {
   const head = headText.parse(result.stdout);
   const recorded = head.Metadata?.sha256;
 
-  return { size: head.ContentLength, sha256: recorded !== undefined && sha256Hex.safeParse(recorded).success ? recorded : null };
+  return {
+    size: head.ContentLength,
+    sha256: recorded !== undefined && sha256Hex.safeParse(recorded).success ? recorded : null,
+  };
 }
 
-/** Hashes a stored object by streaming it through the CLI. Only needed for installers stored before hashes were recorded. */
+/** Hashes a stored object by streaming it through the CLI. Needed only for older installers with no recorded hash. */
 async function hashStored(key) {
   const hash = createHash("sha256");
-  const result = await aws(["s3", "cp", `s3://${bucket}/${key}`, "-", "--only-show-errors"], (chunk) => hash.update(chunk));
+
+  const result = await aws(["s3", "cp", `s3://${bucket}/${key}`, "-", "--only-show-errors"], (chunk) =>
+    hash.update(chunk),
+  );
 
   if (result.code !== 0) throw failure(`Download ${key}`, result);
 
   return hash.digest("hex");
+}
+
+/**
+ * The upload decision for whatever is stored under `key`. A copy stored without a recorded hash is downloaded and
+ * hashed, since a matching size alone can't show it holds the same bytes.
+ */
+async function decideStored(key, claim) {
+  const decision = decideInstallerUpload(await headInstaller(key), claim);
+
+  if (decision._tag !== "unverified") return decision;
+  process.stdout.write(`${key} is stored without a recorded hash; hashing the stored copy.\n`);
+
+  return decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
 }
 
 /** The published manifest and its version, or null before the first release. */
@@ -110,23 +131,31 @@ async function publishedManifest() {
 async function uploadManifest(etag) {
   const condition = etag ? ["--if-match", etag] : ["--if-none-match", "*"];
 
-  const result = await aws(["s3api", "put-object", "--bucket", bucket, "--key", MANIFEST,
-    "--body", manifestPath, "--content-type", "application/json", ...condition]);
+  const result = await aws([
+    "s3api",
+    "put-object",
+    "--bucket",
+    bucket,
+    "--key",
+    MANIFEST,
+    "--body",
+    manifestPath,
+    "--content-type",
+    "application/json",
+    ...condition,
+  ]);
 
   if (result.code !== 0) throw failure(`Upload ${MANIFEST}`, result);
 }
 
 /** Writes `file` under `key` once: an identical stored copy is skipped and different bytes fail the job. */
 async function publishOnce(file, key, contentType, claim) {
-  let decision = decideInstallerUpload(await headInstaller(key), claim);
-
-  if (decision._tag === "unverified") {
-    process.stdout.write(`${key} is stored without a recorded hash; hashing the stored copy.\n`);
-    decision = decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
-  }
+  const decision = await decideStored(key, claim);
 
   if (decision._tag === "conflict") {
-    throw new Error(`${key} is already published with different bytes (${decision.reason}). Release a new version instead.`);
+    throw new Error(
+      `${key} is already published with different bytes (${decision.reason}). Release a new version instead.`,
+    );
   }
 
   if (decision._tag === "already_published") {
@@ -135,8 +164,8 @@ async function publishOnce(file, key, contentType, claim) {
     return;
   }
 
-  // The storage condition applies when bytes commit, across both S3 and Worker publishers. R2's S3 API
-  // supports Content-MD5 for integrity; its Workers binding also verifies the claimed SHA-256.
+  // R2 checks `--if-none-match` when the bytes commit, so it also holds against a concurrent Worker upload. The S3
+  // API verifies integrity through Content-MD5; the Workers binding verifies the claimed SHA-256 as well.
   const md5 = createHash("md5");
   const sha256 = createHash("sha256");
 
@@ -145,18 +174,35 @@ async function publishOnce(file, key, contentType, claim) {
     sha256.update(chunk);
   }
 
-  if (sha256.digest("hex") !== claim.sha256) throw new Error(`${key} changed after validation; rebuild and sign the release again.`);
+  if (sha256.digest("hex") !== claim.sha256)
+    throw new Error(`${key} changed after validation; rebuild and sign the release again.`);
 
-  const result = await aws(["s3api", "put-object", "--bucket", bucket, "--key", key, "--body", file,
-    "--content-type", contentType, "--metadata", `sha256=${claim.sha256}`, "--content-md5", md5.digest("base64"), "--if-none-match", "*"]);
+  const result = await aws([
+    "s3api",
+    "put-object",
+    "--bucket",
+    bucket,
+    "--key",
+    key,
+    "--body",
+    file,
+    "--content-type",
+    contentType,
+    "--metadata",
+    `sha256=${claim.sha256}`,
+    "--content-md5",
+    md5.digest("base64"),
+    "--if-none-match",
+    "*",
+  ]);
 
   if (result.code !== 0) {
-    if (!/PreconditionFailed|ConditionalRequestConflict|\b412\b|\b409\b/.test(result.stderr)) throw failure(`Upload ${key}`, result);
-    let winner = decideInstallerUpload(await headInstaller(key), claim);
+    if (!/PreconditionFailed|ConditionalRequestConflict|\b412\b|\b409\b/.test(result.stderr))
+      throw failure(`Upload ${key}`, result);
+    const winner = await decideStored(key, claim);
 
-    if (winner._tag === "unverified") winner = decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
-
-    if (winner._tag !== "already_published") throw new Error(`${key} is already published with different bytes; release a new version instead.`);
+    if (winner._tag !== "already_published")
+      throw new Error(`${key} is already published with different bytes; release a new version instead.`);
     process.stdout.write(`${key} was published concurrently with these bytes; skipped.\n`);
 
     return;
@@ -164,7 +210,8 @@ async function publishOnce(file, key, contentType, claim) {
 
   const stored = await headInstaller(key);
 
-  if (!stored || stored.size !== claim.size || stored.sha256 !== claim.sha256) throw new Error(`Uploaded ${key} does not match the local file.`);
+  if (!stored || stored.size !== claim.size || stored.sha256 !== claim.sha256)
+    throw new Error(`Uploaded ${key} does not match the local file.`);
   process.stdout.write(`Uploaded ${key}.\n`);
 }
 
@@ -172,7 +219,10 @@ const release = await readLocalRelease();
 
 const mac = await readLocalMac(release.payload.version.text);
 
-await publishOnce(installerPath, release.key, INSTALLER_TYPE, { size: release.payload.size, sha256: release.payload.sha256 });
+await publishOnce(installerPath, release.key, INSTALLER_TYPE, {
+  size: release.payload.size,
+  sha256: release.payload.sha256,
+});
 
 await publishOnce(macZipPath, mac.key, ZIP_TYPE, mac);
 
@@ -181,11 +231,15 @@ const published = await publishedManifest();
 const manifest = decideManifestReplacement(published, { version: release.payload.version, text: release.text });
 
 if (manifest._tag === "conflict") {
-  throw new Error(`A different manifest for ${manifest.published} is already published. Release a new version instead.`);
+  throw new Error(
+    `A different manifest for ${manifest.published} is already published. Release a new version instead.`,
+  );
 }
 
 if (manifest._tag === "stale") {
-  process.stdout.write(`::warning::The feed already offers ${manifest.published}; left it in place instead of moving back to ${release.payload.version.text}.\n`);
+  process.stdout.write(
+    `::warning::The feed already offers ${manifest.published}; left it in place instead of moving back to ${release.payload.version.text}.\n`,
+  );
 } else if (manifest._tag === "unchanged") {
   process.stdout.write(`The feed already offers this ${release.payload.version.text} manifest; skipped.\n`);
 } else {

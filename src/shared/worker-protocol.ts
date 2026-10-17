@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { reviewsSchema } from "./reviews.js";
+import { reviewsSchema } from "./review-schema.js";
 import { runOutcomeSchema } from "./permit.js";
 import type { JurisdictionId } from "./jurisdictions.js";
 
@@ -36,7 +36,14 @@ export type PageObservation = z.infer<typeof pageObservationSchema>;
  * has changed since, the worker sends a fresh observation instead of applying the choice.
  */
 export type MainToWorker =
-  | { kind: "start"; runId: string; jurisdictionId: JurisdictionId; permitNumber: string; previousRecordUrl: string | null; browserPath: string }
+  | {
+      kind: "start";
+      runId: string;
+      jurisdictionId: JurisdictionId;
+      permitNumber: string;
+      previousRecordUrl: string | null;
+      browserPath: string;
+    }
   | { kind: "choose"; runId: string; fingerprint: string; candidateId: string }
   | { kind: "reobserve"; runId: string }
   | { kind: "cancel"; runId: string };
@@ -51,8 +58,14 @@ export type WorkerFailure = z.infer<typeof workerFailureSchema>;
 export const workerToMainSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("observation"), runId: z.string(), observation: pageObservationSchema }),
   z.object({
-    kind: z.literal("verified"), runId: z.string(), displayedNumber: z.string(), statusLabel: z.string(), statusValue: z.string(),
-    observedAt: z.string(), recordUrl: z.string(), browserVersion: z.string(),
+    kind: z.literal("verified"),
+    runId: z.string(),
+    displayedNumber: z.string(),
+    statusLabel: z.string(),
+    statusValue: z.string(),
+    observedAt: z.string(),
+    recordUrl: z.string(),
+    browserVersion: z.string(),
     reviews: reviewsSchema.default(null),
   }),
   z.object({ kind: z.literal("failed"), runId: z.string(), outcome: workerFailureSchema }),
