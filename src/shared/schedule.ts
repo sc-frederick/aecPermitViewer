@@ -6,11 +6,15 @@ import type { RunOutcome } from "./permit.js";
  * (first slot until half an hour after the last), so nothing fires overnight; the next morning's
  * first slot covers it. A late last slot keeps its full half hour even when that runs past midnight.
  */
-export interface CheckTime { hour: number; minute: number }
+export interface CheckTime {
+  hour: number;
+  minute: number;
+}
 
 /** Sorted, de-duplicated, never empty. */
 export type CheckTimes = readonly [CheckTime, ...CheckTime[]];
 
+/** The check times used until the user saves their own: 8:30 AM, 12:30 PM, and 4:30 PM. */
 export const DEFAULT_CHECK_TIMES: CheckTimes = [
   { hour: 8, minute: 30 },
   { hour: 12, minute: 30 },
@@ -38,7 +42,10 @@ export function parseCheckTime(value: string): CheckTime | null {
   return match ? { hour: Number(match[1]), minute: Number(match[2]) } : null;
 }
 
-/** Parses, de-duplicates, and sorts "HH:MM" strings. Returns null unless 1–MAX valid times remain. */
+/**
+ * Parses, de-duplicates, and sorts "HH:MM" strings. Returns null if any is invalid or the result isn't 1 to
+ * MAX_CHECK_TIMES times.
+ */
 export function normalizeCheckTimes(values: readonly string[]): CheckTimes | null {
   const formatted = new Set<string>();
 
@@ -60,7 +67,7 @@ function at(day: Date, time: CheckTime): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), time.hour, time.minute, 0, 0);
 }
 
-/** When a day's check window closes: half an hour after its last slot, which is past midnight for a slot after 11:30 PM. */
+/** When a day's check window closes: half an hour after its last slot, past midnight for a slot after 11:30 PM. */
 function windowEnd(day: Date, times: CheckTimes): Date {
   return new Date(at(day, times[times.length - 1] ?? times[0]).getTime() + WINDOW_GRACE_MINUTES * 60_000);
 }
@@ -102,13 +109,21 @@ export function nextDueAfter(now: Date, outcome: RunOutcome, times: CheckTimes):
   return retry < slot ? retry : slot;
 }
 
+/**
+ * A local Date at `time`, for formatting a wall-clock time; only its time of day carries meaning. The day is fixed in
+ * January, when no US time zone changes its clocks, so every time of day exists on it.
+ */
+export function wallClockDate(time: CheckTime): Date {
+  return new Date(2026, 0, 5, time.hour, time.minute, 0, 0);
+}
+
 /** "8:30 AM, 12:30 PM, and 4:30 PM" in the user's locale. */
 export function describeCheckTimes(times: CheckTimes, locale?: string): string {
   const format = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
-  const reference = new Date(2026, 0, 5);
 
-  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" })
-    .format(times.map((time) => format.format(at(reference, time))));
+  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(
+    times.map((time) => format.format(wallClockDate(time))),
+  );
 }
 
 /**

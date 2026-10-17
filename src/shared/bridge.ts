@@ -1,15 +1,40 @@
-import type { AppSnapshot, PermitHistory } from "./permit.js";
+import type { PermitHistory, PermitRow } from "./permit.js";
 
-/** The settings the window can switch, listed here because the renderer checks them without bundling zod. */
-export const PREFERENCE_KEYS = ["notifyStatusChanges", "notifyFailures", "runInBackground", "openAtLogin", "desktopShortcut"] as const;
+/** Preferences the window can toggle. Listed here so the renderer can validate them without bundling zod. */
+export const PREFERENCE_KEYS = [
+  "notifyStatusChanges",
+  "notifyFailures",
+  "runInBackground",
+  "openAtLogin",
+  "desktopShortcut",
+] as const;
 
-export type PreferenceKey = typeof PREFERENCE_KEYS[number];
+/** One of the window's preference toggles. */
+export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];
+
+/** The settings the window shows, with what this platform and install allow. */
+export interface AppPreferences {
+  notifyStatusChanges: boolean;
+  notifyFailures: boolean;
+  runInBackground: boolean;
+  openAtLogin: boolean;
+  desktopShortcut: boolean;
+  /** False when the platform has no usable notification area, so closing the window quits. */
+  backgroundAvailable: boolean;
+  /** Start-at-sign-in and the desktop shortcut are only offered for the installed Windows app. */
+  installedApp: boolean;
+  /** True on the first launch after a fresh install, until the user says whether they want a desktop shortcut. */
+  offerDesktopShortcut: boolean;
+}
+
+/** The text the window sends with `deleteLocalData`; main deletes nothing for any other value. */
+export const DELETE_LOCAL_DATA_CONFIRMATION = "DELETE LOCAL DATA";
 
 /** An IPC call's result. Failures carry a message safe to show the user; details stay in main. */
 export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * What key storage knows about the saved TypeSafe key without asking the service:
+ * What local key storage knows about the saved TypeSafe key, without asking the service:
  * - `configured`: a key is saved, and the last attempt to read it (if any) succeeded.
  * - `missing`: no key is saved.
  * - `unavailable`: this computer can't store a key.
@@ -18,17 +43,14 @@ export type BridgeResult<T> = { ok: true; value: T } | { ok: false; error: strin
 export type StoredKeyState = "configured" | "missing" | "unavailable" | "unreadable";
 
 /**
- * Whether checks can run for want of a key, as the window shows it. Adds `rejected` to the stored states: the service
- * turned the saved key down, so scheduled checks are paused until a key is saved. Every state but `configured` pauses
- * scheduled checks.
+ * The key state the window shows: the stored states plus `rejected`, meaning the service turned down the saved key.
+ * Every state but `configured` pauses scheduled checks.
  */
 export type KeyState = StoredKeyState | "rejected";
 
 /** A manual update check: no feed configured (`unavailable`), up to date, or a verified newer release. */
 export type UpdateCheck =
-  | { state: "unavailable" }
-  | { state: "current" }
-  | { state: "available"; version: string; size: number };
+  { state: "unavailable" } | { state: "current" } | { state: "available"; version: string; size: number };
 
 /**
  * Whether this app shares its list or follows someone else's:
@@ -43,8 +65,33 @@ export type ShareState =
   | { mode: "sharing"; code: string; publishedAt: string | null; problem: string | null }
   | { mode: "following"; publishedAt: string | null; checkedAt: string | null; problem: string | null };
 
+/** Everything the window renders, sent whole from main on each change. */
+export interface AppSnapshot {
+  /**
+   * Increases with every snapshot main reads, in the order it read them. A window that has shown one revision ignores
+   * any lower one that arrives later.
+   */
+  revision: number;
+  permits: PermitRow[];
+  preferences: AppPreferences;
+  keyState: KeyState;
+  appVersion: string;
+  /** Which settings and update steps the window offers. `other` is a development run on Linux. */
+  platform: "windows" | "mac" | "other";
+  monitoring: "manual" | "scheduled";
+  /** Daily scheduled check times as sorted "HH:MM" strings. */
+  checkTimes: string[];
+  /** While following, `permits` is the followed list and this app's own permits are neither shown nor checked. */
+  share: ShareState;
+}
+
 /** A check result shown in the window while it is in front; `permitId` links it to that permit's details. */
-export interface AppEvent { tone: "info" | "error"; title: string; body: string; permitId?: string }
+export interface AppEvent {
+  tone: "info" | "error";
+  title: string;
+  body: string;
+  permitId?: string;
+}
 
 /**
  * The API the preload script exposes to the renderer. Every input is parsed again in main; the renderer is not trusted
@@ -59,7 +106,7 @@ export interface PermitBridge {
   openPortal(permitId: string): Promise<BridgeResult<null>>;
   /** Hand-checked permits: saves the status the user read, with an optional record link. */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string }): Promise<BridgeResult<null>>;
-  /** Reads one daily page; the reply provides the cursor for older entries. */
+  /** Reads one page of daily history; the reply's `nextBefore` is the cursor for older entries. */
   history(permitId: string, before?: string): Promise<BridgeResult<PermitHistory>>;
   /** Sends the key to main once for encryption; it is never returned to the window. */
   saveKey(key: string): Promise<BridgeResult<null>>;
@@ -79,8 +126,9 @@ export interface PermitBridge {
   installUpdate(): Promise<BridgeResult<null>>;
   /** macOS: opens the page with the newest Mac download in the browser. */
   openUpdateDownload(): Promise<BridgeResult<null>>;
+  /** Deletes all local data and quits; `confirmation` must be `DELETE_LOCAL_DATA_CONFIRMATION`. */
   deleteLocalData(confirmation: string): Promise<BridgeResult<null>>;
-  /** Starts sharing this app's list and returns the code others follow it with. */
+  /** Starts sharing this app's list. The share code arrives in the next snapshot's `share` state. */
   startSharing(): Promise<BridgeResult<null>>;
   /** Stops sharing and deletes the shared copy, so the code stops working. */
   stopSharing(): Promise<BridgeResult<null>>;

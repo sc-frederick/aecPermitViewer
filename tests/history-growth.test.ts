@@ -1,28 +1,39 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js";
 import { PermitStore } from "../src/main/store.js";
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
-// Run with npm run benchmark:history. Fixtures model 75 permits, three daily checks and 20 reviews per check.
-// The two-minute timeout includes seeding 246,375 observations on Windows; publication still has a 100 ms turn budget.
+/** A folder named by HISTORY_BENCHMARK_OUTPUT also gets each round's results as `aec-history-<days>.json`. */
+const outputDirectory = process.env.HISTORY_BENCHMARK_OUTPUT;
+
+// CI runs this alone with `npm run benchmark:history`. The fixture models 75 permits with three daily checks and
+// 20 reviews per check. The two-minute timeout covers seeding 246,375 observations on Windows; publication must still
+// keep every event-loop turn under 100 ms.
 describe("history growth benchmark", () => {
   it("materializes only the retained daily window as discarded history grows", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "permit-history-growth-"));
-    const file = path.join(root, "data.sqlite");
+    const file = path.join(temporaryDirectory("permit-history-growth-"), "data.sqlite");
     const store = new PermitStore(file);
     const db = new DatabaseSync(file);
     const ids: string[] = [];
 
-    const reviewJson = JSON.stringify(Array.from({ length: 20 }, (_, index) => ({ process: `Review ${index}`,
-      status: "Corrections Required", date: "2026-09-01", dueDate: "2026-09-01" })));
+    const reviewJson = JSON.stringify(
+      Array.from({ length: 20 }, (_, index) => ({
+        process: `Review ${index}`,
+        status: "Corrections Required",
+        date: "2026-09-01",
+        dueDate: "2026-09-01",
+      })),
+    );
 
-    const run = db.prepare(`INSERT INTO check_runs (id, permit_id, started_at, finished_at, outcome, app_version, adapter_version,
+    const run =
+      db.prepare(`INSERT INTO check_runs (id, permit_id, started_at, finished_at, outcome, app_version, adapter_version,
       prompt_version, requested_model, playwright_version) VALUES (?, ?, ?, ?, 'success', 'test', 'test', 'test', 'test', 'test')`);
 
-    const observed = db.prepare(`INSERT INTO status_observations (id, run_id, permit_id, verified_permit_number, status_label,
+    const observed =
+      db.prepare(`INSERT INTO status_observations (id, run_id, permit_id, verified_permit_number, status_label,
       status_value, observed_at, record_url, extractor_version, reviews) VALUES (?, ?, ?, 'X', 'Status', 'In Process', ?, 'https://example.test', 'test', ?)`);
 
     try {
@@ -33,8 +44,10 @@ describe("history growth benchmark", () => {
         ids.push(added.value);
       }
 
-      for (const [from, to] of [[0, 365], [365, 1095]]) {
-        if (from === undefined || to === undefined) throw new Error("fixture range missing");
+      for (const [from, to] of [
+        [0, 365],
+        [365, 1095],
+      ] as const) {
         db.exec("BEGIN");
 
         for (const permitId of ids) {
@@ -64,31 +77,47 @@ describe("history growth benchmark", () => {
 
         const start = performance.now();
 
-        const json = await buildSharedListAsync(store.listPermits(), (id) => {
-          const permitStart = performance.now();
-          const history = store.dailyHistory(id, 120);
-          maxPermitMs = Math.max(maxPermitMs, performance.now() - permitStart);
-          reads += history.observations.length;
+        const json = await buildSharedListAsync(
+          store.listPermits(),
+          (id) => {
+            const permitStart = performance.now();
+            const history = store.dailyHistory(id, 120);
+            maxPermitMs = Math.max(maxPermitMs, performance.now() - permitStart);
+            reads += history.observations.length;
 
-          return history;
-        }, null);
+            return history;
+          },
+          null,
+        );
 
         const elapsedMs = performance.now() - start;
         maxTurnMs = Math.max(maxTurnMs, performance.now() - lastTick);
         clearInterval(heartbeat);
         const list = parseSharedList(json);
 
-        const result = { rawObservations: 75 * to * 3, materializedObservations: reads, timerTicks: ticks,
-          elapsedMs: Math.round(elapsedMs), maxPermitMs: Math.round(maxPermitMs), maxTurnMs: Math.round(maxTurnMs), jsonBytes: Buffer.byteLength(json) };
+        const result = {
+          rawObservations: 75 * to * 3,
+          materializedObservations: reads,
+          timerTicks: ticks,
+          elapsedMs: Math.round(elapsedMs),
+          maxPermitMs: Math.round(maxPermitMs),
+          maxTurnMs: Math.round(maxTurnMs),
+          jsonBytes: Buffer.byteLength(json),
+        };
 
         console.log(JSON.stringify(result));
-        writeFileSync(path.join(tmpdir(), `aec-history-${to}.json`), JSON.stringify(result));
+
+        if (outputDirectory)
+          writeFileSync(path.join(outputDirectory, `aec-history-${to}.json`), JSON.stringify(result));
         expect(ticks).toBeGreaterThan(0);
         expect(maxTurnMs).toBeLessThan(100);
         expect(reads).toBe(75 * 120);
         expect(list.histories.size).toBe(75);
         expect(maxPermitMs).toBeLessThan(100);
       }
-    } finally { db.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      db.close();
+      store.close();
+    }
   }, 120_000);
 });

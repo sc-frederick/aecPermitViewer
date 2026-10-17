@@ -18,10 +18,12 @@ interface Gate {
   open: () => void;
 }
 
-/** A gate that stays closed until the test opens it. */
 function gate(): Gate {
   let open: () => void = () => undefined;
-  const promise = new Promise<void>((resolve) => { open = resolve; });
+
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
 
   return { promise, open };
 }
@@ -50,7 +52,11 @@ function harness(scopes: Record<string, string>) {
       started.push(permitId);
       startedKeys.push(`${permitId}:${key}`);
       let finish: (outcome: RunOutcome) => void = () => undefined;
-      const finished = new Promise<RunOutcome>((resolve) => { finish = resolve; });
+
+      const finished = new Promise<RunOutcome>((resolve) => {
+        finish = resolve;
+      });
+
       running.set(permitId, finish);
 
       return { finished, cancel: () => finish("cancelled") };
@@ -149,7 +155,10 @@ describe("cancelling", () => {
       readKey: async () => "key",
       start: (): StartedCheck => {
         let settle: (outcome: RunOutcome | null) => void = () => undefined;
-        const finished = new Promise<RunOutcome | null>((resolve) => { settle = resolve; });
+
+        const finished = new Promise<RunOutcome | null>((resolve) => {
+          settle = resolve;
+        });
 
         // Main answers null when the check stopped before its run was saved, such as while the browser is verified.
         return { finished, cancel: () => settle(null) };
@@ -236,7 +245,7 @@ describe("scheduled eligibility", () => {
     expect(started).toEqual(["a1"]);
   });
 
-  it("tells the starter scheduled work stopped qualifying while the browser was verified, but keeps manual requests", async () => {
+  it("lets the starter drop scheduled work that stops qualifying during browser verification", async () => {
     const browser = gate();
     const launched: string[] = [];
     const deferred: string[] = [];
@@ -296,18 +305,26 @@ describe("keys", () => {
     let key = "old";
 
     const queue = new CheckQueue({
-      scopeOf: () => "accela", scheduledEligible: () => true, readKey: async () => key,
+      scopeOf: () => "accela",
+      scheduledEligible: () => true,
+      readKey: async () => key,
       start: (id, credential, stillWanted) => {
         entered.push(`${id}:${credential}`);
 
-        return { finished: browser.promise.then(() => {
-          if (!stillWanted()) return null;
-          recorded.push(`${id}:${credential}`);
+        return {
+          finished: browser.promise.then(() => {
+            if (!stillWanted()) return null;
+            recorded.push(`${id}:${credential}`);
 
-          return "success" as const;
-        }), cancel: () => undefined };
+            return "success" as const;
+          }),
+          cancel: () => undefined,
+        };
       },
-      defer: () => undefined, keyUnavailable: () => undefined, saveFailed: () => undefined, changed: () => undefined,
+      defer: () => undefined,
+      keyUnavailable: () => undefined,
+      saveFailed: () => undefined,
+      changed: () => undefined,
     });
 
     queue.enqueue("a", "manual");
@@ -320,6 +337,32 @@ describe("keys", () => {
     expect(entered).toEqual(["a:old", "a:new"]);
     expect(recorded).toEqual(["a:new"]);
     expect(queue.checkingIds()).toEqual(new Set());
+    await queue.stop();
+  });
+
+  it.each(["missing", "unreadable"])("uses a saved key whose text is %j", async (savedKey) => {
+    const startedKeys: string[] = [];
+    const notices: KeyProblem[] = [];
+
+    const queue = new CheckQueue({
+      scopeOf: () => "accela",
+      scheduledEligible: () => true,
+      readKey: async () => savedKey,
+      start: (id, key) => {
+        startedKeys.push(`${id}:${key}`);
+
+        return { finished: Promise.resolve("success" as const), cancel: () => undefined };
+      },
+      defer: () => undefined,
+      keyUnavailable: (problem) => notices.push(problem),
+      saveFailed: () => undefined,
+      changed: () => undefined,
+    });
+
+    queue.enqueue("a", "manual");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startedKeys).toEqual([`a:${savedKey}`]);
+    expect(notices).toEqual([]);
     await queue.stop();
   });
 
@@ -377,7 +420,7 @@ describe("keys", () => {
     await finish("a1");
   });
 
-  it("drops work without recording failures while no key is saved, tells someone who asks, and resumes once one reads", async () => {
+  it("skips checks while no key is saved and resumes once a key reads", async () => {
     const { queue, started, keyNotices, state } = harness({ a1: "accela", h1: "tyler", s1: "click2gov" });
     state.key = null;
 
@@ -392,7 +435,10 @@ describe("keys", () => {
     await vi.advanceTimersByTimeAsync(0);
     queue.enqueue("h1", "manual");
     await vi.advanceTimersByTimeAsync(0);
-    expect(keyNotices).toEqual([["missing", false], ["missing", true]]);
+    expect(keyNotices).toEqual([
+      ["missing", false],
+      ["missing", true],
+    ]);
 
     state.key = "key";
     queue.enqueue("a1", "scheduled");

@@ -7,7 +7,7 @@ import type { PublishResult, ReadResult } from "./room.js";
 
 /** A room as the router reaches it: a Durable Object stub in production, a ShareRoom in tests. */
 export interface RoomApi {
-  /** Probes an existing legacy share without allocating persistent storage or reading ciphertext. */
+  /** True when the room holds ciphertext, without allocating storage or reading the body. Detects legacy rooms. */
   exists(): Promise<boolean>;
   publish(body: ArrayBuffer): Promise<PublishResult>;
   read(knownRevision: number | null): Promise<ReadResult>;
@@ -26,7 +26,10 @@ const MIN_BODY_BYTES = 29;
 const REVISION_TAG = /^"r(\d{1,15})"$/;
 
 function text(body: string, status: number, headers: Record<string, string> = {}): Response {
-  return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...headers } });
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...headers },
+  });
 }
 
 function bearer(request: Request): string | null {
@@ -35,7 +38,10 @@ function bearer(request: Request): string | null {
   return token ?? null;
 }
 
-type BodyRead = { readonly _tag: "ok"; readonly bytes: ArrayBuffer } | { readonly _tag: "too_large" } | { readonly _tag: "malformed" };
+type BodyRead =
+  | { readonly _tag: "ok"; readonly bytes: ArrayBuffer }
+  | { readonly _tag: "too_large" }
+  | { readonly _tag: "malformed" };
 
 /** Reads at most `limit` bytes, stopping as soon as the body exceeds it. */
 async function readBounded(request: Request, limit: number): Promise<BodyRead> {
@@ -105,11 +111,18 @@ async function fetchList(request: Request, rooms: RoomDirectory): Promise<Respon
     if (result._tag === "absent") return text("No shared list", 404);
     const etag = `"r${result.revision}"`;
 
-    if (result._tag === "unchanged") return new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } });
+    if (result._tag === "unchanged")
+      return new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } });
 
-    return new Response(result.body, { status: 200, headers: {
-      "content-type": "application/octet-stream", "cache-control": "no-store", etag, "x-published-at": result.publishedAt,
-    } });
+    return new Response(result.body, {
+      status: 200,
+      headers: {
+        "content-type": "application/octet-stream",
+        "cache-control": "no-store",
+        etag,
+        "x-published-at": result.publishedAt,
+      },
+    });
   });
 }
 
@@ -120,22 +133,35 @@ async function writerRoom(request: Request): Promise<string | null> {
   return token ? roomNameFor(token) : null;
 }
 
-/** CF-Connecting-IP is supplied by the edge. Missing/invalid addresses share one fail-closed bucket in local dev. */
+/**
+ * The hashed quota key for the caller: the IPv4 address or IPv6 /64 from CF-Connecting-IP, which the edge sets.
+ * Missing or invalid addresses, as in local dev, all share one bucket.
+ */
 async function sourceFor(request: Request): Promise<string> {
   const address = request.headers.get("cf-connecting-ip") ?? "";
   let source = "unknown-source";
 
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address) && address.split(".").every((part) => Number(part) <= 255)) {
-    source = address.split(".").map((part) => String(Number(part))).join(".");
+    source = address
+      .split(".")
+      .map((part) => String(Number(part)))
+      .join(".");
   } else if (/^[a-fA-F0-9:]+$/.test(address)) {
     try {
       const canonical = new URL(`http://[${address}]`).hostname.slice(1, -1);
       const [left = "", right = ""] = canonical.split("::");
       const start = left ? left.split(":") : [];
       const end = right ? right.split(":") : [];
-      const groups = canonical.includes("::") ? [...start, ...Array<string>(8 - start.length - end.length).fill("0"), ...end] : start;
+
+      const groups = canonical.includes("::")
+        ? [...start, ...Array<string>(8 - start.length - end.length).fill("0"), ...end]
+        : start;
+
       // IPv6 privacy addresses from one network consume the same quota.
-      source = `${groups.slice(0, 4).map((group) => group.padStart(4, "0")).join(":")}/64`;
+      source = `${groups
+        .slice(0, 4)
+        .map((group) => group.padStart(4, "0"))
+        .join(":")}/64`;
     } catch {
       // Invalid inputs retain the shared unknown-source bucket.
     }
@@ -147,9 +173,17 @@ async function sourceFor(request: Request): Promise<string> {
 }
 
 function admissionResponse(result: AdmissionDenied): Response {
-  console.warn(JSON.stringify({ event: "share_admission_denied", reason: result.reason, retryAfterSeconds: result.retryAfterSeconds }));
+  console.warn(
+    JSON.stringify({
+      event: "share_admission_denied",
+      reason: result.reason,
+      retryAfterSeconds: result.retryAfterSeconds,
+    }),
+  );
 
-  return text("Sharing is temporarily limited; retry shortly", 429, { "retry-after": String(result.retryAfterSeconds) });
+  return text("Sharing is temporarily limited; retry shortly", 429, {
+    "retry-after": String(result.retryAfterSeconds),
+  });
 }
 
 async function publishList(request: Request, rooms: RoomDirectory, admission: AdmissionApi): Promise<Response> {
@@ -161,9 +195,10 @@ async function publishList(request: Request, rooms: RoomDirectory, admission: Ad
     const source = await sourceFor(request);
     const checked = await admission.check(name, source);
 
-    // Request-rate and metadata limits reject before reaching even an empty room or reading the body. Creation-only
-    // limits allow a storage-free existence probe, so shares from before this admission policy still update at cap.
-    if (checked._tag === "denied" && (checked.reason === "source_writes" || checked.reason === "tracked_sources")) return admissionResponse(checked);
+    // Request-rate and metadata limits reject before touching a room or reading the body. Creation-only limits fall
+    // through to a storage-free existence probe, so a legacy room with no admission record still updates at capacity.
+    if (checked._tag === "denied" && (checked.reason === "source_writes" || checked.reason === "tracked_sources"))
+      return admissionResponse(checked);
     let legacy = false;
 
     if (checked._tag === "denied") {
@@ -188,10 +223,14 @@ async function publishList(request: Request, rooms: RoomDirectory, admission: Ad
 
     const result = await rooms(name).publish(body.bytes);
 
-    if (result._tag === "too_soon") return text("Published too recently", 429, { "retry-after": String(Math.max(1, Math.min(3600, result.retryAfterSeconds))) });
+    if (result._tag === "too_soon")
+      return text("Published too recently", 429, {
+        "retry-after": String(Math.max(1, Math.min(3600, result.retryAfterSeconds))),
+      });
 
     return new Response(JSON.stringify({ revision: result.revision, publishedAt: result.publishedAt }), {
-      status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" },
+      status: 200,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
   });
 }
@@ -213,9 +252,13 @@ export async function route(request: Request, rooms: RoomDirectory, admission: A
   if (new URL(request.url).pathname !== LIST_PATH) return text("Not found", 404);
 
   switch (request.method) {
-    case "GET": return fetchList(request, rooms);
-    case "PUT": return publishList(request, rooms, admission);
-    case "DELETE": return deleteList(request, rooms);
-    default: return text("Method not allowed", 405, { allow: "GET, PUT, DELETE" });
+    case "GET":
+      return fetchList(request, rooms);
+    case "PUT":
+      return publishList(request, rooms, admission);
+    case "DELETE":
+      return deleteList(request, rooms);
+    default:
+      return text("Method not allowed", 405, { allow: "GET, PUT, DELETE" });
   }
 }

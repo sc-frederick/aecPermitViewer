@@ -47,13 +47,19 @@ export const jsonText = z.string().transform((value, context): z.core.util.JSONT
 const envelopeText = jsonText.pipe(z.object({ signed: z.base64(), signature: z.base64() }));
 
 // Mirrors the app's payload schema, so the feed never publishes a manifest every client would reject.
-const payloadText = jsonText.pipe(z.object({
-  version: z.string().transform((value, context) => parseReleaseVersion(value) ?? invalid(context, "version is not major.minor.patch")),
-  url: z.url(),
-  sha256: sha256Hex,
-  size: z.number().int().positive().max(1_000_000_000),
-  publisher: z.string().max(200),
-}));
+const payloadText = jsonText.pipe(
+  z.object({
+    version: z
+      .string()
+      .transform(
+        (value, context) => parseReleaseVersion(value) ?? invalid(context, "version is not major.minor.patch"),
+      ),
+    url: z.url(),
+    sha256: sha256Hex,
+    size: z.number().int().positive().max(1_000_000_000),
+    publisher: z.string().max(200),
+  }),
+);
 
 /** The signed payload of a release manifest. */
 export type ManifestPayload = z.infer<typeof payloadText>;

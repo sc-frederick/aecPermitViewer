@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { existsSync } from "node:fs";
 import { copyFile, cp, lstat, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { isBrowserDiagnosticFile } from "../src/shared/browser-payload.ts";
 
@@ -8,8 +9,8 @@ await mkdir("dist", { recursive: true });
 
 await rm("dist/chunks", { recursive: true, force: true });
 
-// Tests and live checks can produce this regular Windows diagnostic. Remove
-// it from staging before Forge copies resources, without touching browser code.
+// Tests and live checks on Windows can leave Chromium's debug.log in the staged browser. Delete it before Forge
+// copies resources; the browser's own files are left alone.
 const stagedBrowser = "vendor/playwright-browsers";
 
 if (existsSync(stagedBrowser)) {
@@ -17,7 +18,12 @@ if (existsSync(stagedBrowser)) {
     const relative = `${entry.name}/chrome-headless-shell-win64/debug.log`;
     const diagnostic = path.join(stagedBrowser, ...relative.split("/"));
 
-    if (entry.isDirectory() && isBrowserDiagnosticFile(relative) && existsSync(diagnostic) && (await lstat(diagnostic)).isFile()) {
+    if (
+      entry.isDirectory() &&
+      isBrowserDiagnosticFile(relative) &&
+      existsSync(diagnostic) &&
+      (await lstat(diagnostic)).isFile()
+    ) {
       await unlink(diagnostic);
     }
   }
@@ -39,6 +45,9 @@ await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 // Shared lists (infra/sync-server). Empty turns sharing off; `wrangler dev` URLs on localhost work in development.
 await writeFile("dist/sync-config.json", JSON.stringify({ serviceUrl: process.env.SHARE_SERVICE_URL ?? "" }));
 
+// Each run records the Playwright release that drove it, read from the installed package so it can't drift from the pin.
+const { version: playwrightVersion } = createRequire(import.meta.url)("playwright/package.json");
+
 const shared = {
   bundle: true,
   sourcemap: false,
@@ -49,14 +58,31 @@ const shared = {
 };
 
 await Promise.all([
-  build({ ...shared, entryPoints: ["src/main/index.ts"], outfile: "dist/main.cjs" }),
+  build({
+    ...shared,
+    entryPoints: ["src/main/index.ts"],
+    outfile: "dist/main.cjs",
+    define: { PLAYWRIGHT_VERSION: JSON.stringify(playwrightVersion) },
+  }),
   build({ ...shared, entryPoints: ["src/preload/index.ts"], outfile: "dist/preload.cjs" }),
   build({ ...shared, entryPoints: ["src/worker/index.ts"], outfile: "dist/worker.cjs" }),
-  build({ entryPoints: { renderer: "src/renderer/index.ts" }, outdir: "dist", bundle: true, target: "es2022", platform: "browser",
-    format: "esm", splitting: true, minify: true, chunkNames: "chunks/[name]-[hash]" }),
+  build({
+    entryPoints: { renderer: "src/renderer/index.ts" },
+    outdir: "dist",
+    bundle: true,
+    target: "es2022",
+    platform: "browser",
+    format: "esm",
+    splitting: true,
+    minify: true,
+    chunkNames: "chunks/[name]-[hash]",
+  }),
   copyFile("src/renderer/index.html", "dist/index.html"),
   copyFile("src/renderer/styles.css", "dist/styles.css"),
   copyFile("src/main/authenticode.ps1", "dist/authenticode.ps1"),
   // The icon file and the install animation are for Windows and the installer, not the window.
-  cp("assets", "dist/assets", { recursive: true, filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif") }),
+  cp("assets", "dist/assets", {
+    recursive: true,
+    filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif"),
+  }),
 ]);

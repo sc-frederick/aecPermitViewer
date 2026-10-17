@@ -1,8 +1,7 @@
 /**
- * Unwrap a value the test's setup guarantees, failing the test with a clear message when it is missing.
+ * Unwraps a value the test's setup guarantees.
  *
- * @param value - The value the test expects to be present.
- * @param description - What the value is, completing "Expected ...".
+ * @param description - What the value is; the error reads "Expected <description>".
  * @returns The value, narrowed to exclude null and undefined.
  * @throws Error when the value is null or undefined, which fails the calling test.
  */

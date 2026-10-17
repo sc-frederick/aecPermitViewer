@@ -1,5 +1,11 @@
 import type { Page } from "playwright";
-import { expectedStatusLabel, parsePortalUrl, parseWmisNumber, sameJurisdictionPermitNumber, wmisRecordUrl } from "../shared/permit.js";
+import {
+  expectedStatusLabel,
+  parsePortalUrl,
+  parseWmisNumber,
+  sameJurisdictionPermitNumber,
+  wmisRecordUrl,
+} from "../shared/permit.js";
 import { onlyElement } from "../shared/array.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
@@ -15,9 +21,13 @@ const WUP = "#TabContainer1_TabPanel1_SearchWupInfo1_";
 /** Search controls on each program's page. ERP collects numbers in a list with Add before searching. */
 const FORMS = {
   ERP: {
-    permit: `${ERP}TextBoxWupName`, revision: `${ERP}TextBoxWupRevision`,
-    addPermit: `${ERP}ButtonAddPermit`, permitList: `${ERP}ListBoxPermits`,
-    application: `${ERP}TextBoxApplicationNo`, addApplication: `${ERP}ButtonAddAppId`, applicationList: `${ERP}ListBoxAppIds`,
+    permit: `${ERP}TextBoxWupName`,
+    revision: `${ERP}TextBoxWupRevision`,
+    addPermit: `${ERP}ButtonAddPermit`,
+    permitList: `${ERP}ListBoxPermits`,
+    application: `${ERP}TextBoxApplicationNo`,
+    addApplication: `${ERP}ButtonAddAppId`,
+    applicationList: `${ERP}ListBoxAppIds`,
     search: "#ButtonSearch",
   },
   WUP: { permit: `${WUP}TextBoxWupName`, revision: `${WUP}TextBoxWupRevision`, search: "#ButtonSearch" },
@@ -44,14 +54,24 @@ type ResultRow = Record<string, string>;
 async function resultRows(page: Page): Promise<ResultRow[] | null> {
   const grid = page.locator(RESULTS_GRID).filter({ visible: true });
 
-  if (await grid.count() !== 1) return null;
+  if ((await grid.count()) !== 1) return null;
 
   return grid.evaluate((table) => {
     const rows = [...table.querySelectorAll<HTMLTableRowElement>(":scope > tbody > tr")];
-    const names = [...(rows.find((row) => row.querySelector("th"))?.cells ?? [])].map((cell) => cell.textContent?.trim() ?? "");
 
-    return rows.flatMap((row) => row.querySelector("th") ? []
-      : [Object.fromEntries([...row.cells].map((cell, index) => [names[index] || `column ${index}`, cell.textContent?.trim() ?? ""]))]);
+    const names = [...(rows.find((row) => row.querySelector("th"))?.cells ?? [])].map(
+      (cell) => cell.textContent?.trim() ?? "",
+    );
+
+    return rows.flatMap((row) =>
+      row.querySelector("th")
+        ? []
+        : [
+            Object.fromEntries(
+              [...row.cells].map((cell, index) => [names[index] || `column ${index}`, cell.textContent?.trim() ?? ""]),
+            ),
+          ],
+    );
   });
 }
 
@@ -70,7 +90,8 @@ function rowIdentity(row: ResultRow, profile: WmisProfile): string | null {
   if (!digits(application)) return null;
   const prefix = /^\d{2}$/.test(row.Prefix ?? "") ? ` · Prefix ${row.Prefix}` : "";
 
-  return digits(permit) && digits(revision) ? `Permit: ${permit}.${revision} (App: ${application})${prefix}`
+  return digits(permit) && digits(revision)
+    ? `Permit: ${permit}.${revision} (App: ${application})${prefix}`
     : `Application: ${application}${prefix}`;
 }
 
@@ -83,12 +104,17 @@ function exactRows(rows: ResultRow[] | null, profile: WmisProfile, requested: st
   return (rows ?? []).flatMap((row) => {
     const identity = rowIdentity(row, profile);
 
-    return identity !== null && sameJurisdictionPermitNumber(requested, identity, profile.id) ? [{ row, identity }] : [];
+    return identity !== null && sameJurisdictionPermitNumber(requested, identity, profile.id)
+      ? [{ row, identity }]
+      : [];
   });
 }
 
 async function listValues(page: Page, selector: string): Promise<string[]> {
-  return page.locator(`${selector} option`).allInnerTexts().then((values) => values.map((value) => value.trim()));
+  return page
+    .locator(`${selector} option`)
+    .allInnerTexts()
+    .then((values) => values.map((value) => value.trim()));
 }
 
 /** True when the form's search criteria are exactly the requested number and nothing else. */
@@ -96,20 +122,35 @@ async function criteriaEntered(page: Page, profile: WmisProfile, requested: stri
   const wanted = parseWmisNumber(requested, profile.module);
 
   if (!wanted) return false;
-  const value = (selector: string) => page.locator(selector).inputValue().catch(() => "");
 
-  if (profile.module === "WCP") return wanted.kind === "well" && await value(FORMS.WCP.permit) === String(wanted.permit);
+  const value = (selector: string) =>
+    page
+      .locator(selector)
+      .inputValue()
+      .catch(() => "");
+
+  if (profile.module === "WCP")
+    return wanted.kind === "well" && (await value(FORMS.WCP.permit)) === String(wanted.permit);
 
   if (profile.module === "WUP") {
     const [permit, revision] = [await value(FORMS.WUP.permit), await value(FORMS.WUP.revision)];
 
-    return wanted.kind === "permit" && digits(permit) && digits(revision) &&
-      Number(permit) === wanted.permit && Number(revision) === wanted.revision;
+    return (
+      wanted.kind === "permit" &&
+      digits(permit) &&
+      digits(revision) &&
+      Number(permit) === wanted.permit &&
+      Number(revision) === wanted.revision
+    );
   }
 
-  const [permits, applications] = [await listValues(page, FORMS.ERP.permitList), await listValues(page, FORMS.ERP.applicationList)];
+  const [permits, applications] = [
+    await listValues(page, FORMS.ERP.permitList),
+    await listValues(page, FORMS.ERP.applicationList),
+  ];
 
-  if (wanted.kind === "application") return permits.length === 0 && applications.length === 1 && Number(applications[0]) === wanted.id;
+  if (wanted.kind === "application")
+    return permits.length === 0 && applications.length === 1 && Number(applications[0]) === wanted.id;
   const listed = /^(\d+)\.(\d+)$/.exec(permits[0] ?? "");
 
   if (wanted.kind !== "permit" || applications.length !== 0 || permits.length !== 1 || !listed) return false;
@@ -134,31 +175,72 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
       return { phase: "detail", inputValue, formLabels: [], visibleControls, resultNumbers, candidates: [] };
     }
 
-    const candidates: Candidate[] = exact.length === 1 ? [{ id: "open_exact_result", established: true,
-      description: `Open the record page for the result row whose number exactly matches ${requested}.` }] : [];
+    const candidates: Candidate[] =
+      exact.length === 1
+        ? [
+            {
+              id: "open_exact_result",
+              established: true,
+              description: `Open the record page for the result row whose number exactly matches ${requested}.`,
+            },
+          ]
+        : [];
 
-    return { phase: exact.length > 1 ? "results" : "search", inputValue, formLabels: [], visibleControls, resultNumbers, candidates };
+    return {
+      phase: exact.length > 1 ? "results" : "search",
+      inputValue,
+      formLabels: [],
+      visibleControls,
+      resultNumbers,
+      candidates,
+    };
   }
 
   const field = page.locator(wanted?.kind === "application" ? FORMS.ERP.application : FORMS[profile.module].permit);
 
-  if (await field.count() !== 1 || !(await field.isVisible()) || !(await field.isEnabled())) {
+  if ((await field.count()) !== 1 || !(await field.isVisible()) || !(await field.isEnabled())) {
     return { phase: "search", inputValue, formLabels: [], visibleControls: [], resultNumbers: [], candidates: [] };
   }
 
-  const labels = { ERP: wanted?.kind === "application" ? "ERP App ID" : "Permit and Rev", WUP: "Permit # and Rev #", WCP: "Permit #" };
+  const labels = {
+    ERP: wanted?.kind === "application" ? "ERP App ID" : "Permit and Rev",
+    WUP: "Permit # and Rev #",
+    WCP: "Permit #",
+  };
+
   const noun = { ERP: "ERP", WUP: "water use permit", WCP: "well construction permit" }[profile.module];
   const candidates: Candidate[] = [];
 
   if (!entered) {
-    candidates.push({ id: "fill_record_number", established: true, description: profile.module === "ERP"
-      ? `Enter the exact ${wanted?.kind === "application" ? "application ID" : "permit number and revision"} and add it to the ERP search list.`
-      : `Fill the ${labels[profile.module]} search fields with the exact ${noun} number.` });
-  } else if (!(await page.getByText(NO_RECORDS, { exact: true }).isVisible().catch(() => false))) {
-    candidates.push({ id: "search_record_number", established: true, description: `Submit the SWFWMD ${noun} search for the exact number.` });
+    candidates.push({
+      id: "fill_record_number",
+      established: true,
+      description:
+        profile.module === "ERP"
+          ? `Enter the exact ${wanted?.kind === "application" ? "application ID" : "permit number and revision"} and add it to the ERP search list.`
+          : `Fill the ${labels[profile.module]} search fields with the exact ${noun} number.`,
+    });
+  } else if (
+    !(await page
+      .getByText(NO_RECORDS, { exact: true })
+      .isVisible()
+      .catch(() => false))
+  ) {
+    candidates.push({
+      id: "search_record_number",
+      established: true,
+      description: `Submit the SWFWMD ${noun} search for the exact number.`,
+    });
   }
 
-  return { phase: "search", inputValue, formLabels: [labels[profile.module]], visibleControls: [`${labels[profile.module]} search`], resultNumbers: [], candidates };
+  return {
+    phase: "search",
+    inputValue,
+    formLabels: [labels[profile.module]],
+    visibleControls: [`${labels[profile.module]} search`],
+    resultNumbers: [],
+    candidates,
+  };
 }
 
 /**
@@ -168,11 +250,21 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
 async function wmisSearchFoundNothing(page: Page, profile: WmisProfile, requested: string): Promise<boolean> {
   if (!(await criteriaEntered(page, profile, requested))) return false;
 
-  if (await page.getByText(NO_RECORDS, { exact: true }).isVisible().catch(() => false)) return true;
+  if (
+    await page
+      .getByText(NO_RECORDS, { exact: true })
+      .isVisible()
+      .catch(() => false)
+  )
+    return true;
   const rows = await resultRows(page);
 
-  return Boolean(rows && rows.length > 0 && rows.every((row) => rowIdentity(row, profile) !== null) &&
-    exactRows(rows, profile, requested).length === 0);
+  return Boolean(
+    rows &&
+    rows.length > 0 &&
+    rows.every((row) => rowIdentity(row, profile) !== null) &&
+    exactRows(rows, profile, requested).length === 0,
+  );
 }
 
 async function fillWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<void> {
@@ -196,8 +288,10 @@ async function fillWmisSearch(page: Page, profile: WmisProfile, requested: strin
   if (profile.module !== "ERP") return;
 
   // Add posts the page back with the number in the search list.
-  const [list, add] = wanted.kind === "application"
-    ? [FORMS.ERP.applicationList, FORMS.ERP.addApplication] : [FORMS.ERP.permitList, FORMS.ERP.addPermit];
+  const [list, add] =
+    wanted.kind === "application"
+      ? [FORMS.ERP.applicationList, FORMS.ERP.addApplication]
+      : [FORMS.ERP.permitList, FORMS.ERP.addPermit];
 
   if (wanted.kind === "application") {
     await page.locator(FORMS.ERP.application).fill(String(wanted.id));
@@ -207,7 +301,11 @@ async function fillWmisSearch(page: Page, profile: WmisProfile, requested: strin
   }
 
   await page.locator(add).click({ noWaitAfter: true });
-  await page.locator(`${list} option`).first().waitFor({ state: "attached", timeout: 12_000 }).catch(() => undefined);
+  await page
+    .locator(`${list} option`)
+    .first()
+    .waitFor({ state: "attached", timeout: 12_000 })
+    .catch(() => undefined);
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
 }
 
@@ -231,23 +329,30 @@ async function openWmisResult(page: Page, profile: WmisProfile, requested: strin
   if (!match) return;
   const { row } = match;
 
-  const url = profile.module === "ERP" ? wmisRecordUrl(profile, { id: Number(row["ERP App ID"]) })
-    : wmisRecordUrl(profile, { permit: Number(row["Permit #"]) });
+  const url =
+    profile.module === "ERP"
+      ? wmisRecordUrl(profile, { id: Number(row["ERP App ID"]) })
+      : wmisRecordUrl(profile, { permit: Number(row["Permit #"]) });
 
-  if (url && parsePortalUrl(url, "detail", profile.id)) await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  if (url && parsePortalUrl(url, "detail", profile.id))
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
 }
 
 async function selectedText(page: Page, selector: string): Promise<string | null> {
   const select = page.locator(selector);
 
-  if (await select.count() !== 1 || !(await select.isVisible())) return null;
+  if ((await select.count()) !== 1 || !(await select.isVisible())) return null;
 
-  return select.evaluate((element) => element instanceof HTMLSelectElement
-    ? element.options[element.selectedIndex]?.text.trim() ?? null : null);
+  return select.evaluate((element) =>
+    element instanceof HTMLSelectElement ? (element.options[element.selectedIndex]?.text.trim() ?? null) : null,
+  );
 }
 
 async function labelBefore(page: Page, selector: string): Promise<string | null> {
-  return page.locator(selector).evaluate((element) => element.previousElementSibling?.textContent?.trim() ?? null).catch(() => null);
+  return page
+    .locator(selector)
+    .evaluate((element) => element.previousElementSibling?.textContent?.trim() ?? null)
+    .catch(() => null);
 }
 
 /** Read the record's displayed identity and record-level status: a record page, or water use's result row. */
@@ -267,7 +372,10 @@ async function readWmisRecord(page: Page, profile: WmisProfile, requested: strin
 
   const fields = RECORD_FIELDS[profile.module];
   const heading = page.locator(fields.heading);
-  let displayedNumber = await heading.count() === 1 && await heading.isVisible() ? (await heading.innerText()).trim() : null;
+
+  let displayedNumber =
+    (await heading.count()) === 1 && (await heading.isVisible()) ? (await heading.innerText()).trim() : null;
+
   let statusValue: string | null;
 
   if (profile.module === "ERP") {
@@ -277,7 +385,8 @@ async function readWmisRecord(page: Page, profile: WmisProfile, requested: strin
     statusValue = await selectedText(page, RECORD_FIELDS.ERP.status);
   } else {
     const status = page.locator(RECORD_FIELDS.WCP.status);
-    statusValue = await status.count() === 1 && await status.isVisible() ? (await status.inputValue()).trim() : null;
+    statusValue =
+      (await status.count()) === 1 && (await status.isVisible()) ? (await status.inputValue()).trim() : null;
   }
 
   return {

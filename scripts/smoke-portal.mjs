@@ -13,9 +13,18 @@ const jurisdictionId = process.argv[3] ?? "hillsborough-county-building";
 const previousRecordUrl = process.argv[4] ?? null;
 
 // Verify the worker's result the way main does before it saves an observation.
-const shared = await build({ entryPoints: ["src/shared/permit.ts"], bundle: true, write: false, format: "esm", platform: "node", target: "node24" });
+const shared = await build({
+  entryPoints: ["src/shared/permit.ts"],
+  bundle: true,
+  write: false,
+  format: "esm",
+  platform: "node",
+  target: "node24",
+});
 
-const { parseDisplayedStatus } = await import(`data:text/javascript;base64,${Buffer.from(shared.outputFiles[0].text).toString("base64")}`);
+const { parseDisplayedStatus } = await import(
+  `data:text/javascript;base64,${Buffer.from(shared.outputFiles[0].text).toString("base64")}`
+);
 
 const port = new EventEmitter();
 
@@ -60,31 +69,49 @@ port.postMessage = (message) => {
       return;
     }
 
-    port.emit("message", { data: {
-      kind: "choose", runId: message.runId,
-      fingerprint: message.observation.fingerprint,
-      candidateId: candidate.id,
-    } });
+    port.emit("message", {
+      data: {
+        kind: "choose",
+        runId: message.runId,
+        fingerprint: message.observation.fingerprint,
+        candidateId: candidate.id,
+      },
+    });
   } else if (message.kind === "verified") {
     settled = true;
     clearTimeout(deadline);
 
-    const parsed = parseDisplayedStatus({ jurisdictionId, requestedNumber: permitNumber, displayedNumber: message.displayedNumber,
-      statusLabel: message.statusLabel, statusValue: message.statusValue, reviews: message.reviews,
-      recordUrl: message.recordUrl, observedAt: message.observedAt });
+    const parsed = parseDisplayedStatus({
+      jurisdictionId,
+      requestedNumber: permitNumber,
+      displayedNumber: message.displayedNumber,
+      statusLabel: message.statusLabel,
+      statusValue: message.statusValue,
+      reviews: message.reviews,
+      recordUrl: message.recordUrl,
+      observedAt: message.observedAt,
+    });
 
     if (parsed._tag !== "ok") {
-      process.stderr.write(`Verification failed: ${parsed.outcome} (displayed ${JSON.stringify(message.displayedNumber)}).\n`);
+      process.stderr.write(
+        `Verification failed: ${parsed.outcome} (displayed ${JSON.stringify(message.displayedNumber)}).\n`,
+      );
       process.exitCode = 1;
 
       return;
     }
 
-    process.stdout.write(JSON.stringify({ permitNumber: message.displayedNumber,
-      statusLabel: message.statusLabel, statusValue: message.statusValue,
-      reviews: parsed.value.reviews,
-      observedAt: message.observedAt, recordUrl: message.recordUrl,
-      browserVersion: message.browserVersion }) + "\n");
+    process.stdout.write(
+      JSON.stringify({
+        permitNumber: message.displayedNumber,
+        statusLabel: message.statusLabel,
+        statusValue: message.statusValue,
+        reviews: parsed.value.reviews,
+        observedAt: message.observedAt,
+        recordUrl: message.recordUrl,
+        browserVersion: message.browserVersion,
+      }) + "\n",
+    );
   } else if (message.kind === "failed") {
     if (process.env.PERMIT_SMOKE_DEBUG === "1") process.stderr.write(`Last action failed in ${jurisdictionId}.\n`);
     settled = true;
@@ -103,9 +130,13 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = path.resolve("vendor/playwright-browsers"
 
 require("../dist/worker.cjs");
 
-port.emit("message", { data: {
-  kind: "start", runId: "portal-smoke", permitNumber,
-  jurisdictionId,
-  previousRecordUrl,
-  browserPath: path.resolve("vendor/playwright-browsers"),
-} });
+port.emit("message", {
+  data: {
+    kind: "start",
+    runId: "portal-smoke",
+    permitNumber,
+    jurisdictionId,
+    previousRecordUrl,
+    browserPath: path.resolve("vendor/playwright-browsers"),
+  },
+});

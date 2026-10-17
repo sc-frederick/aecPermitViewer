@@ -3,7 +3,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StoredKeyState } from "../shared/bridge.js";
 
-/** Encryption owned by the desktop platform; tests use the same port with synthetic keys. */
+function isMissingFile(cause: unknown): boolean {
+  return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+}
+
+/** The platform's per-user encryption. Tests supply a fake with the same shape. */
 export interface KeyEncryption {
   available: () => Promise<boolean>;
   encrypt: (key: string) => Promise<Buffer>;
@@ -23,7 +27,10 @@ export class KeyStorageUnavailable extends Error {
 export class KeyWriteFailed extends Error {
   readonly _tag = "KeyWriteFailed" as const;
 
-  constructor(override readonly cause: unknown) {
+  constructor(
+    /** The encryption or file system error. */
+    override readonly cause: unknown,
+  ) {
     super("The key couldn't be written");
   }
 }
@@ -43,7 +50,11 @@ export class KeyStore {
   /** Counts saves and removals, so a read that finishes after one doesn't judge the new file by the old one. */
   private generation = 0;
 
-  constructor(dataRoot: string, private readonly encryption: KeyEncryption, private readonly devKey: string | null = null) {
+  constructor(
+    dataRoot: string,
+    private readonly encryption: KeyEncryption,
+    private readonly devKey: string | null = null,
+  ) {
     this.secretPath = path.join(dataRoot, "secrets", "typesafe-key.bin");
   }
 
@@ -61,11 +72,11 @@ export class KeyStore {
 
       return this.lastReadFailed ? "unreadable" : "configured";
     } catch (cause) {
-      return cause instanceof Error && "code" in cause && cause.code === "ENOENT" ? "missing" : "unavailable";
+      return isMissingFile(cause) ? "missing" : "unavailable";
     }
   }
 
-  /** Encrypts the key for this user. The plaintext is never returned or persisted. */
+  /** Encrypts the key for this user and replaces any saved key. The plaintext is never written to disk. */
   async save(key: string): Promise<KeySave> {
     this.generation += 1;
 
@@ -94,8 +105,8 @@ export class KeyStore {
   }
 
   /**
-   * The key, or null when none is saved or this computer can't store one. The file is read and decrypted once; a
-   * saved key that can't be read or decrypted rejects, so it isn't mistaken for a missing one.
+   * The key, or null when none is saved or this computer can't store one. A saved key that can't be read or decrypted
+   * rejects, so it isn't mistaken for a missing one. A save or removal during the read restarts it on the new file.
    */
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
@@ -123,7 +134,7 @@ export class KeyStore {
 
   private async readSaved(generation: number): Promise<string | null> {
     const encrypted = await readFile(this.secretPath).catch((cause) => {
-      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return null;
+      if (isMissingFile(cause)) return null;
       throw cause;
     });
 
@@ -142,10 +153,13 @@ export class KeyStore {
     return decrypted.result;
   }
 
-  /** Serializes every disk mutation, including migration; rejected work cannot poison the next operation. */
+  /** Runs disk mutations, including re-encryption, one at a time. A failed mutation doesn't block the next one. */
   private mutate<T>(work: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(work);
-    this.mutations = result.then(() => undefined, () => undefined);
+    this.mutations = result.then(
+      () => undefined,
+      () => undefined,
+    );
 
     return result;
   }

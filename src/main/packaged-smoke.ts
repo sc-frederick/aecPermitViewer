@@ -1,14 +1,24 @@
 import { app, utilityProcess } from "electron";
-import path from "node:path";
 import { workerEnvironment } from "./check-runner.js";
+import { bundledBrowserPath, workerPath } from "./paths.js";
+import { HILLSBOROUGH_ID } from "../shared/permit.js";
 import { workerToMainSchema, type MainToWorker } from "../shared/worker-protocol.js";
 
+/**
+ * Checks one live Hillsborough permit through the packaged worker and bundled browser, choosing the first offered step
+ * at each page, then exits the app: 0 when the record page verifies, 1 on any failure or after 45 seconds.
+ */
 export async function runPackagedBrowserSmoke(): Promise<void> {
   const runId = "packaged-browser-smoke";
   const permitNumber = "HC-BLD-26-0087599";
-  const browserPath = path.join(process.resourcesPath, "playwright-browsers");
+  const browserPath = bundledBrowserPath();
   const env = workerEnvironment(browserPath);
-  const worker = utilityProcess.fork(path.join(__dirname, "worker.cjs"), [], { env, serviceName: "Permit Browser Smoke" });
+
+  const worker = utilityProcess.fork(workerPath(), [], {
+    env,
+    serviceName: "Permit Browser Smoke",
+  });
+
   let finished = false;
 
   const finish = (passed: boolean): void => {
@@ -37,11 +47,17 @@ export async function runPackagedBrowserSmoke(): Promise<void> {
         return;
       }
 
-      worker.postMessage({ kind: "choose", runId, fingerprint: message.observation.fingerprint,
-        candidateId: candidate.id } satisfies MainToWorker);
+      worker.postMessage({
+        kind: "choose",
+        runId,
+        fingerprint: message.observation.fingerprint,
+        candidateId: candidate.id,
+      } satisfies MainToWorker);
     } else if (message.kind === "verified") {
-      const passed = message.displayedNumber === permitNumber &&
-        message.statusLabel === "Record Status:" && message.statusValue.trim().length > 0 &&
+      const passed =
+        message.displayedNumber === permitNumber &&
+        message.statusLabel === "Record Status:" &&
+        message.statusValue.trim().length > 0 &&
         message.recordUrl.startsWith("https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?");
 
       if (passed) process.stdout.write(`Packaged browser smoke passed (${message.browserVersion}).\n`);
@@ -51,6 +67,12 @@ export async function runPackagedBrowserSmoke(): Promise<void> {
       finish(false);
     }
   });
-  worker.postMessage({ kind: "start", runId, jurisdictionId: "hillsborough-county-building", permitNumber,
-    previousRecordUrl: null, browserPath } satisfies MainToWorker);
+  worker.postMessage({
+    kind: "start",
+    runId,
+    jurisdictionId: HILLSBOROUGH_ID,
+    permitNumber,
+    previousRecordUrl: null,
+    browserPath,
+  } satisfies MainToWorker);
 }

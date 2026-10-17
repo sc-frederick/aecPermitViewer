@@ -10,16 +10,17 @@
 // decrypts the list or proves the right to publish.
 
 /** Marks a share code and its format version. */
-export const SHARE_CODE_PREFIX = "PMS1-";
+const SHARE_CODE_PREFIX = "PMS1-";
 
 /** The most encrypted bytes one published list may hold. A Durable Object SQLite row holds up to 2 MB. */
 export const SHARE_BODY_MAX_BYTES = 1_500_000;
 
-/** Bytes in a write key, a read token, and a content key. */
+/** Bytes in a write key. */
 export const WRITE_KEY_BYTES = 32;
 
-export const READ_TOKEN_BYTES = 16;
+const READ_TOKEN_BYTES = 16;
 
+/** Bytes in a content key. */
 export const CONTENT_KEY_BYTES = 32;
 
 const BASE64URL = /^[A-Za-z0-9_-]*$/;
@@ -37,7 +38,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 /** The bytes a base64url string holds, or null when it isn't base64url of exactly `length` bytes. */
 export function fromBase64Url(value: string, length: number): Uint8Array<ArrayBuffer> | null {
-  if (!BASE64URL.test(value) || value.length !== Math.ceil(length * 4 / 3)) return null;
+  if (!BASE64URL.test(value) || value.length !== Math.ceil((length * 4) / 3)) return null;
   const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
 
   if (binary.length !== length) return null;
@@ -73,7 +74,7 @@ export async function roomNameFor(readToken: string): Promise<string | null> {
 
   if (!bytes) return null;
 
-  return [...await sha256("permitmon-share-room", bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [...(await sha256("permitmon-share-room", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** What a follower needs: the token that fetches the list and the key that decrypts it. */
@@ -82,6 +83,7 @@ export interface ShareCode {
   readonly contentKey: Uint8Array<ArrayBuffer>;
 }
 
+/** The share code for a read token and content key, or null when either has the wrong length or encoding. */
 export function formatShareCode(readToken: string, contentKey: Uint8Array): string | null {
   const token = fromBase64Url(readToken, READ_TOKEN_BYTES);
 

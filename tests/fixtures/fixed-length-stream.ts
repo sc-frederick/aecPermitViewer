@@ -1,6 +1,6 @@
-/** A Node substitute for the Workers global, enforcing the byte-count contract while retaining streaming. */
+/** Node stand-in for the Workers `FixedLengthStream` global: passes chunks through and enforces the byte count. */
 export class LocalFixedLengthStream extends TransformStream<Uint8Array, Uint8Array> {
-  /** Creates a stream that rejects short or oversized transfers. */
+  /** Errors the stream when more or fewer than `length` bytes pass through. */
   constructor(length: number) {
     let received = 0;
     super({

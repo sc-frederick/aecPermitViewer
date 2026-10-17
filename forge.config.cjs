@@ -8,9 +8,8 @@ const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
 
 const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
 
-const windowsSign = certificateFile && certificatePassword
-  ? { certificateFile, certificatePassword, hashes: ["sha256"] }
-  : undefined;
+const windowsSign =
+  certificateFile && certificatePassword ? { certificateFile, certificatePassword, hashes: ["sha256"] } : undefined;
 
 if (process.env.RELEASE_BUILD === "1" && !windowsSign) {
   throw new Error("A release build requires Windows signing credentials.");
@@ -34,7 +33,7 @@ async function appFilesToSign(directory) {
     if (entry.name === "playwright-browsers") continue;
     const fullPath = path.join(directory, entry.name);
 
-    if (entry.isDirectory()) files.push(...await appFilesToSign(fullPath));
+    if (entry.isDirectory()) files.push(...(await appFilesToSign(fullPath)));
     else if (/\.(exe|dll|node|ps1)$/i.test(entry.name)) files.push(fullPath);
   }
 
@@ -91,7 +90,5 @@ module.exports = {
       ProductName: "Permit Monitor",
     },
   },
-  makers: [
-    { name: "@electron-forge/maker-squirrel", config: squirrelConfig },
-  ],
+  makers: [{ name: "@electron-forge/maker-squirrel", config: squirrelConfig }],
 };

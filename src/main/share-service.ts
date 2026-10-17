@@ -1,5 +1,5 @@
-// Talks to the shared-list Worker (infra/sync-server) and encrypts lists for it. The Worker only ever receives
-// ciphertext: lists are gzipped, then sealed with AES-256-GCM under the content key, which stays in the share code.
+// Client for the shared-list Worker (infra/sync-server). The Worker only receives ciphertext: lists are gzipped, then
+// sealed with AES-256-GCM under the content key, which never leaves the share code.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync, gzip, gzipSync } from "node:zlib";
@@ -19,14 +19,14 @@ const MAX_LIST_BYTES = 32_000_000;
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
-/** Gzips and seals a list: nonce, then ciphertext, then the GCM tag. */
+/** Gzips and seals a list as nonce, ciphertext, then GCM tag. Throws ListTooLarge past SHARE_BODY_MAX_BYTES. */
 export function sealList(json: string, contentKey: Uint8Array): Uint8Array<ArrayBuffer> {
   return encryptList(gzipSync(json), contentKey);
 }
 
 const compressList = promisify(gzip);
 
-/** Compresses off the main thread before sealing, so large retained histories do not block scheduling or IPC. */
+/** Like `sealList`, but gzips on the libuv thread pool so a large list doesn't block the main process. */
 export async function sealListAsync(json: string, contentKey: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
   return encryptList(await compressList(json), contentKey);
 }
@@ -43,15 +43,26 @@ function encryptList(compressed: Uint8Array, contentKey: Uint8Array): Uint8Array
   return new Uint8Array(sealed);
 }
 
-/** Opens a sealed list. Rejects bytes that weren't sealed under this key, or were changed after. */
-export function openList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "ok"; json: string } | { _tag: "undecryptable" } {
-  if (sealed.length < NONCE_BYTES + TAG_BYTES + 1 || contentKey.length !== CONTENT_KEY_BYTES) return { _tag: "undecryptable" };
+/**
+ * Opens a sealed list. Returns `undecryptable` for bytes not sealed under this key, altered since, or inflating past
+ * MAX_LIST_BYTES.
+ */
+export function openList(
+  sealed: Uint8Array,
+  contentKey: Uint8Array,
+): { _tag: "ok"; json: string } | { _tag: "undecryptable" } {
+  if (sealed.length < NONCE_BYTES + TAG_BYTES + 1 || contentKey.length !== CONTENT_KEY_BYTES)
+    return { _tag: "undecryptable" };
 
   try {
     const decipher = createDecipheriv("aes-256-gcm", contentKey, sealed.subarray(0, NONCE_BYTES));
     decipher.setAAD(ASSOCIATED_DATA);
     decipher.setAuthTag(sealed.subarray(sealed.length - TAG_BYTES));
-    const compressed = Buffer.concat([decipher.update(sealed.subarray(NONCE_BYTES, sealed.length - TAG_BYTES)), decipher.final()]);
+
+    const compressed = Buffer.concat([
+      decipher.update(sealed.subarray(NONCE_BYTES, sealed.length - TAG_BYTES)),
+      decipher.final(),
+    ]);
 
     return { _tag: "ok", json: gunzipSync(compressed, { maxOutputLength: MAX_LIST_BYTES }).toString("utf8") };
   } catch {
@@ -59,11 +70,14 @@ export function openList(sealed: Uint8Array, contentKey: Uint8Array): { _tag: "o
   }
 }
 
-/** The sealed list is over the Worker's size limit, so it wasn't sent. */
+/** A sealed list exceeds the Worker's size limit, or a response exceeds the size the client accepts. */
 export class ListTooLarge extends Error {
   readonly _tag = "ListTooLarge" as const;
 
-  constructor(readonly bytes: number) {
+  constructor(
+    /** The size that exceeded the limit: the sealed list, or the response as declared or read. */
+    readonly bytes: number,
+  ) {
     super(`Shared list is ${bytes} bytes sealed`);
   }
 }
@@ -72,7 +86,10 @@ export class ListTooLarge extends Error {
 export class ShareServiceError extends Error {
   readonly _tag = "ShareServiceError" as const;
 
-  constructor(readonly status: number) {
+  constructor(
+    /** The unexpected HTTP status. */
+    readonly status: number,
+  ) {
     super(`Sharing service answered ${status}`);
   }
 }
@@ -81,16 +98,18 @@ const publishedSchema = z.object({ revision: z.number().int().positive(), publis
 
 const REVISION_TAG = /^"r(\d{1,15})"$/;
 
+/** The service stored the list, or asked for the publication to be retried later. */
 export type PublishReply = { _tag: "published"; publishedAt: string } | { _tag: "retry"; afterSeconds: number };
 
+/** The stored list, `unchanged` when the follower already has its revision, or `absent` when nothing is shared. */
 export type FetchReply =
   | { _tag: "absent" }
   | { _tag: "unchanged" }
   | { _tag: "found"; revision: number; publishedAt: string; sealed: Uint8Array };
 
 /**
- * The service URL from the build's sync-config.json: HTTPS, or HTTP on this computer for a local `wrangler dev`.
- * Null when the build has none, which turns sharing off.
+ * Parses the build's service URL: HTTPS, or HTTP on loopback for a local `wrangler dev`. Returns null for an empty or
+ * unacceptable value, which turns sharing off.
  */
 export function parseServiceUrl(value: string): URL | null {
   if (!value) return null;
@@ -109,7 +128,10 @@ export function parseServiceUrl(value: string): URL | null {
 
 const configSchema = z.object({ serviceUrl: z.string() });
 
-/** The service named in the build's sync-config.json, or null when the file is missing or names none. */
+/**
+ * The service named in the build's sync-config.json, or null when the file can't be read or names none. Throws when
+ * the file isn't valid config.
+ */
 export function loadShareService(configPath: string): ShareService | null {
   let text: string;
 
@@ -124,7 +146,7 @@ export function loadShareService(configPath: string): ShareService | null {
   return url ? new ShareService(url) : null;
 }
 
-/** Reads a response body of at most `limit` bytes. */
+/** Reads a response body, throwing ListTooLarge once it exceeds `limit` bytes. */
 async function boundedBytes(response: Response, limit: number): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
 
@@ -161,7 +183,12 @@ export class ShareService {
   }
 
   /** Sends one request with the token as its bearer credential, and `body` as octets when there is one. */
-  private request(method: string, token: string, body: Uint8Array<ArrayBuffer> | null, ifNoneMatch: string | null = null): Promise<Response> {
+  private request(
+    method: string,
+    token: string,
+    body: Uint8Array<ArrayBuffer> | null,
+    ifNoneMatch: string | null = null,
+  ): Promise<Response> {
     const headers = new Headers({ authorization: `Bearer ${token}` });
     const init: RequestInit = { method, headers, redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
 
@@ -175,6 +202,7 @@ export class ShareService {
     return fetch(this.listUrl, init);
   }
 
+  /** Uploads a sealed list. A 429 resolves to `retry` with Retry-After capped at an hour, or 60 s if it's unusable. */
   async publish(writeKey: string, sealed: Uint8Array<ArrayBuffer>): Promise<PublishReply> {
     const response = await this.request("PUT", writeKey, sealed);
 
@@ -195,7 +223,7 @@ export class ShareService {
     return { _tag: "published", publishedAt: published.publishedAt };
   }
 
-  /** The list, unless the service still has revision `known`. */
+  /** Fetches the list; `unchanged` when the service still holds revision `known`. */
   async fetch(readToken: string, known: number | null): Promise<FetchReply> {
     const response = await this.request("GET", readToken, null, known === null ? null : `"r${known}"`);
 
@@ -215,7 +243,12 @@ export class ShareService {
       throw new ShareServiceError(response.status);
     }
 
-    return { _tag: "found", revision: Number(revision), publishedAt: publishedAt.data, sealed: await boundedBytes(response, SHARE_BODY_MAX_BYTES) };
+    return {
+      _tag: "found",
+      revision: Number(revision),
+      publishedAt: publishedAt.data,
+      sealed: await boundedBytes(response, SHARE_BODY_MAX_BYTES),
+    };
   }
 
   /** Deletes the shared copy. Deleting a list that is already gone succeeds. */

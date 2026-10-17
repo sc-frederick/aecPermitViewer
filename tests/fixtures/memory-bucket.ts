@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
 import type {
-  FeedBucket, FeedMultipartOptions, FeedMultipartUpload, FeedObject, FeedObjectBody, FeedPutOptions, FeedRange, FeedUploadedPart,
+  FeedBucket,
+  FeedMultipartOptions,
+  FeedMultipartUpload,
+  FeedObject,
+  FeedObjectBody,
+  FeedPutOptions,
+  FeedRange,
+  FeedUploadedPart,
 } from "../../infra/update-server/src/bucket.js";
 
 /** The bucket operations a test can make unavailable. */
-export type BucketOperation = "head" | "get" | "put" | "delete" | "createMultipartUpload" | "uploadPart" | "complete" | "abort";
+export type BucketOperation =
+  "head" | "get" | "put" | "delete" | "createMultipartUpload" | "uploadPart" | "complete" | "abort";
 
 interface StoredObject {
   readonly bytes: Uint8Array<ArrayBuffer>;
@@ -20,9 +28,9 @@ interface PendingUpload {
 }
 
 /**
- * An in-memory implementation of the feed's R2 port with R2's observable behavior for the operations the
- * Worker uses: conditional puts, multipart uploads that only appear on completion, and ranged reads.
- * Operations listed in `failing` reject the way an R2 outage does.
+ * In-memory feed bucket matching R2's observable behavior for the operations the Worker uses: conditional puts,
+ * multipart uploads that appear only on completion, and ranged reads. Operations in `failing` reject the way an R2
+ * outage does.
  */
 export class MemoryBucket implements FeedBucket {
   /** Operations that currently reject. */
@@ -79,9 +87,17 @@ export class MemoryBucket implements FeedBucket {
     };
   }
 
-  async put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions): Promise<FeedObject | null> {
+  async put(
+    key: string,
+    value: string | ReadableStream<Uint8Array>,
+    options: FeedPutOptions,
+  ): Promise<FeedObject | null> {
     this.check("put");
-    const bytes = value instanceof ReadableStream ? new Uint8Array(await new Response(value).arrayBuffer()) : new TextEncoder().encode(value);
+
+    const bytes =
+      value instanceof ReadableStream
+        ? new Uint8Array(await new Response(value).arrayBuffer())
+        : new TextEncoder().encode(value);
 
     if (options.sha256 && createHash("sha256").update(bytes).digest("hex") !== options.sha256) {
       throw new Error("put: SHA-256 checksum mismatch");
@@ -136,7 +152,8 @@ export class MemoryBucket implements FeedBucket {
         const chunks = parts.map((part) => {
           const uploaded = upload.parts.get(part.partNumber);
 
-          if (!uploaded || uploaded.etag !== part.etag) throw new Error("One or more of the specified parts could not be found. (10025)");
+          if (!uploaded || uploaded.etag !== part.etag)
+            throw new Error("One or more of the specified parts could not be found. (10025)");
 
           return uploaded.bytes;
         });
@@ -158,7 +175,8 @@ export class MemoryBucket implements FeedBucket {
   }
 
   private check(operation: BucketOperation): void {
-    if (this.failing.has(operation)) throw new Error(`${operation}: We encountered an internal error. Please try again. (10001)`);
+    if (this.failing.has(operation))
+      throw new Error(`${operation}: We encountered an internal error. Please try again. (10001)`);
   }
 
   private nextEtag(): string {

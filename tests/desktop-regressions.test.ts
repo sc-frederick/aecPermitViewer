@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckQueue } from "../src/main/check-queue.js";
@@ -10,22 +8,18 @@ import { PermitStore } from "../src/main/store.js";
 import type { RunOutcome } from "../src/shared/permit.js";
 import { checkScope, getAutomatedJurisdiction, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
-
-const directories: string[] = [];
+import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const RUN = { appVersion: "test", playwrightVersion: "test", requestedModel: "test", promptVersion: "test" };
 
 function newStore() {
-  const root = mkdtempSync(path.join(tmpdir(), "permit-events-"));
-  directories.push(root);
+  const file = path.join(temporaryDirectory("permit-events-"), "data.sqlite");
 
-  return { store: new PermitStore(path.join(root, "data.sqlite")), file: path.join(root, "data.sqlite") };
+  return { store: new PermitStore(file), file };
 }
 
 afterEach(() => {
   vi.useRealTimers();
-
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 describe("completed check announcements", () => {
@@ -46,17 +40,32 @@ describe("completed check announcements", () => {
         const runId = store.startRun({ permitId: id, ...RUN });
         expect(store.getPermit(id)?.latestOutcome).toBeNull();
 
-        const event = recordCheckEvent(store, { runId, permitId: id, outcome, actionCount: 0, requestCount: 0,
-          actualModel: null, browserVersion: null, observation: { verifiedPermitNumber: "HC-BLD-26-0087599",
-            statusLabel: "Record Status", statusValue: index === 6 ? "Issued" : "In Process", reviews: null,
-            observedAt: new Date().toISOString(), recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?id=1" } });
+        const event = recordCheckEvent(store, {
+          runId,
+          permitId: id,
+          outcome,
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+          observation: {
+            verifiedPermitNumber: "HC-BLD-26-0087599",
+            statusLabel: "Record Status",
+            statusValue: index === 6 ? "Issued" : "In Process",
+            reviews: null,
+            observedAt: new Date().toISOString(),
+            recordUrl: "https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?id=1",
+          },
+        });
 
         events.push(event?.kind ?? null);
       }
 
       expect(events).toEqual(["check-failed", null, null, "first-status", "check-failed", null, "status-changed"]);
       expect(store.history(id).observations).toHaveLength(3);
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
 
   it("treats an interrupted recovered run as an existing failure without replaying a startup notice", () => {
@@ -71,14 +80,25 @@ describe("completed check announcements", () => {
     try {
       expect(reopened.getPermit(added.value)?.latestOutcome).toBe("browser_error");
       const runId = reopened.startRun({ permitId: added.value, ...RUN });
-      expect(recordCheckEvent(reopened, { runId, permitId: added.value, outcome: "blocked", actionCount: 0,
-        requestCount: 0, actualModel: null, browserVersion: null })).toBeNull();
-    } finally { reopened.close(); }
+      expect(
+        recordCheckEvent(reopened, {
+          runId,
+          permitId: added.value,
+          outcome: "blocked",
+          actionCount: 0,
+          requestCount: 0,
+          actualModel: null,
+          browserVersion: null,
+        }),
+      ).toBeNull();
+    } finally {
+      reopened.close();
+    }
   });
 });
 
 describe("permit insertion broadcasts", () => {
-  it("announces each manual jurisdiction without requiring a later mutation and coalesces automated queue snapshots", async () => {
+  it("broadcasts one snapshot per added permit, whether or not it starts a check", async () => {
     const { store } = newStore();
     const snapshots: Array<{ permits: number; checking: number }> = [];
     const publications: number[] = [];
@@ -103,26 +123,52 @@ describe("permit insertion broadcasts", () => {
       readKey: async () => "fixture",
       start: (id) => {
         started.push(id);
-        const finished = new Promise<RunOutcome>((resolve) => { finish = () => resolve("success"); });
+
+        const finished = new Promise<RunOutcome>((resolve) => {
+          finish = () => resolve("success");
+        });
 
         return { finished, cancel: finish };
       },
-      defer: () => undefined, keyUnavailable: () => undefined, saveFailed: () => undefined,
-      changed: () => { void broadcast(); },
+      defer: () => undefined,
+      keyUnavailable: () => undefined,
+      saveFailed: () => undefined,
+      changed: () => {
+        void broadcast();
+      },
     });
 
     try {
       const manual: JurisdictionId[] = ["palm-bay-building", "orange-county-building", "baker-county-building"];
 
       for (const [index, jurisdiction] of manual.entries()) {
-        expect(addAndCheck(store, queue, () => { void broadcast(); }, `BLD2024-0123${index}`, jurisdiction)._tag).toBe("ok");
+        expect(
+          addAndCheck(
+            store,
+            queue,
+            () => {
+              void broadcast();
+            },
+            `BLD2024-0123${index}`,
+            jurisdiction,
+          )._tag,
+        ).toBe("ok");
         await broadcast();
         expect(snapshots.at(-1)).toEqual({ permits: index + 1, checking: 0 });
         expect(publications.at(-1)).toBe(index + 1);
       }
 
       expect(started).toEqual([]);
-      const automated = addAndCheck(store, queue, () => { void broadcast(); }, "HC-BLD-26-0087599", "hillsborough-county-building");
+
+      const automated = addAndCheck(
+        store,
+        queue,
+        () => {
+          void broadcast();
+        },
+        "HC-BLD-26-0087599",
+        "hillsborough-county-building",
+      );
 
       if (automated._tag !== "ok") throw automated.error;
       await broadcast();
@@ -130,11 +176,23 @@ describe("permit insertion broadcasts", () => {
       expect(snapshots).toHaveLength(4);
       expect(snapshots.at(-1)).toEqual({ permits: 4, checking: 1 });
       expect(defined(store.getPermit(automated.value), "saved permit").permitNumber).toBe("HC-BLD-26-0087599");
-      expect(addAndCheck(store, queue, () => { void broadcast(); }, "HC-BLD-26-0087599", "hillsborough-county-building")._tag).toBe("err");
+      expect(
+        addAndCheck(
+          store,
+          queue,
+          () => {
+            void broadcast();
+          },
+          "HC-BLD-26-0087599",
+          "hillsborough-county-building",
+        )._tag,
+      ).toBe("err");
       expect(snapshots).toHaveLength(4);
       finish();
       await queue.stop();
       await broadcast();
-    } finally { store.close(); }
+    } finally {
+      store.close();
+    }
   });
 });

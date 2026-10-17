@@ -1,65 +1,48 @@
-# Cloudflare CLI
+# Cloudflare CLI runner
 
-Use `node cloudflare-cli/run.mjs <command>` from this Worker directory. The package
-scripts `cf`, `cf:build`, `cf:dry-run`, `cf:dev`, and `cf:types` use the same runner
-where a package manifest is available. Targets: app. Select another target
-with `--target mcp` or `--target build`. Select an environment with `--mode`.
+`run.mjs` builds, runs, and deploys the `permitmon-updates` Worker with Cloudflare's `cf` CLI. The toolchain is pinned in `app/package.json`, `cf` 1.0.0-beta.12 with Wrangler 4.147.0 as its bundler, and has its own lockfile so it stays out of the repository's dependency tree. The runner installs it with `npm ci` on first use.
 
-```
-node cloudflare-cli/run.mjs dry-run
-node cloudflare-cli/run.mjs dry-run --skip-prepare
-node cloudflare-cli/run.mjs dev
-node cloudflare-cli/run.mjs workers types
-```
+## Commands
 
-The runner builds with this project's existing framework and then runs the pinned
-`cf` CLI against the native configuration in `cloudflare-cli/<target>`. Its separate
-dependency lock keeps this beta migration out of the application dependency tree.
-On a fresh checkout it installs those dependencies with `npm ci`. Authentication
-uses the same cf profile as the globally installed CLI. Do not run bare `cf deploy`
-from the application root: framework autodetection there can bypass these settings.
+Run these from `infra/update-server`. The Worker bundles `zod` from the repository, so run `npm ci --allow-git=all` at the repository root first.
 
-`cloudflare.config.ts` contains Worker identity, routes, bindings, runtime settings,
-and exported classes. `wrangler.config.ts` contains build settings for cf's supported
-Wrangler bundler. Existing Wrangler configs remain necessary for the current stable
-framework adapters and legacy compatibility checks. Reconcile both when changing a
-binding or runtime setting. The runner stops if the old config changed; update its
-SHA-256 in `projects.json` after reviewing the corresponding native config changes.
-
-Local development explicitly retains `.wrangler/state`.
-D1 migration aliases use the configured database ID, migration directory and state:
-
-```
-node cloudflare-cli/run.mjs db:migrate DB --local
-node cloudflare-cli/run.mjs db:migrate DB --remote
+```sh
+node cloudflare-cli/run.mjs dry-run    # bundle and validate without deploying
+node cloudflare-cli/run.mjs deploy     # deploy
 ```
 
-Use the original binding or database name instead of `DB` when different. Raw cf API
-commands take Cloudflare IDs. Pass absolute paths to raw commands that read files,
-because the CLI runs inside its target directory. Native type generation writes
-types inside that directory; existing checked-in declarations and their verification
-commands remain available until the framework integration supports the new output.
+No workflow deploys this Worker, so deploy changes by hand before relying on them in `scripts/publish-update.mjs`. Authentication uses the same `cf` profile as a globally installed `cf` CLI. The `UPLOAD_TOKEN` secret is set on the Worker, not in these files; see `docs/RELEASE.md`.
 
-Deployment owner: `cf`. Native direct deployment is enabled only for targets
-owned by `cf`. Alchemy and existing promotion/release pipelines keep resource
-ownership and approval gates. Use their existing deployment commands. Native build,
-dry-run and API commands remain available for every target. Do not start a dev server
-where this repository's instructions require permission.
+Any other command passes through to `cf`, which runs inside `cloudflare-cli/app`. Pass absolute paths to commands that read files. `npm run cf -- <command>` in this directory does the same.
 
-Migration limitations:
-No additional project-specific conversion limitations.
+Don't run `cf deploy` directly from the Worker directory. `cf` would autodetect the project there and could deploy without these settings.
 
-Reference: https://developers.cloudflare.com/cf/wrangler/migrate/
+## Configuration
 
-Local D1 migration aliases use the pinned Wrangler compatibility backend because cf beta
-12 does not exit after completing local D1 requests. Remote migration aliases use
-cf. This preserves existing local data and lets automated scripts terminate.
+- `app/cloudflare.config.ts` is what deploys: the Worker name, entry point, compatibility date, the `nodejs_compat` flag, the `permitmon-updates.aeccloud.io` custom domain, and the `BUCKET` binding to the `permitmon-updates` R2 bucket.
+- `app/wrangler.config.ts` holds bundler settings.
+- `../wrangler.jsonc` is the original Wrangler configuration, which `wrangler` commands such as `wrangler dev` read. It also notes the `UPLOAD_TOKEN` secret.
 
-The runner links the dev server's default state directory to the existing repo
-state. The beta dev delegate does not forward the global `--persist-to` option.
-Use this runner to choose a different state directory. Native dev arguments include
-`--port` and `--host`; Wrangler's old `--ip` flag is unsupported by the cf delegate.
-Raw cf local resource requests also have the D1 shutdown limitation described above.
+The two configurations describe the same Worker, so a binding, route, or runtime setting changed in one must change in the other.
 
-Original dotenv and dev-variable files are linked beside the native config at run
-time. The links are ignored by Git; file contents are never copied into this tooling.
+## Keeping the configurations in sync
+
+`projects.json` records the SHA-256 of `wrangler.jsonc` as `sourceHash`. Before `build`, `dev`, `deploy`, or `dry-run`, the runner hashes `wrangler.jsonc` and stops if it doesn't match:
+
+```text
+wrangler.jsonc changed after migration. Reconcile app/cloudflare.config.ts and update projects.json sourceHash before continuing.
+```
+
+Any change to `wrangler.jsonc` trips this check, including reformatting. To clear it, make the matching change in `app/cloudflare.config.ts` or `app/wrangler.config.ts`, then record the new hash. From `infra/update-server`:
+
+```sh
+node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('wrangler.jsonc')).digest('hex'))"
+```
+
+Put the output in `projects.json` as `app.sourceHash`.
+
+## Local development
+
+`node cloudflare-cli/run.mjs dev` links `app/.wrangler/state` to `infra/update-server/.wrangler/state`, the Worker's existing local state directory. Pass `--persist-to <dir>` to use a different state directory. The dev server takes `--port` and `--host`; Wrangler's `--ip` flag is not supported.
+
+The runner also links any `.env*` and `.dev.vars*` files in `infra/update-server` into `app/`. It never copies their contents, and Git ignores the links.

@@ -2,25 +2,52 @@ import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
 import { parseApplicationNumber, parsePortalUrl, sameJurisdictionPermitNumber } from "../shared/permit.js";
 import { onlyElement } from "../shared/array.js";
-import { getAutomatedJurisdiction, usesGlobalSearch, type AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
-import type { Candidate, MainToWorker, PageObservation, WorkerFailure, WorkerToMain } from "../shared/worker-protocol.js";
-import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
-import { readDetail, TYLER_SEARCH_FIELD, tylerFoundNothing, waitForDetail, waitForLanding, waitForTylerResults, waitForTylerSearch } from "./detail.js";
+import {
+  getAutomatedJurisdiction,
+  usesGlobalSearch,
+  type AutomatedJurisdictionProfile,
+} from "../shared/jurisdictions.js";
+import type {
+  Candidate,
+  MainToWorker,
+  PageObservation,
+  WorkerFailure,
+  WorkerToMain,
+} from "../shared/worker-protocol.js";
+import { exactLinks, NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter } from "./adapter.js";
+import {
+  readDetail,
+  TYLER_SEARCH_FIELD,
+  tylerFoundNothing,
+  waitForDetail,
+  waitForLanding,
+  waitForTylerResults,
+  waitForTylerSearch,
+} from "./detail.js";
 import { wmisAdapter } from "./wmis.js";
 import { epermitAdapter, watchEpermitForm } from "./epermit.js";
-import { plainUserAgent, regPermittingAdapter, regPermittingRecordShown, waitForSearchRecordsLink } from "./regpermitting.js";
-import { accelaGlobalResultsAdapter, waitForAccelaGlobalResults } from "./accela-global.js";
+import {
+  plainUserAgent,
+  regPermittingAdapter,
+  regPermittingRecordShown,
+  waitForSearchRecordsLink,
+} from "./regpermitting.js";
+import {
+  accelaGlobalResultsAdapter,
+  DETAIL_NUMBER,
+  GLOBAL_RESULT_LINK,
+  waitForAccelaGlobalResults,
+} from "./accela-global.js";
 
 const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber";
 
 const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
 
-const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
+/** What Accela's record search shows when nothing matches. */
+const NO_RESULTS_MESSAGE = "Your search returned no results. Please modify your search criteria and try again.";
 
-// Accela's Global Search box (Pasco replaces it with its own, injected after load) and the results page it opens.
+// Accela's Global Search box; Pasco injects its own after load.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
-
-const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
 
 const TYLER_SEARCH_BUTTON = "#button-Search";
 
@@ -44,7 +71,7 @@ let requestedNumber = "";
 
 let actionCount = 0;
 
-let recentActions: string[] = [];
+const recentActions: string[] = [];
 
 let lastObservation: PageObservation | null = null;
 
@@ -88,14 +115,18 @@ function portalAdapter(): PortalAdapter | null {
   if (!page || !jurisdiction) return null;
 
   switch (jurisdiction.portalFamily) {
-    case "wmis": return wmisAdapter(page, jurisdiction, requestedNumber);
-    case "epermit": return epermitAdapter(page, jurisdiction, requestedNumber);
-    case "regpermitting": return regPermittingAdapter(page, jurisdiction, requestedNumber, openedRecordUrl);
-    default: return null;
+    case "wmis":
+      return wmisAdapter(page, jurisdiction, requestedNumber);
+    case "epermit":
+      return epermitAdapter(page, jurisdiction, requestedNumber);
+    case "regpermitting":
+      return regPermittingAdapter(page, jurisdiction, requestedNumber, openedRecordUrl);
+    default:
+      return null;
   }
 }
 
-/** Read the record's displayed number, status, and status label, and the record link to save. */
+/** Reads the record's displayed number, status, and status label, and the record link to save. */
 async function readRecord(): Promise<DisplayedRecord> {
   const adapter = portalAdapter();
 
@@ -120,19 +151,19 @@ function onGlobalResults(url: string): boolean {
   return globalSearch() && new URL(url).pathname.toLowerCase().endsWith("/cap/globalsearchresults.aspx");
 }
 
-async function exactResultLinks(): Promise<Array<{ text: string; href: string; id: string }>> {
+async function exactResultLinks(): Promise<Array<{ text: string; href: string }>> {
   if (!page) return [];
 
-  const links = await page.locator(globalSearch() ? GLOBAL_RESULT_LINK : "a").evaluateAll((anchors) => anchors.slice(0, 250).flatMap((anchor) => {
-    if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
-    const href = anchor.getAttribute("href");
+  const links = await page.locator(globalSearch() ? GLOBAL_RESULT_LINK : "a").evaluateAll((anchors) =>
+    anchors.slice(0, 250).flatMap((anchor) => {
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.getBoundingClientRect().width === 0) return [];
+      const href = anchor.getAttribute("href");
 
-    return href ? [{ text: anchor.innerText.trim(), href, id: anchor.id }] : [];
-  }));
+      return href ? [{ text: anchor.innerText.trim(), href }] : [];
+    }),
+  );
 
-  const found = links.filter((link) => jurisdiction && sameJurisdictionPermitNumber(requestedNumber, link.text, jurisdiction.id));
-
-  return found.filter((link, index) => found.findIndex((candidate) => candidate.href === link.href) === index);
+  return jurisdiction ? exactLinks(links, requestedNumber, jurisdiction.id) : [];
 }
 
 /** An observation for main, and the record it read on a detail page so the result doesn't read it again. */
@@ -145,9 +176,17 @@ async function observe(): Promise<Observed> {
   if (!page) throw new Error("Page not started");
   const url = page.url();
   let location = locationOf(url);
-  const headings = (await page.locator("h1, h2, h3").allInnerTexts()).map((text) => text.trim()).filter(Boolean).slice(0, 8);
 
-  if (jurisdiction?.portalFamily === "click2gov" && location === "permit-search" && headings.includes("Status Detail")) {
+  const headings = (await page.locator("h1, h2, h3").allInnerTexts())
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+
+  if (
+    jurisdiction?.portalFamily === "click2gov" &&
+    location === "permit-search" &&
+    headings.includes("Status Detail")
+  ) {
     location = "permit-detail";
   }
 
@@ -170,7 +209,9 @@ async function observe(): Promise<Observed> {
   } else if (location === "permit-search") {
     phase = "search";
     const adapter = portalAdapter();
-    const globalResults = jurisdiction && onGlobalResults(url) ? accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber) : null;
+
+    const globalResults =
+      jurisdiction && onGlobalResults(url) ? accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber) : null;
 
     if (adapter) {
       const search = await adapter.observe();
@@ -191,52 +232,96 @@ async function observe(): Promise<Observed> {
       const global = globalSearch();
       const input = global ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
 
-      if (await input.count() === 1 && await input.isVisible() && await input.isEnabled()) {
+      if ((await input.count()) === 1 && (await input.isVisible()) && (await input.isEnabled())) {
         inputValue = await input.inputValue();
         formLabels.push(global ? "Global Search" : "Record Number");
         visibleControls.push(global ? "Global Search field" : "Record Number field");
 
-        if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", established: true, description: global
-          ? "Fill the portal's Global Search field with the exact requested permit number."
-          : "Fill the Record Number field with the exact requested permit number." });
+        if (inputValue !== requestedNumber)
+          candidates.push({
+            id: "fill_record_number",
+            established: true,
+            description: global
+              ? "Fill the portal's Global Search field with the exact requested permit number."
+              : "Fill the Record Number field with the exact requested permit number.",
+          });
       }
 
       const search = page.locator(SEARCH_BUTTON);
 
       // Global Search submits from its field on Enter; its button can be covered or drawn at zero size.
-      if (inputValue === requestedNumber && (global || (await search.count() === 1 && await search.isVisible() && await search.isEnabled()))) {
+      if (
+        inputValue === requestedNumber &&
+        (global || ((await search.count()) === 1 && (await search.isVisible()) && (await search.isEnabled())))
+      ) {
         if (!global) visibleControls.push("Search button");
-        candidates.push({ id: "search_record_number", established: true, description: global
-          ? "Submit the portal's Global Search for the exact permit number."
-          : "Submit the public Building permit record search." });
+        candidates.push({
+          id: "search_record_number",
+          established: true,
+          description: global
+            ? "Submit the portal's Global Search for the exact permit number."
+            : "Submit the public Building permit record search.",
+        });
       }
     } else if (jurisdiction?.portalFamily === "tyler-civic-access") {
       const input = page.locator(TYLER_SEARCH_FIELD);
 
-      if (await input.count() === 1 && await input.isVisible() && await input.isEnabled()) {
+      if ((await input.count()) === 1 && (await input.isVisible()) && (await input.isEnabled())) {
         inputValue = await input.inputValue();
         formLabels.push("Search public records with keywords or addresses");
         visibleControls.push("Public records search field");
 
-        if (inputValue !== requestedNumber) candidates.push({ id: "fill_record_number", established: true, description: "Fill the public records keyword field with the exact permit number." });
-        else if (!recentActions.includes("search_record_number") && await page.locator(TYLER_SEARCH_BUTTON).isEnabled()) {
-          candidates.push({ id: "search_record_number", established: true, description: "Submit the exact permit number in Tyler Civic Access public records search." });
+        if (inputValue !== requestedNumber)
+          candidates.push({
+            id: "fill_record_number",
+            established: true,
+            description: "Fill the public records keyword field with the exact permit number.",
+          });
+        else if (
+          !recentActions.includes("search_record_number") &&
+          (await page.locator(TYLER_SEARCH_BUTTON).isEnabled())
+        ) {
+          candidates.push({
+            id: "search_record_number",
+            established: true,
+            description: "Submit the exact permit number in Tyler Civic Access public records search.",
+          });
         }
       } else if (/#\/home/i.test(url)) {
-        candidates.push({ id: "open_public_search", established: true, description: "Open Search Public Records in Hernando County Civic Access." });
+        candidates.push({
+          id: "open_public_search",
+          established: true,
+          description: `Open Search Public Records in ${jurisdiction.label} Civic Access.`,
+        });
       }
     } else if (jurisdiction?.portalFamily === "click2gov") {
       const parts = parseApplicationNumber(requestedNumber);
       const year = page.locator(ST_PETE_YEAR);
       const number = page.locator(ST_PETE_NUMBER);
 
-      if (parts && await year.count() === 1 && await number.count() === 1 && await year.isVisible() && await number.isVisible()) {
+      if (
+        parts &&
+        (await year.count()) === 1 &&
+        (await number.count()) === 1 &&
+        (await year.isVisible()) &&
+        (await number.isVisible())
+      ) {
         inputValue = `${await year.inputValue()}-${await number.inputValue()}`;
         formLabels.push("Application Number: year and serial number");
         visibleControls.push("Application Number search");
 
-        if (inputValue !== `${parts.year}-${parts.serial}`) candidates.push({ id: "fill_record_number", established: true, description: "Enter the exact two-digit application year and serial number in Click2Gov." });
-        else candidates.push({ id: "search_record_number", established: true, description: "Submit the City of St. Petersburg Application Number search." });
+        if (inputValue !== `${parts.year}-${parts.serial}`)
+          candidates.push({
+            id: "fill_record_number",
+            established: true,
+            description: "Enter the exact two-digit application year and serial number in Click2Gov.",
+          });
+        else
+          candidates.push({
+            id: "search_record_number",
+            established: true,
+            description: "Submit the City of St. Petersburg Application Number search.",
+          });
       }
     }
 
@@ -256,12 +341,16 @@ async function observe(): Promise<Observed> {
       if (jurisdiction && (globalSearch() || parsePortalUrl(target.toString(), "detail", jurisdiction.id))) {
         phase = "results";
         candidates.length = 0;
-        candidates.push({ id: "open_exact_result", established: true, description: `Open the result whose displayed permit number exactly equals ${requestedNumber}.` });
+        candidates.push({
+          id: "open_exact_result",
+          established: true,
+          description: `Open the result whose displayed permit number exactly equals ${requestedNumber}.`,
+        });
       }
     }
   }
 
-  // Only the start of the page is needed, so it is cut down before it leaves the browser.
+  // Only the start of the page is checked, so it is truncated before it leaves the browser.
   const challengeText = await page.evaluate(() => document.body?.innerText.slice(0, 3000) ?? "").catch(() => "");
 
   if (/captcha|verify you are human|are you a human|access denied|sign in|log in to continue/i.test(challengeText)) {
@@ -270,8 +359,20 @@ async function observe(): Promise<Observed> {
   }
 
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ url, phase, inputValue, displayedNumber, displayedStatus, resultNumbers, resultPageIdentity, headings }))
-    .digest("hex").slice(0, 20);
+    .update(
+      JSON.stringify({
+        url,
+        phase,
+        inputValue,
+        displayedNumber,
+        displayedStatus,
+        resultNumbers,
+        resultPageIdentity,
+        headings,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 20);
 
   const observation = {
     phase,
@@ -322,16 +423,21 @@ async function sendObservationOrResult(): Promise<void> {
         return;
       }
     } else if (jurisdiction?.portalFamily === "accela") {
-      const message = page.getByText("Your search returned no results. Please modify your search criteria and try again.", { exact: true });
+      const message = page.getByText(NO_RESULTS_MESSAGE, { exact: true });
+
       const input = page.locator(SEARCH_FIELD);
 
-      if (await message.count() === 1 && await message.isVisible() &&
-        await input.count() === 1 && await input.inputValue() === requestedNumber) {
+      if (
+        (await message.count()) === 1 &&
+        (await message.isVisible()) &&
+        (await input.count()) === 1 &&
+        (await input.inputValue()) === requestedNumber
+      ) {
         fail("not_found_in_supported_search");
 
         return;
       }
-    } else if (jurisdiction?.portalFamily === "tyler-civic-access" && await tylerFoundNothing(page)) {
+    } else if (jurisdiction?.portalFamily === "tyler-civic-access" && (await tylerFoundNothing(page))) {
       fail("not_found_in_supported_search");
 
       return;
@@ -339,7 +445,7 @@ async function sendObservationOrResult(): Promise<void> {
   }
 
   if (observation.phase === "detail" && jurisdiction) {
-    const { displayedNumber, statusValue, statusLabel: labelText, recordUrl, reviews } = record ?? await readRecord();
+    const { displayedNumber, statusValue, statusLabel: labelText, recordUrl, reviews } = record ?? (await readRecord());
 
     if (!displayedNumber || !sameJurisdictionPermitNumber(requestedNumber, displayedNumber, jurisdiction.id)) {
       fail("identity_mismatch");
@@ -400,23 +506,34 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   browser = await chromium.launch({ headless: true, chromiumSandbox: true });
   const contextOptions: BrowserContextOptions = { acceptDownloads: false, serviceWorkers: "block" };
 
-  if ("plainUserAgent" in jurisdiction && jurisdiction.plainUserAgent) contextOptions.userAgent = await plainUserAgent(browser);
+  if ("plainUserAgent" in jurisdiction && jurisdiction.plainUserAgent)
+    contextOptions.userAgent = await plainUserAgent(browser);
   context = await browser.newContext(contextOptions);
   page = await context.newPage();
   page.setDefaultTimeout(8_000);
-  page.on("popup", (popup) => { void popup.close(); });
+  page.on("popup", (popup) => {
+    void popup.close();
+  });
   page.on("framenavigated", (frame) => {
     // A failed load shows Chromium's error page; the failed goto itself decides whether to retry.
-    if (frame === page?.mainFrame() && frame.url() !== "about:blank" && !frame.url().startsWith("chrome-error://") &&
-      locationOf(frame.url()) === "other") {
+    if (
+      frame === page?.mainFrame() &&
+      frame.url() !== "about:blank" &&
+      !frame.url().startsWith("chrome-error://") &&
+      locationOf(frame.url()) === "other"
+    ) {
       fail("unsupported_page");
     }
   });
   const epermitFormReady = jurisdiction.portalFamily === "epermit" ? watchEpermitForm(page) : null;
   const startUrl = jurisdiction.startUrl;
 
-  const target = message.previousRecordUrl && parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id) &&
-    recordLinkShowsRecord(jurisdiction) ? message.previousRecordUrl : startUrl;
+  const target =
+    message.previousRecordUrl &&
+    parsePortalUrl(message.previousRecordUrl, "detail", jurisdiction.id) &&
+    recordLinkShowsRecord(jurisdiction)
+      ? message.previousRecordUrl
+      : startUrl;
 
   let landed = target;
 
@@ -433,8 +550,13 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   }
 
   // RegPermitting's record view settles on the same address as its search, so it is recognized by content.
-  const recordOpened = landed !== startUrl && page !== null && !stopped && (jurisdiction.portalFamily === "regpermitting"
-    ? await regPermittingRecordShown(page, 15_000) : locationOf(page.url()) === "permit-detail");
+  const recordOpened =
+    landed !== startUrl &&
+    page !== null &&
+    !stopped &&
+    (jurisdiction.portalFamily === "regpermitting"
+      ? await regPermittingRecordShown(page, 15_000)
+      : locationOf(page.url()) === "permit-detail");
 
   if (landed !== startUrl && page && !stopped && !recordOpened) {
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
@@ -446,13 +568,18 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
   if (page && !stopped) await waitForLanding(page, jurisdiction);
 
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {
-    await page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }).first()
-      .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+    await page
+      .locator(GLOBAL_SEARCH_FIELD)
+      .filter({ visible: true })
+      .first()
+      .waitFor({ state: "visible", timeout: 12_000 })
+      .catch(() => undefined);
   }
 
   if (epermitFormReady && page && !stopped) await epermitFormReady();
 
-  if (jurisdiction.portalFamily === "regpermitting" && page && !stopped && !openedRecordUrl) await waitForSearchRecordsLink(page);
+  if (jurisdiction.portalFamily === "regpermitting" && page && !stopped && !openedRecordUrl)
+    await waitForSearchRecordsLink(page);
   await sendObservationOrResult();
 }
 
@@ -489,8 +616,7 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       }
 
       if (jurisdiction?.portalFamily !== "tyler-civic-access") break;
-      await page.goto("https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
-        { waitUntil: "domcontentloaded", timeout: 15_000 });
+      await page.goto(jurisdiction.searchUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
       await waitForTylerSearch(page);
       break;
     }
@@ -505,10 +631,14 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
         await page.locator(ST_PETE_YEAR).fill(parts.year);
         await page.locator(ST_PETE_NUMBER).fill(parts.serial);
       } else {
-        const input = jurisdiction?.portalFamily === "tyler-civic-access" ? page.locator(TYLER_SEARCH_FIELD)
-          : globalSearch() ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true }) : page.locator(SEARCH_FIELD);
+        const input =
+          jurisdiction?.portalFamily === "tyler-civic-access"
+            ? page.locator(TYLER_SEARCH_FIELD)
+            : globalSearch()
+              ? page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true })
+              : page.locator(SEARCH_FIELD);
 
-        if (await input.count() !== 1 || !(await input.isVisible()) || !(await input.isEnabled())) break;
+        if ((await input.count()) !== 1 || !(await input.isVisible()) || !(await input.isEnabled())) break;
         await input.fill(requestedNumber);
       }
 
@@ -521,34 +651,51 @@ async function choose(message: Extract<MainToWorker, { kind: "choose" }>): Promi
       } else if (jurisdiction?.portalFamily === "click2gov") {
         const parts = parseApplicationNumber(requestedNumber);
 
-        if (!parts || await page.locator(ST_PETE_YEAR).inputValue() !== parts.year ||
-          await page.locator(ST_PETE_NUMBER).inputValue() !== parts.serial) break;
+        if (
+          !parts ||
+          (await page.locator(ST_PETE_YEAR).inputValue()) !== parts.year ||
+          (await page.locator(ST_PETE_NUMBER).inputValue()) !== parts.serial
+        )
+          break;
         await page.locator(ST_PETE_SEARCH_BUTTON).click();
-        await page.getByRole("heading", { name: "Status Detail", exact: true })
-          .waitFor({ state: "visible", timeout: 12_000 }).catch(() => undefined);
+        await page
+          .getByRole("heading", { name: "Status Detail", exact: true })
+          .waitFor({ state: "visible", timeout: 12_000 })
+          .catch(() => undefined);
       } else if (jurisdiction?.portalFamily === "tyler-civic-access") {
-        if (await page.locator(TYLER_SEARCH_FIELD).inputValue() !== requestedNumber) break;
+        if ((await page.locator(TYLER_SEARCH_FIELD).inputValue()) !== requestedNumber) break;
         await page.locator(TYLER_SEARCH_BUTTON).click();
         await waitForTylerResults(page);
       } else if (jurisdiction?.portalFamily === "accela" && globalSearch()) {
         const input = page.locator(GLOBAL_SEARCH_FIELD).filter({ visible: true });
 
-        if (await input.count() !== 1 || await input.inputValue() !== requestedNumber) break;
+        if ((await input.count()) !== 1 || (await input.inputValue()) !== requestedNumber) break;
         await input.press("Enter", { noWaitAfter: true });
-        await page.waitForURL((target) => onGlobalResults(target.toString()) ||
-          Boolean(jurisdiction && parsePortalUrl(target.toString(), "detail", jurisdiction.id)), { timeout: 15_000 }).catch(() => undefined);
+        await page
+          .waitForURL(
+            (target) =>
+              onGlobalResults(target.toString()) ||
+              Boolean(jurisdiction && parsePortalUrl(target.toString(), "detail", jurisdiction.id)),
+            { timeout: 15_000 },
+          )
+          .catch(() => undefined);
         await waitForAccelaGlobalResults(page, "");
       } else if (jurisdiction?.portalFamily === "accela") {
         const input = page.locator(SEARCH_FIELD);
         const button = page.locator(SEARCH_BUTTON);
 
-        if (await input.inputValue() !== requestedNumber || await button.count() !== 1 || !(await button.isVisible()) || !(await button.isEnabled())) break;
+        if (
+          (await input.inputValue()) !== requestedNumber ||
+          (await button.count()) !== 1 ||
+          !(await button.isVisible()) ||
+          !(await button.isEnabled())
+        )
+          break;
         await button.click({ noWaitAfter: true });
         await Promise.any([
           page.locator(DETAIL_NUMBER).waitFor({ state: "visible", timeout: 12_000 }),
           page.getByRole("link", { name: requestedNumber, exact: true }).waitFor({ state: "visible", timeout: 12_000 }),
-          page.getByText("Your search returned no results. Please modify your search criteria and try again.", { exact: true })
-            .waitFor({ state: "visible", timeout: 12_000 }),
+          page.getByText(NO_RESULTS_MESSAGE, { exact: true }).waitFor({ state: "visible", timeout: 12_000 }),
         ]).catch(() => undefined);
       }
 
@@ -603,8 +750,12 @@ process.parentPort?.on("message", (event: { data: MainToWorker }) => {
     return;
   }
 
-  const task = message.kind === "start" ? start(message)
-    : message.kind === "reobserve" ? sendObservationOrResult() : choose(message);
+  const task =
+    message.kind === "start"
+      ? start(message)
+      : message.kind === "reobserve"
+        ? sendObservationOrResult()
+        : choose(message);
 
   void task.catch((cause: unknown) => {
     if (process.env.PERMIT_PORTAL_SMOKE === "1") process.stderr.write(`Worker smoke error: ${String(cause)}\n`);
