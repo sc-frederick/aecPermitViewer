@@ -3,6 +3,7 @@ import { describeSharedUpdate } from "./notifications.js";
 import { announce } from "./notifier.js";
 import { Sharing } from "./sharing.js";
 
+/** Sharing over the current store. Recreated when the store is reopened after a failed update or deletion. */
 export function createSharing(context: AppContext): Sharing {
   return new Sharing(context.store, context.shareService, {
     changed: () => {

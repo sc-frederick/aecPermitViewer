@@ -9,14 +9,18 @@ import { installedApp, updateExePath } from "./squirrel.js";
  */
 export const APP_USER_MODEL_ID = "com.squirrel.PermitMonitor.PermitMonitor";
 
+/** Starts the app with its window hidden when a tray or menu bar icon is available. The login item passes it. */
 export const HIDDEN_LAUNCH_ARG = "--hidden";
 
+/** Windows and macOS: the platforms with a tray or menu bar icon and desktop notifications. */
 export function desktopPlatform(): boolean {
   return process.platform === "win32" || process.platform === "darwin";
 }
 
+/** Where the icon lives, in the words each platform uses. */
 export const TRAY_PLACE = process.platform === "darwin" ? "menu bar" : "tray";
 
+/** What the tray or menu bar menu asks the rest of main to do. */
 export interface BackgroundHooks {
   showWindow(): void;
   openPermit(permitId: string): void;
@@ -25,6 +29,7 @@ export interface BackgroundHooks {
   quit(): void;
 }
 
+/** The counts and schedule the tray or menu bar icon summarizes. */
 export interface TrayState {
   permits: number;
   checking: number;
@@ -33,6 +38,7 @@ export interface TrayState {
   checkTimes: string;
 }
 
+/** The tray or menu bar icon and desktop notifications that let the app keep running with its window closed. */
 export class Background {
   private tray: Tray | null = null;
   private attention = false;
@@ -44,6 +50,10 @@ export class Background {
     private readonly hooks: BackgroundHooks,
   ) {}
 
+  /**
+   * Creates the tray icon on Windows or the menu bar icon on macOS. Returns false on other platforms, which keep
+   * ordinary close-to-quit behavior, or when the icon can't be created.
+   */
   start(): boolean {
     if (!desktopPlatform()) return false;
 
@@ -60,10 +70,12 @@ export class Background {
     }
   }
 
+  /** Whether the icon exists. Without it, the app can't keep running with its window closed. */
   get available(): boolean {
     return this.tray !== null;
   }
 
+  /** Refreshes the icon's tooltip, attention image, and menu; does nothing when `state` is unchanged. */
   update(state: TrayState): void {
     if (!this.tray) return;
     const shown = JSON.stringify(state);
@@ -105,6 +117,11 @@ export class Background {
     );
   }
 
+  /**
+   * Shows a desktop notification. Resolves `shown` once Electron reports it displayed, or `failed` when it is
+   * unsupported, fails, or isn't shown within 10 seconds, so the caller can show the notice in the app instead. Never
+   * rejects.
+   */
   notify(input: { title: string; body: string; permitId?: string }): Promise<DesktopDelivery> {
     return new Promise((resolve) => {
       const fail = (code: DesktopNotificationFailed["code"]) =>
@@ -162,6 +179,7 @@ export class Background {
     });
   }
 
+  /** Removes the icon. */
   destroy(): void {
     this.tray?.destroy();
     this.tray = null;
@@ -180,12 +198,14 @@ function loginItemTarget() {
   };
 }
 
+/** Whether the installed Windows app starts at sign-in; always false elsewhere. */
 export function getOpenAtLogin(): boolean {
   if (!installedApp()) return false;
 
   return app.getLoginItemSettings(loginItemTarget()).openAtLogin;
 }
 
+/** Turns starting at sign-in on or off for the installed Windows app; does nothing elsewhere. */
 export function setOpenAtLogin(enabled: boolean): void {
   if (!installedApp()) return;
   app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemTarget() });

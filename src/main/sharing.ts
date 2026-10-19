@@ -39,6 +39,7 @@ const SETTINGS = {
   followCache: "share_follow_cache",
 } as const;
 
+/** What sharing needs from the rest of main. */
 export interface SharingHost {
   changed(): void;
   checking(): boolean;
@@ -58,6 +59,13 @@ function problem(error: string): BridgeResult<null> {
   return { ok: false, error };
 }
 
+/**
+ * Sharing this app's list, or following another's. The two are exclusive: a follower's window shows the followed list
+ * in place of its own, and its own permits aren't checked meanwhile, so there would be nothing current to share.
+ *
+ * Starting, stopping, and syncing wait on the network, so they run one at a time: otherwise a Share click during a
+ * Follow's first fetch would do both, and Sync now during Stop sharing would republish the list being deleted.
+ */
 export class Sharing {
   private publishing: Publishing | null = null;
   private follower: ShareFollower | null = null;
@@ -65,6 +73,7 @@ export class Sharing {
   private stopped = false;
   private listVersion: number | null = null;
 
+  /** @param service - The sharing service, or null when this build has none. */
   constructor(
     private readonly store: PermitStore,
     private readonly service: ShareService | null,
@@ -78,6 +87,7 @@ export class Sharing {
     return result;
   }
 
+  /** Resumes sharing or following as it was when the app last closed. */
   start(): Promise<void> {
     return this.serially(() => this.resume());
   }
@@ -93,6 +103,7 @@ export class Sharing {
     if (code && !this.publishing) this.startFollowing(this.service, code, this.cachedList()).start();
   }
 
+  /** Stops publishing and fetching for good. A publication or fetch under way finishes first. */
   stop(): Promise<void> {
     return this.serially(async () => {
       this.stopped = true;
@@ -100,10 +111,12 @@ export class Sharing {
     });
   }
 
+  /** Whether this app is following another app's list. */
   get following(): boolean {
     return this.follower !== null;
   }
 
+  /** What the window shows about sharing: off, sharing this list, or following another. */
   state(): ShareState {
     if (this.publishing) {
       const { code, publisher } = this.publishing;
@@ -120,6 +133,7 @@ export class Sharing {
     return { mode: "off", available: this.service !== null };
   }
 
+  /** This app's list may have changed; a shared list is sent again if it did. */
   listChanged(): void {
     if (!this.publishing || this.stopped) return;
     const version = this.store.changeCount();
@@ -129,22 +143,27 @@ export class Sharing {
     this.publishing.publisher.notify();
   }
 
+  /** The share code, while sharing. */
   code(): string | null {
     return this.publishing?.code ?? null;
   }
 
+  /** The followed list's permits, in the publisher's order. */
   permits(): readonly PermitRow[] {
     return this.follower?.list?.permits ?? [];
   }
 
+  /** A followed permit, or null when the followed list doesn't have it. */
   permit(id: string): PermitRow | null {
     return this.permits().find((permit) => permit.id === id) ?? null;
   }
 
+  /** A followed permit's shared history, or null when the followed list doesn't have it. */
   history(permitId: string): PermitHistory | null {
     return this.follower?.list?.histories.get(permitId) ?? null;
   }
 
+  /** A followed permit's observation, with that permit, so its record link can be checked against its jurisdiction. */
   observation(id: string): { observation: ObservationRow; permit: PermitRow } | null {
     for (const permit of this.permits()) {
       const observation = this.history(permit.id)?.observations.find((entry) => entry.id === id);
@@ -155,6 +174,7 @@ export class Sharing {
     return null;
   }
 
+  /** Creates share keys and publishes this app's list. Fails while following another list or without a service. */
   startSharing(): Promise<BridgeResult<null>> {
     return this.serially(() => this.share());
   }
@@ -178,6 +198,11 @@ export class Sharing {
     return ok;
   }
 
+  /**
+   * Deletes the shared copy so the code stops working, then forgets the keys. If the delete fails, sharing resumes with
+   * the same write key so a later try can still delete it. Deleting local data also goes through here, so it never
+   * discards that key.
+   */
   stopSharing(): Promise<BridgeResult<null>> {
     return this.serially(() => this.unshare());
   }
@@ -210,6 +235,7 @@ export class Sharing {
     return ok;
   }
 
+  /** Follows the list a code opens, once a first fetch shows it does. */
   follow(input: string): Promise<BridgeResult<null>> {
     return this.serially(() => this.startFollow(input));
   }
@@ -253,6 +279,7 @@ export class Sharing {
     return ok;
   }
 
+  /** Stops fetching the followed list and forgets its code and cached copy. */
   stopFollowing(): Promise<BridgeResult<null>> {
     return this.serially(async () => {
       await this.follower?.stop();
@@ -265,6 +292,7 @@ export class Sharing {
     });
   }
 
+  /** Sends the shared list now, or fetches the followed one now. */
   sync(): Promise<BridgeResult<null>> {
     return this.serially(async () => {
       const failed = this.publishing

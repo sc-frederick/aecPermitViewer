@@ -10,6 +10,7 @@ import { createHandle } from "./handle.js";
 
 const confirmationSchema = z.literal(DELETE_LOCAL_DATA_CONFIRMATION);
 
+/** Registers the window's request to delete all local data and quit. */
 export function registerDataHandlers(context: AppContext): void {
   const handle = createHandle(context);
 

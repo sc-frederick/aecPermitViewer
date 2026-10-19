@@ -9,11 +9,13 @@ import type { Sharing } from "./sharing.js";
 import type { PermitStore } from "./store.js";
 import type { UpdateManager } from "./updater.js";
 
+/** Quit state shared by the before-quit handler, the window, and the requests that end the app themselves. */
 export interface Lifecycle {
   quitting: boolean;
   quitAllowed: boolean;
 }
 
+/** When scheduled checks run. Created by `createScheduler`. */
 export interface Scheduler {
   scheduleDue(): void;
   start(): void;
@@ -21,6 +23,11 @@ export interface Scheduler {
   settingsChanged(): void;
 }
 
+/**
+ * The services and state main's modules share, created once at startup and passed to each module that needs them.
+ * `store` and `sharing` are replaced when a failed update or deletion reopens local data, so modules read them from
+ * here at each use and never keep their own reference.
+ */
 export interface AppContext {
   store: PermitStore;
   sharing: Sharing;

@@ -6,11 +6,14 @@ import { chooseNavigation, navigationClient, type NavigationDecision } from "./j
 import { parseDisplayedStatus, type ObservationRow, type PermitRow, type RunOutcome } from "../shared/permit.js";
 import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
 
+/** A status verified on the permit's record page, ready to save with its run. */
 export type VerifiedObservation = Omit<ObservationRow, "id" | "runId" | "permitId">;
 
+/** How a check ended: only a success carries an observation, and every success does. */
 export type CheckEnding =
   { outcome: "success"; observation: VerifiedObservation } | { outcome: Exclude<RunOutcome, "success"> };
 
+/** A finished check: how it ended, and what it cost. */
 export type CheckResult = CheckEnding & {
   actionCount: number;
   requestCount: number;
@@ -18,12 +21,14 @@ export type CheckResult = CheckEnding & {
   browserVersion: string | null;
 };
 
+/** A check under way. `cancel` ends it as cancelled unless it has already ended. */
 export interface ActiveCheck {
   result: Promise<CheckResult>;
   closed: Promise<void>;
   cancel: () => void;
 }
 
+/** A started browser worker process, as a check drives it. The adapter parses what the process sends before delivering it. */
 export interface CheckWorker {
   send(message: MainToWorker): void;
   kill(): void;
@@ -32,10 +37,16 @@ export interface CheckWorker {
   onError(listener: () => void): void;
 }
 
+/** The started worker, or why its process couldn't be created. */
 export type WorkerStart = { _tag: "started"; worker: CheckWorker } | { _tag: "failed"; cause: unknown };
 
+/** Local steps of a check whose failure is reported for diagnosis. */
 export type CheckOperation = "start-worker" | "handle-message" | "cache-cleanup";
 
+/**
+ * Receives a check's local failures, which the user only sees as the check's outcome. It must not throw; the check
+ * settles the same way whether or not the report was kept.
+ */
 export type CheckFailureReport = (operation: CheckOperation, cause: unknown) => void;
 
 const MAX_ACTIONS = 20;
@@ -52,6 +63,7 @@ const SETTLE_DELAY_MS = 800;
 
 const WORKER_ENVIRONMENT = ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"] as const;
 
+/** The environment a browser worker starts with: the allow-listed variables and the bundled browser's location. */
 export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
 
@@ -64,6 +76,11 @@ export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
   return environment;
 }
 
+/**
+ * Starts a browser check for one permit in its own worker process and cache folder. `result` settles once the check has
+ * an outcome. `closed` settles once the worker has exited and its cache folder is removed, or reported as left behind.
+ * Throws only when the cache folder can't be created, before anything has started.
+ */
 export function runCheck(input: {
   runId: string;
   permit: PermitRow;

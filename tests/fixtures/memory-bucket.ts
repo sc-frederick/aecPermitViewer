@@ -10,6 +10,7 @@ import type {
   FeedUploadedPart,
 } from "../../infra/update-server/src/bucket.js";
 
+/** The bucket operations a test can make unavailable. */
 export type BucketOperation =
   "head" | "get" | "put" | "delete" | "createMultipartUpload" | "uploadPart" | "complete" | "abort";
 
@@ -26,7 +27,13 @@ interface PendingUpload {
   readonly parts: Map<number, { readonly etag: string; readonly bytes: Uint8Array<ArrayBuffer> }>;
 }
 
+/**
+ * In-memory feed bucket matching R2's observable behavior for the operations the Worker uses: conditional puts,
+ * multipart uploads that appear only on completion, and ranged reads. Operations in `failing` reject the way an R2
+ * outage does.
+ */
 export class MemoryBucket implements FeedBucket {
+  /** Operations that currently reject. */
   readonly failing = new Set<BucketOperation>();
 
   private readonly objects = new Map<string, StoredObject>();
@@ -35,17 +42,20 @@ export class MemoryBucket implements FeedBucket {
 
   private sequence = 0;
 
+  /** Stores an object directly, as the CI release job or an earlier deployment would have. */
   seed(key: string, value: string | Uint8Array<ArrayBuffer>, contentType: string, sha256?: string): void {
     const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(value);
     this.objects.set(key, { bytes, contentType, sha256, etag: this.nextEtag() });
   }
 
+  /** The stored bytes of `key` as text, bypassing failure injection, or null when absent. */
   storedText(key: string): string | null {
     const object = this.objects.get(key);
 
     return object ? new TextDecoder().decode(object.bytes) : null;
   }
 
+  /** Number of multipart uploads started and neither completed nor aborted. */
   get openUploads(): number {
     return this.uploads.size;
   }

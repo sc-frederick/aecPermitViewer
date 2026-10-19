@@ -4,6 +4,7 @@ import type { AppContext } from "../app-context.js";
 import { reopenAfterFailedShutdown, resumeAfterFailedShutdown, stopChecks } from "../shutdown.js";
 import { createHandle, NO_INPUT } from "./handle.js";
 
+/** Registers the window's update requests: checking, downloading, and installing an update. */
 export function registerUpdateHandlers(context: AppContext): void {
   const handle = createHandle(context);
 

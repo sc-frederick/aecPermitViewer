@@ -16,8 +16,10 @@ import {
   type JurisdictionProfile,
 } from "./jurisdictions.js";
 
+/** The jurisdiction a permit is added under when none is given. */
 export const HILLSBOROUGH_ID = "hillsborough-county-building" as const;
 
+/** How a check run ended. Only `success` saves an observation. */
 export const runOutcomeSchema = z.enum([
   "success",
   "not_found_in_supported_search",
@@ -34,8 +36,10 @@ export const runOutcomeSchema = z.enum([
   "cancelled",
 ]);
 
+/** How a check run ended; see `runOutcomeSchema`. */
 export type RunOutcome = z.infer<typeof runOutcomeSchema>;
 
+/** A saved permit as the window shows it, with its latest verified status and latest check attempt. */
 export interface PermitRow {
   id: string;
   jurisdictionId: JurisdictionId;
@@ -52,6 +56,7 @@ export interface PermitRow {
   checking: boolean;
 }
 
+/** One check attempt; `finishedAt` and `outcome` are null while it runs. */
 export interface CheckRunRow {
   id: string;
   permitId: string;
@@ -62,6 +67,7 @@ export interface CheckRunRow {
   requestCount: number;
 }
 
+/** A status read from the portal's record page after the displayed permit number and record link were verified. */
 export interface ObservationRow {
   id: string;
   runId: string;
@@ -74,14 +80,17 @@ export interface ObservationRow {
   recordUrl: string;
 }
 
+/** A permit's check runs and the observations its successful runs saved, newest first. */
 export interface PermitHistory {
   nextBefore?: string | null;
   runs: CheckRunRow[];
   observations: ObservationRow[];
 }
 
+/** Label stored on observations the user entered from a hand-checked portal. */
 export const MANUAL_STATUS_LABEL = "Status (entered by hand)";
 
+/** A status the user read on a hand-checked portal, with the record link they read it on. */
 export const manualStatusSchema = z.object({
   permitId: z.uuid(),
   status: z
@@ -93,6 +102,7 @@ export const manualStatusSchema = z.object({
   recordUrl: z.string().trim().max(2000),
 });
 
+/** A permit number as entered: 3 to 80 letters, digits, hyphens, and dots, starting with a letter or digit. */
 export const permitNumberSchema = z
   .string()
   .trim()
@@ -100,21 +110,26 @@ export const permitNumberSchema = z
   .max(PERMIT_NUMBER_MAX)
   .regex(PERMIT_NUMBER_PATTERN, "Use the full permit number with its hyphens, dots, and zeros.");
 
+/** A saved permit's id. */
 export const permitIdSchema = z.uuid();
 
+/** An empty value clears the project number. */
 export const projectNumberSchema = z
   .string()
   .trim()
   .max(PROJECT_NUMBER_MAX)
   .regex(PROJECT_NUMBER_PATTERN, "Use letters, numbers, spaces, and - . _ / only.");
 
+/** A permit and the project number to give it. */
 export const setProjectNumberSchema = z.object({ permitId: permitIdSchema, projectNumber: projectNumberSchema });
 
+/** A permit to add: its jurisdiction id and number. */
 export const addPermitSchema = z.object({
   jurisdiction: z.string().trim().min(1).max(100),
   permitNumber: permitNumberSchema,
 });
 
+/** Resolve a selected authority by its id or exact label, so a county is never confused with a city inside it. */
 export function resolveJurisdiction(input: string): JurisdictionId | null {
   const name = input.trim().toLocaleLowerCase("en-US");
 
@@ -124,10 +139,12 @@ export function resolveJurisdiction(input: string): JurisdictionId | null {
   );
 }
 
+/** Exact comparison after trimming, for portals that display the number exactly as it is entered. */
 export function samePermitNumber(requested: string, displayed: string): boolean {
   return requested.trim() === displayed.trim();
 }
 
+/** Split a Click2Gov application number such as "25-05001277" into its two-digit year and serial. */
 export function parseApplicationNumber(value: string): { year: string; serial: string } | null {
   const [, year, serial] = /^(\d{2})\s*-\s*(\d{1,8})$/.exec(value.trim()) ?? [];
 
@@ -138,11 +155,13 @@ function usesApplicationNumber(jurisdictionId: JurisdictionId): boolean {
   return getJurisdiction(jurisdictionId)?.portalFamily === "click2gov";
 }
 
+/** An SWFWMD WMIS identifier: an ERP application ID, a permit number with its revision, or a well permit number. */
 export type WmisNumber =
   | { kind: "application"; id: number }
   | { kind: "permit"; prefix: string | null; permit: number; revision: number }
   | { kind: "well"; permit: number };
 
+/** Parse a number in the forms each WMIS search accepts; WMIS compares serials without their leading zeros. */
 export function parseWmisNumber(value: string, module: string): WmisNumber | null {
   const text = value.trim();
 
@@ -222,6 +241,11 @@ function sameWmisNumber(requested: string, displayed: string, module: string): b
   );
 }
 
+/**
+ * A number in the ePermit system St. Johns River WMD hosts for itself and two other districts: the application or
+ * permit number and its sequence, after a type and county prefix where the district uses one, such as
+ * ERP-123-255799-1, 2E-131-6688-3, or St. Johns River's 219072-3.
+ */
 export function parseEpermitNumber(value: string): { prefix: string | null; permit: number; sequence: number } | null {
   const parts = /^(?:([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-)?(\d{1,9})-(\d{1,3})$/.exec(value.trim());
 
@@ -230,6 +254,10 @@ export function parseEpermitNumber(value: string): { prefix: string | null; perm
     : null;
 }
 
+/**
+ * True when an ePermit result row shows the requested number. A number entered without its prefix matches on the
+ * number and sequence, which identify the record by themselves.
+ */
 export function sameEpermitRowNumber(requested: string, shown: string): boolean {
   const input = parseEpermitNumber(requested);
   const row = parseEpermitNumber(shown);
@@ -257,6 +285,7 @@ function sameEpermitNumber(requested: string, displayed: string): boolean {
   );
 }
 
+/** The ePermit record link the portal's own Copy Link gives, keyed by permit number and sequence. */
 export function epermitRecordUrl(profile: JurisdictionProfile, number: string): string | null {
   const parts = profile.portalFamily === "epermit" ? parseEpermitNumber(number) : null;
 
@@ -266,6 +295,10 @@ export function epermitRecordUrl(profile: JurisdictionProfile, number: string): 
   return `${start.origin}${start.pathname}#/prmtInfo?curId=&hdr=1&usrId=0&offclId=${parts.permit}&seqNo=${parts.sequence}`;
 }
 
+/**
+ * An SFWMD RegPermitting number: an application, such as 260901-67337, or an ERP (-P, -S, -M), water use (-W), or
+ * well construction (-WC) permit, such as 48-112909-P, including older ERP numbers with a trailing modification.
+ */
 export function parseRegPermittingNumber(value: string): { kind: "application" | "permit"; number: string } | null {
   const text = value.trim().toUpperCase();
 
@@ -286,6 +319,10 @@ const REG_RECORD_CLASSES = [
 const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
 
 // RegPermitting's settled URL requires sign-in; the entry URL with the record key is public.
+/**
+ * The record link RegPermitting opens without a session, from the record key ("<class> <number>") its own record
+ * view carries. The address the page settles on afterward needs a sign-in, so it is never saved.
+ */
 export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string): string | null {
   const [, recordClass, number] = /^(\S+) (\S+)$/.exec(key.trim()) ?? [];
 
@@ -302,6 +339,10 @@ export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string
 }
 
 // Click2Gov and WMIS omit leading zeros in displayed serials.
+/**
+ * Whether the displayed number is the requested one under the jurisdiction's rules. Click2Gov drops leading zeros from
+ * the displayed application serial and WMIS from its permit serials; other portals compare parsed or exact forms.
+ */
 export function sameJurisdictionPermitNumber(
   requested: string,
   displayed: string,
@@ -326,6 +367,10 @@ export function sameJurisdictionPermitNumber(
   return Boolean(input && shown && input.year === shown.year && Number(input.serial) === Number(shown.serial));
 }
 
+/**
+ * The key that makes equivalent forms of one number the same permit: zero-padded or not, and with or without an
+ * SWFWMD ERP or ePermit prefix.
+ */
 export function permitComparisonValue(number: string, jurisdictionId: JurisdictionId): string {
   const profile = getJurisdiction(jurisdictionId);
 
@@ -354,6 +399,7 @@ export function permitComparisonValue(number: string, jurisdictionId: Jurisdicti
   return parts ? `${parts.year}-${Number(parts.serial)}` : number;
 }
 
+/** Why a number can't be searched on the authority's portal, or null when the portal accepts its form. */
 export function permitNumberProblem(jurisdictionId: JurisdictionId, number: string): string | null {
   const profile = getJurisdiction(jurisdictionId);
 
@@ -381,6 +427,7 @@ const WMIS_RECORD_PAGES: Record<
   WCP: { path: "/Support/WCP/WcpDetail.aspx", params: ["permit"] },
 };
 
+/** The HTTPS record page for a WMIS record, built from the identifiers the search results displayed. */
 export function wmisRecordUrl(profile: JurisdictionProfile, values: Record<string, number>): string | null {
   if (profile.portalFamily !== "wmis") return null;
   const record = WMIS_RECORD_PAGES[profile.module];
@@ -406,6 +453,7 @@ function wmisLinkMatches(recordUrl: URL, displayed: string, module: string): boo
   return shown.permit === value("permit");
 }
 
+/** Parses `value` and returns it if it is the authority's public `page` over HTTPS without credentials, else null. */
 export function parsePortalUrl(value: string, page: "search" | "detail", jurisdictionId: JurisdictionId): URL | null {
   const profile = getJurisdiction(jurisdictionId);
 
@@ -565,16 +613,27 @@ const STATUS_LABELS = {
   "tyler-civic-access": "Status",
 } as const;
 
+/** The record-level status label for an authority; a profile names its own when its programs differ. */
 export function expectedStatusLabel(profile: AutomatedJurisdictionProfile): string {
   return statusLabels(profile)[0];
 }
 
+/** Every label the authority's record-level status can carry; SFWMD labels applications and permits differently. */
 export function statusLabels(profile: AutomatedJurisdictionProfile): readonly [string, ...string[]] {
   if ("statusLabels" in profile) return profile.statusLabels;
 
   return ["statusLabel" in profile ? profile.statusLabel : STATUS_LABELS[profile.portalFamily]];
 }
 
+/**
+ * Decide whether what the worker read from a record page can be saved as the permit's status. The displayed number
+ * must match the requested one under the jurisdiction's comparison rules, the label must be one of its record-level
+ * status labels (for SFWMD, the one for the record's kind), the status must be nonblank plain text, any reviews must
+ * parse, the record link must be the portal's own detail link for this same record, and `observedAt` must be a
+ * canonical ISO timestamp.
+ *
+ * @returns The observation to save, or the run outcome that explains why nothing was saved.
+ */
 export function parseDisplayedStatus(input: {
   jurisdictionId: JurisdictionId;
   requestedNumber: string;

@@ -195,6 +195,10 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
   return stop;
 }
 
+/**
+ * Mounts the warm backdrop, or the CSS fallback while a reduced-effects preference is on, and restarts when that
+ * preference changes. The returned function releases GPU resources.
+ */
 export function mountWarmBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   const preference = window.matchMedia(REDUCED_EFFECTS);
   let stop: () => void = () => undefined;

@@ -84,6 +84,10 @@ function keyStateCopy(state: Exclude<KeyState, "configured">): KeyStateCopy {
   }
 }
 
+/**
+ * Shows the key banner whenever a key problem holds checks back, regardless of notification settings, and updates the
+ * key form in Settings to match.
+ */
 export function renderKey(state: KeyState): void {
   const copy = state === "configured" ? null : keyStateCopy(state);
   keyBanner.hidden = copy === null;
@@ -100,6 +104,10 @@ export function renderKey(state: KeyState): void {
   keyRemove.hidden = !saved;
 }
 
+/**
+ * Sets the preference checkboxes and what this platform and install offer, then asks about a desktop shortcut once on
+ * the first launch after installing.
+ */
 export function renderPreferences(preferences: AppPreferences, platform: AppSnapshot["platform"]): void {
   trayPlace.textContent = platform === "mac" ? "menu bar" : "tray";
 
@@ -149,6 +157,7 @@ function openKeySettings(): void {
   keyInput.focus();
 }
 
+/** Wires the Settings button and the key, preference, update, and data controls. */
 export function initSettings(): void {
   bannerAddKey.addEventListener("click", openKeySettings);
 

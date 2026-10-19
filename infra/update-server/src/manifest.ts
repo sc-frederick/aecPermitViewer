@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** A parsed `major.minor.patch` release version, the only form the app's updater accepts. */
 export interface ReleaseVersion {
   readonly text: string;
   readonly major: number;
@@ -9,6 +10,7 @@ export interface ReleaseVersion {
 
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 
+/** Parses `major.minor.patch`; returns null for anything else, including pre-release suffixes. */
 export function parseReleaseVersion(text: string): ReleaseVersion | null {
   const match = VERSION.exec(text);
 
@@ -26,8 +28,10 @@ function invalid(context: z.RefinementCtx, message: string): never {
   return z.NEVER;
 }
 
+/** Lowercase hex SHA-256, the form the signing script writes and the feed records. */
 export const sha256Hex = z.string().regex(/^[a-f0-9]{64}$/);
 
+/** A string holding JSON, parsed into a JSON value; pipe it into the schema for the expected document. */
 export const jsonText = z.string().transform((value, context): z.core.util.JSONType => {
   try {
     return JSON.parse(value);
@@ -52,8 +56,10 @@ const payloadText = jsonText.pipe(
   }),
 );
 
+/** The signed payload of a release manifest. */
 export type ManifestPayload = z.infer<typeof payloadText>;
 
+/** Strict UTF-8 decoding: returns null instead of substituting replacement characters. */
 export function decodeUtf8(bytes: Uint8Array): string | null {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -62,6 +68,7 @@ export function decodeUtf8(bytes: Uint8Array): string | null {
   }
 }
 
+/** Reads the payload out of a manifest envelope without checking its signature. Returns null when malformed. */
 export function parseManifest(manifestText: string): ManifestPayload | null {
   const envelope = envelopeText.safeParse(manifestText);
 

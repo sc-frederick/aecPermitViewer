@@ -44,6 +44,7 @@ function requestPermitAction(action: Exclude<PermitAction, "details">, permitId:
   }
 }
 
+/** Wires the table rows' buttons and the details sheet's Check now and Open record buttons. */
 export function initPermitActions(): void {
   permitTable.addEventListener("click", (event) => {
     const target = eventButton(event, "button");

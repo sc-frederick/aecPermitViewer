@@ -84,6 +84,10 @@ function render(snapshot: AppSnapshot): void {
   renderDetails(snapshot);
 }
 
+/**
+ * Renders a snapshot from main unless one with the same or a higher revision is already shown, since pushed snapshots
+ * and direct replies can arrive out of order. Returns whether it rendered.
+ */
 export function applySnapshot(snapshot: AppSnapshot): boolean {
   if (ui.currentSnapshot && snapshot.revision <= ui.currentSnapshot.revision) return false;
   render(snapshot);
@@ -91,6 +95,10 @@ export function applySnapshot(snapshot: AppSnapshot): boolean {
   return true;
 }
 
+/**
+ * Asks main for its snapshot and applies it. Returns false, after a notice, when the call rejects: as with a history
+ * read, a rejection means main never answered.
+ */
 export async function fetchSnapshot(): Promise<boolean> {
   const snapshot = await api.snapshot().catch(() => null);
 
@@ -105,6 +113,7 @@ export async function fetchSnapshot(): Promise<boolean> {
   return true;
 }
 
+/** Switches the table filter and the filter menu to `next` and redraws the current snapshot. */
 export function setFilter(next: Filter): void {
   ui.filter = next;
   permitFilter.value = next;
@@ -112,6 +121,7 @@ export function setFilter(next: Filter): void {
   if (ui.currentSnapshot) render(ui.currentSnapshot);
 }
 
+/** Wires the filter menu above the table. */
 export function initPermitFilter(): void {
   permitFilter.addEventListener("change", () => {
     const next = filterValue(permitFilter.value);
@@ -120,6 +130,7 @@ export function initPermitFilter(): void {
   });
 }
 
+/** Keeps the header's "Next check" time current between snapshots. */
 export function startNextCheckClock(): void {
   setInterval(() => {
     if (ui.currentSnapshot) nextCheck.textContent = nextCheckSummary(ui.currentSnapshot);

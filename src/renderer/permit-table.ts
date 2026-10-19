@@ -12,6 +12,7 @@ const permitTable = element("permit-table", HTMLTableElement);
 
 type OutcomeKind = "ok" | "failed" | "checking" | "none";
 
+/** Classifies a check outcome for display; a cancelled check reads as no outcome. */
 export function outcomeKind(outcome: RunOutcome | null, checking = false): OutcomeKind {
   if (checking) return "checking";
 
@@ -24,8 +25,10 @@ export function outcomeKind(outcome: RunOutcome | null, checking = false): Outco
 
 const PERMIT_ACTIONS = ["details", "check", "cancel", "open"] as const;
 
+/** What a permit button does, as its `data-action` attribute names it. */
 export type PermitAction = (typeof PERMIT_ACTIONS)[number];
 
+/** Reads a button's `data-action`; null when it is missing or names no permit action. */
 export function permitActionValue(value: string | undefined): PermitAction | null {
   return PERMIT_ACTIONS.find((action) => action === value) ?? null;
 }
@@ -58,6 +61,7 @@ function outcomeCell(permit: PermitRow): HTMLElement {
   return wrap;
 }
 
+/** Badge for who the verified status waits on, or a dash when unclassified. Tentative (AEC?) badges are marked. */
 export function actionBadge(classified: StatusAction | null): HTMLElement {
   if (!classified) return make("span", "muted", "—");
   const badge = make("span", "action");
@@ -226,6 +230,11 @@ function syncGroupHead(body: HTMLTableSectionElement, group: ProjectGroup | null
   if (!existing) body.prepend(head);
 }
 
+/**
+ * Brings the table to `visible` without rebuilding it: rows are kept by permit id and moved only when the order or
+ * grouping changes, so a focused link or button in an unchanged row keeps its focus. The table hides while `visible`
+ * is empty.
+ */
 export function renderTable(
   visible: readonly PermitRow[],
   classified: ReadonlyMap<string, StatusAction | null>,
@@ -290,6 +299,7 @@ export function renderTable(
   permitTable.hidden = visible.length === 0;
 }
 
+/** The AEC action filter includes tentative AEC? classifications, so nothing flagged out of caution is hidden. */
 export function matchesFilter(permit: PermitRow, which: Filter, classified: StatusAction | null): boolean {
   if (which === "applicant") return classified?.action === "applicant";
 

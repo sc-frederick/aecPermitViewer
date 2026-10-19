@@ -3,16 +3,29 @@ import type { PermitRow } from "./permit.js";
 import { describeReview, outstandingReviews, type ReviewEntry } from "./reviews.js";
 import { wordingKey } from "./wording-key.js";
 
+/** Who a verified status waits on: the applicant (AEC), the issuing authority (the AHJ), or no one. */
 export type ActionOn = "applicant" | "authority" | "none";
 
 const actionText: Record<ActionOn, string> = { applicant: "AEC", authority: "AHJ", none: "None" };
 
+/**
+ * How a classification was reached: `listed` wording the survey saw the authority use with that meaning, `cautious`
+ * wording counted as AEC's to be safe (the record stopped short or the wording couldn't be pinned down), or `unlisted`
+ * wording not on the authority's list.
+ */
 export type ActionBasis = "listed" | "cautious" | "unlisted";
 
 type StatusWording = Readonly<Record<ActionOn | "cautious", readonly string[]>>;
 
 type LocalJurisdictionId = Extract<JurisdictionProfile, { authorityType: "county-government" | "municipality" }>["id"];
 
+/**
+ * Each county and city portal's status wording, as its records displayed it in September 2026 (see
+ * docs/PERMIT_STATUSES.md). When in doubt a status counts as AEC's: holds, wording the survey couldn't pin down,
+ * and records that stopped short (expired, denied, revoked, abandoned, closed by staff) all need someone at AEC to
+ * look. They are listed apart from explicit requests so the badge can mark them. AHJ is only for wording the survey saw
+ * the authority working under, and None only for records that were issued, finished, or deliberately ended.
+ */
 export const STATUS_WORDING: Record<LocalJurisdictionId, StatusWording> = {
   "hillsborough-county-building": {
     applicant: ["Awaiting Client Reply"],
@@ -141,6 +154,7 @@ export const STATUS_WORDING: Record<LocalJurisdictionId, StatusWording> = {
   },
 };
 
+/** Who a status waits on, and how the wording led there. */
 export type StatusAction =
   | {
       action: ActionOn;
@@ -168,6 +182,11 @@ const LOOKUP = new Map(
   ]),
 );
 
+/**
+ * Who the authority's status wording leaves the next step to. Wording the authority hasn't been seen to use counts as
+ * AEC's (`unlisted`), so a new status gets looked at. Null for an empty status or a jurisdiction without a wording
+ * list, such as the water management districts.
+ */
 export function statusAction(jurisdictionId: JurisdictionId, status: string | null): StatusAction | null {
   const wording = LOOKUP.get(jurisdictionId);
 
@@ -176,6 +195,7 @@ export function statusAction(jurisdictionId: JurisdictionId, status: string | nu
   return wording.get(wordingKey(status)) ?? UNLISTED;
 }
 
+/** Current review requests take precedence over the record status, which can lag even on issued revision records. */
 export function permitAction(
   permit: Pick<PermitRow, "jurisdictionId" | "lastStatus" | "reviews">,
 ): StatusAction | null {
@@ -186,12 +206,14 @@ export function permitAction(
     : statusAction(permit.jurisdictionId, permit.lastStatus);
 }
 
+/** The badge text: "AEC?" marks a cautious or unlisted AEC so it reads apart from an explicit request. */
 export function actionLabel(classified: StatusAction): string {
   return classified.action === "applicant" && (classified.basis === "cautious" || classified.basis === "unlisted")
     ? `${actionText.applicant}?`
     : actionText[classified.action];
 }
 
+/** Why a badge reads as it does, for its tooltip; null when the label says enough. */
 export function actionReason(classified: StatusAction): string | null {
   if (classified.basis === "review") return classified.reviews.map(describeReview).join("; ");
 

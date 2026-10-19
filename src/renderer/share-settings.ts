@@ -32,6 +32,7 @@ const followSave = element("follow-save", HTMLButtonElement);
 
 const followStop = element("follow-stop", HTMLButtonElement);
 
+/** Settings' shared-list section: start and follow controls, the share code, or the followed list's state. */
 export function renderShare(share: ShareState): void {
   shareOff.hidden = share.mode !== "off" || !share.available;
   shareOn.hidden = share.mode !== "sharing";
@@ -64,6 +65,12 @@ export function renderShare(share: ShareState): void {
   }
 }
 
+/**
+ * Wires the shared-list controls in Settings and the header's Sync now button.
+ *
+ * @param setFilter - Switches the table filter and redraws the window. It is passed in because the module that owns it
+ *   draws this section, and importing it here would make the two modules import each other.
+ */
 export function initShareSettings(setFilter: (next: Filter) => void): void {
   shareStart.addEventListener("click", async () => {
     const result = await busy(shareStart, () => api.startSharing());

@@ -96,6 +96,7 @@ function stPeteRecordUrl(number: string): string | null {
   return url.toString();
 }
 
+/** The record page's displayed number, status, status label, and the record link to save. */
 export async function readDetail(
   page: Page,
   profile: AutomatedJurisdictionProfile,
@@ -126,6 +127,7 @@ export async function readDetail(
   return record;
 }
 
+/** Waits for a Tyler record's number and status to hold text; Tyler renders after load. Other families load ready. */
 export async function waitForDetail(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const fields = profile.portalFamily === "tyler-civic-access" ? detailFields(profile, page.url()) : null;
 
@@ -140,11 +142,17 @@ export async function waitForDetail(page: Page, profile: AutomatedJurisdictionPr
   }
 }
 
+/** The keyword search input on Tyler Civic Access portals. */
 export const TYLER_SEARCH_FIELD = "#SearchKeyword";
 
 const TYLER_RESULT_MESSAGE = "#moduleResultMessage label";
 
 // Tyler's startup requests can clear a keyword entered before they finish.
+/**
+ * Waits for a Tyler search or home page to be usable, then for its startup requests to finish, since a keyword typed
+ * before then can be cleared. The search route waits for its keyword field; the home page for the field or the menu's
+ * search link (the menu repeats that link hidden, so only a visible one counts).
+ */
 export async function waitForTylerSearch(page: Page): Promise<void> {
   const ready = /^#\/search/i.test(new URL(page.url()).hash)
     ? page.locator(TYLER_SEARCH_FIELD)
@@ -154,6 +162,11 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
   await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
 }
 
+/**
+ * Waits for the page a run just opened (its start page or a saved record link) to be ready to observe: a record page
+ * for its number and status (see `waitForDetail`), a Tyler search page for its keyword field. The worker waits on
+ * other families' start pages itself.
+ */
 export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const url = page.url();
 
@@ -166,6 +179,7 @@ export async function waitForLanding(page: Page, profile: AutomatedJurisdictionP
   if (parsePortalUrl(url, "detail", profile.id)) await waitForDetail(page, profile);
 }
 
+/** Waits for Tyler's visible result count or no-results message after a search. */
 export async function waitForTylerResults(page: Page): Promise<void> {
   await page
     .locator(TYLER_RESULT_MESSAGE)
@@ -175,6 +189,7 @@ export async function waitForTylerResults(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
+/** True when Tyler's finished search says it found nothing. */
 export async function tylerFoundNothing(page: Page): Promise<boolean> {
   const shown = await page.locator(TYLER_RESULT_MESSAGE).filter({ visible: true }).allInnerTexts();
 

@@ -26,6 +26,7 @@ const checkTimeError = element("check-time-error");
 
 const addCheckTime = element("add-check-time", HTMLButtonElement);
 
+/** The snapshot's daily check times, or the defaults when there is no snapshot or its times don't parse. */
 export function checkTimes(snapshot: AppSnapshot | null): CheckTimes {
   return (snapshot && normalizeCheckTimes(snapshot.checkTimes)) ?? DEFAULT_CHECK_TIMES;
 }
@@ -84,6 +85,7 @@ function incompleteCheckTime(): HTMLInputElement | null {
   return [...checkTimeList.querySelectorAll("input")].find((input) => !input.value) ?? null;
 }
 
+/** Draws Settings' schedule section: the monitoring mode, its summary, and the check time rows. */
 export function renderSchedule(snapshot: AppSnapshot): void {
   monitoringMode.value = snapshot.monitoring;
   const scheduled = snapshot.monitoring === "scheduled";
@@ -109,6 +111,7 @@ async function saveCheckTimes(times: string[]): Promise<void> {
   }
 }
 
+/** Wires the monitoring mode menu and the check time editor. */
 export function initScheduleSettings(): void {
   checkTimeList.addEventListener("change", () => {
     if (incompleteCheckTime()) return;

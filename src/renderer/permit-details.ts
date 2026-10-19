@@ -229,6 +229,7 @@ async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   }
 }
 
+/** Opens the details sheet on a permit in the current snapshot; does nothing for a permit it doesn't hold. */
 export function openDetails(permitId: string): void {
   const permit = ui.currentSnapshot?.permits.find((entry) => entry.id === permitId);
 
@@ -249,6 +250,7 @@ export function openDetails(permitId: string): void {
   }
 }
 
+/** Redraws the open details sheet from `snapshot`, or closes the sheet when `snapshot` doesn't list its permit. */
 export function renderDetails(snapshot: AppSnapshot): void {
   if (ui.detailsPermitId) {
     const permit = snapshot.permits.find((entry) => entry.id === ui.detailsPermitId);
@@ -258,6 +260,10 @@ export function renderDetails(snapshot: AppSnapshot): void {
   }
 }
 
+/**
+ * Reloads the open permit's history when `snapshot` changed it. A read that failed for the same history stays on
+ * screen with its retry.
+ */
 export function refreshHistory(snapshot: AppSnapshot): void {
   const permit = ui.detailsPermitId ? snapshot.permits.find((entry) => entry.id === ui.detailsPermitId) : undefined;
 
@@ -278,6 +284,7 @@ async function openObservationRecord(observationId: string): Promise<void> {
   if (!result.ok) notice(result.error);
 }
 
+/** Wires the details sheet's project number, schedule option, removal, and history list. */
 export function initPermitDetails(): void {
   onSheetClose(detailsSheet, resetDetails);
 

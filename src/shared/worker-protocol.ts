@@ -9,6 +9,7 @@ const candidateSchema = z.object({
   established: z.boolean(),
 });
 
+/** A next step the worker offers main for the current page, chosen by id. */
 export type Candidate = z.infer<typeof candidateSchema>;
 
 const pageObservationSchema = z.object({
@@ -23,8 +24,13 @@ const pageObservationSchema = z.object({
   candidates: z.array(candidateSchema),
 });
 
+/** What the worker saw on the current page, and the steps it can take from there. */
 export type PageObservation = z.infer<typeof pageObservationSchema>;
 
+/**
+ * Messages from main to the browser worker. `start` begins a run. `choose` names the page by fingerprint; when the page
+ * has changed since, the worker sends a fresh observation instead of applying the choice.
+ */
 export type MainToWorker =
   | {
       kind: "start";
@@ -40,8 +46,10 @@ export type MainToWorker =
 
 const workerFailureSchema = runOutcomeSchema.exclude(["success"]);
 
+/** How the worker reports a run it couldn't verify. */
 export type WorkerFailure = z.infer<typeof workerFailureSchema>;
 
+/** Messages from the browser worker, parsed in main because the worker process drives untrusted pages. */
 export const workerToMainSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("observation"), runId: z.string(), observation: pageObservationSchema }),
   z.object({
@@ -59,4 +67,5 @@ export const workerToMainSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("action_count"), runId: z.string(), count: z.number().int().nonnegative() }),
 ]);
 
+/** A parsed message from the browser worker. */
 export type WorkerToMain = z.infer<typeof workerToMainSchema>;

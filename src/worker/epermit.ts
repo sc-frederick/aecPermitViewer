@@ -18,6 +18,11 @@ const NO_RESULTS = "No Results Found";
 const RECORD_FRAME = "iframe#iframeDiagHtml";
 
 // ePermit clears its search fields after the third lookup list arrives.
+/**
+ * Counts the search form's lookup lists as they load, and returns a wait for the form to settle. The form clears its
+ * fields just after the third list arrives, so numbers entered earlier are lost and the search then reports that no
+ * criteria were given.
+ */
 export function watchEpermitForm(page: Page): () => Promise<void> {
   let lists = 0;
   page.on("response", (response) => {
@@ -299,6 +304,7 @@ async function readEpermitRecord(page: Page, profile: EpermitProfile, requested:
   };
 }
 
+/** Drive a district's ePermit search for one requested permit number with its sequence. */
 export function epermitAdapter(page: Page, profile: EpermitProfile, requested: string): PortalAdapter {
   return {
     observe: () => observeEpermitSearch(page, profile, requested),

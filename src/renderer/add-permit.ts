@@ -70,6 +70,10 @@ let projectPermitId: string | null = null;
 
 let settleProject: ((saved: string | null) => void) | null = null;
 
+/**
+ * Opens a hand-checked permit's portal, then the dialog that records the status the user reads there. A portal that
+ * fails to open shows a notice instead.
+ */
 export async function startManualCheck(permit: PermitRow): Promise<void> {
   const result = await api.openPortal(permit.id);
 
@@ -127,6 +131,7 @@ function askProjectNumber(permit: PermitRow): Promise<string | null> {
   });
 }
 
+/** Closes the project number prompt, if open, and settles its pending question with `saved`. */
 export function finishProject(saved: string | null): void {
   projectPermitId = null;
 
@@ -162,6 +167,7 @@ function renderJurisdictionHelp(): void {
   permitNumberInput.placeholder = (profile && numberExample(profile)) ?? "Full permit number";
 }
 
+/** Wires the hand-check dialog, the project number prompt, and the add form, and fills the jurisdiction menu. */
 export function initAddPermit(): void {
   manualStatus.addEventListener("input", () => setInlineError(manualStatus, manualError, null));
 

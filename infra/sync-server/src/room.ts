@@ -1,11 +1,18 @@
 import * as z from "zod/mini";
 
+/** A value SQLite storage accepts or returns: BLOBs come back as ArrayBuffer. */
 export type SqlValue = string | number | null | ArrayBuffer;
 
+/** A result row, keyed by column name. */
 export interface SqlRow {
   readonly [column: string]: SqlValue;
 }
 
+/**
+ * The part of a SQLite-backed Durable Object's storage the room uses. Cloudflare's DurableObjectStorage satisfies it
+ * structurally, and tests supply one backed by node:sqlite. See
+ * https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/.
+ */
 export interface RoomStorage {
   readonly sql: { exec(query: string, ...bindings: SqlValue[]): { toArray(): SqlRow[] } };
   setAlarm(scheduledTime: number): Promise<void>;
@@ -13,14 +20,18 @@ export interface RoomStorage {
   deleteAll(): Promise<void>;
 }
 
+/** A list nobody has published to for this long is deleted, so abandoned shares don't stay stored forever. */
 export const RETENTION_MS = 180 * 86_400_000;
 
+/** The shortest gap between two publications. The app publishes at most once a minute. */
 export const MIN_PUBLISH_INTERVAL_MS = 10_000;
 
+/** A stored publication with its new revision, or how long to wait when it came too soon after the last one. */
 export type PublishResult =
   | { readonly _tag: "published"; readonly revision: number; readonly publishedAt: string }
   | { readonly _tag: "too_soon"; readonly retryAfterSeconds: number };
 
+/** The stored list, `unchanged` when the reader already has its revision, or `absent` when nothing is stored. */
 export type ReadResult =
   | { readonly _tag: "absent" }
   | { readonly _tag: "unchanged"; readonly revision: number }
@@ -41,6 +52,11 @@ function firstRevision(): number {
 
 const tableCountSchema = z.object({ tables: z.number() });
 
+/**
+ * The room's rules over its storage. Every method runs its SQL synchronously, so calls never interleave mid-write.
+ * Only publishing creates the table, so a read with a token nobody published to stores nothing, and a room emptied by
+ * `remove` or its retention alarm stays empty until the next publication.
+ */
 export class ShareRoom {
   constructor(private readonly storage: RoomStorage) {}
 
@@ -62,10 +78,12 @@ export class ShareRoom {
     return { revision: parsed.revision, publishedAt: parsed.published_at };
   }
 
+  /** Whether ciphertext already exists, without reading its body or creating any table or alarm. */
   exists(): boolean {
     return this.latest() !== null;
   }
 
+  /** Replaces the stored list and pushes its deletion date back, unless the last publication was too recent. */
   async publish(body: ArrayBuffer, now: number): Promise<PublishResult> {
     const latest = this.latest();
 
@@ -95,6 +113,7 @@ export class ShareRoom {
     return { _tag: "published", revision, publishedAt };
   }
 
+  /** The stored list, or only its revision when the caller already has that one. */
   read(knownRevision: number | null): ReadResult {
     const latest = this.latest();
 
@@ -109,6 +128,7 @@ export class ShareRoom {
     return { _tag: "found", revision: parsed.revision, publishedAt: parsed.published_at, body: parsed.body };
   }
 
+  /** Deletes the list and everything else the room stored. */
   async remove(): Promise<void> {
     await this.storage.deleteAlarm();
     await this.storage.deleteAll();

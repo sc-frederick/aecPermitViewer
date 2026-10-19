@@ -8,6 +8,7 @@ import { PREFERENCE_KEYS } from "../../shared/bridge.js";
 import { keyProblem } from "../../shared/key-format.js";
 import { MAX_CHECK_TIMES, normalizeCheckTimes } from "../../shared/schedule.js";
 
+/** Registers the window's Settings requests: the key, the check schedule, and preferences. */
 export function registerSettingsHandlers(context: AppContext): void {
   const handle = createHandle(context);
 

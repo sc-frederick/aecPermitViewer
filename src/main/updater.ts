@@ -47,6 +47,17 @@ function newer(candidate: string, current: string): boolean {
   return false;
 }
 
+/**
+ * Verify a signed update feed envelope and return the release it describes.
+ *
+ * @param text - The feed response body: JSON holding the base64 signed payload and its Ed25519 signature.
+ * @param publicKeySpkiBase64 - The app's pinned Ed25519 public key, as base64 DER SPKI.
+ * @param expectedPublisher - The publisher the release must name; the installer's Authenticode signer is checked
+ *   against it after download.
+ * @returns The payload, only after its signature verified against the pinned key.
+ * @throws Error or ZodError when the envelope or payload is malformed, the signature is invalid, the installer URL is
+ *   not a plain HTTPS URL, or the publisher differs. Callers treat any throw as "no trustworthy update".
+ */
 export function verifyReleaseEnvelope(
   text: string,
   publicKeySpkiBase64: string,
@@ -137,6 +148,11 @@ function sameHex(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Writes a download to a new `file` and returns its SHA-256, failing unless exactly `size` bytes arrive. On any failure
+ * the stream is cancelled, the file is closed, and the error is rethrown. The file is removed only if this call created
+ * it; an existing file at `file` fails the call and is left alone. `onProgress` runs after each read.
+ */
 export async function saveDownload(
   body: ReadableStream<Uint8Array>,
   file: string,
@@ -186,6 +202,7 @@ export async function saveDownload(
   }
 }
 
+/** A newer check or a cancellation replaced the update this operation was working on, so its result was discarded. */
 export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
@@ -197,6 +214,7 @@ export class UpdateSuperseded extends Error {
   }
 }
 
+/** The operation needs a verified update the updater doesn't currently hold: one offered by a check, or one downloaded. */
 export class UpdateNotReady extends Error {
   readonly _tag = "UpdateNotReady" as const;
 
@@ -226,6 +244,11 @@ function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
   );
 }
 
+/**
+ * Checks the signed feed, downloads and verifies the offered installer, and hands it over for installation. Operations
+ * that would conflict are ordered rather than raced: concurrent downloads of one offer share a single transfer, a
+ * check that changes the offer stops the old download, and a failed check leaves the current offer untouched.
+ */
 export class UpdateManager {
   private readonly config: z.infer<typeof configSchema>;
   private state: UpdateState = { _tag: "idle" };
@@ -242,6 +265,12 @@ export class UpdateManager {
     this.config = configSchema.parse(JSON.parse(readFileSync(configPath, "utf8")));
   }
 
+  /**
+   * Reads the signed feed and offers its release if it is newer than this app. A different release replaces the offer
+   * and stops any download of the old one; the same release keeps a download in flight or already finished. Rejects,
+   * leaving the offer as it was, when the feed can't be read or verified; rejects with `UpdateSuperseded` when a later
+   * check or `cancel()` overtook this one.
+   */
   async check(): Promise<UpdateCheck> {
     this.checkSequence += 1;
     const sequence = this.checkSequence;
@@ -272,12 +301,18 @@ export class UpdateManager {
     return { state: "available", version: payload.version, size: payload.size };
   }
 
+  /** The download page for the newest macOS build, derived from the feed URL; null when this build has no feed. */
   macDownloadUrl(): string | null {
     const feed = safeHttpsUrl(this.config.feedUrl);
 
     return feed ? new URL("/mac", feed).toString() : null;
   }
 
+  /**
+   * Downloads and verifies the offered installer and resolves with its version. A download already running for the
+   * offer is joined, and a finished one resolves at once. Rejects with `UpdateNotReady` when nothing is offered and with
+   * `UpdateSuperseded` when the offer changes or is cancelled first; any other failure returns to the offered state.
+   */
   async download(): Promise<string> {
     const state = this.state;
 
@@ -315,11 +350,20 @@ export class UpdateManager {
     return operation;
   }
 
+  /**
+   * Withdraws the offer, stops any download, and discards the answer of a check still in flight. Resolves once the
+   * stopped download has released its connection and finished with its files, so the update folder can be removed.
+   */
   async cancel(): Promise<void> {
     this.offer(null);
     await this.downloadSettled;
   }
 
+  /**
+   * Re-verifies the downloaded installer's size, hash, and publisher just before it is launched and returns its path.
+   * Rejects with `UpdateNotReady` when no download finished for the current offer, and with `UpdateSuperseded` when the
+   * offer changes during verification.
+   */
   async installerForApprovedHandoff(): Promise<string> {
     const state = this.state;
 

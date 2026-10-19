@@ -383,6 +383,7 @@ async function readWmisRecord(page: Page, profile: WmisProfile, requested: strin
   };
 }
 
+/** Drive SWFWMD's WMIS search for one requested number in the profile's module: ERP, water use, or well construction. */
 export function wmisAdapter(page: Page, profile: WmisProfile, requested: string): PortalAdapter {
   return {
     observe: () => observeWmisSearch(page, profile, requested),

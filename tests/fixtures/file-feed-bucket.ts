@@ -7,11 +7,17 @@ import { MemoryBucket } from "./memory-bucket.js";
 
 const metadataSchema = z.object({ contentType: z.string(), metadata: z.object({ sha256: z.string().optional() }) });
 
+/**
+ * Feed bucket whose public objects are files shared by the real Worker and the fake S3 CLI. Multipart staging under
+ * `_uploads/` stays in memory.
+ */
 export class FileFeedBucket extends MemoryBucket {
+  /** Uses the fake CLI's bucket directory as shared public storage. */
   constructor(private readonly directory: string) {
     super();
   }
 
+  /** Reads public metadata from disk; staging keys go to the in-memory bucket. */
   override async head(key: string): Promise<FeedObject | null> {
     if (key.startsWith("_uploads/")) return super.head(key);
     const file = path.join(this.directory, key);
@@ -30,6 +36,7 @@ export class FileFeedBucket extends MemoryBucket {
     };
   }
 
+  /** Reads public bytes from the same filesystem the subprocess publisher uses. */
   override async get(key: string, options?: { readonly range: FeedRange }): Promise<FeedObjectBody | null> {
     if (key.startsWith("_uploads/")) return super.get(key, options);
     const object = await this.head(key);
@@ -42,6 +49,10 @@ export class FileFeedBucket extends MemoryBucket {
     return { ...object, body: new Blob([selected]).stream(), text: async () => selected.toString("utf8") };
   }
 
+  /**
+   * Writes a public object to disk, returning null when an etag or `If-None-Match: *` precondition fails. Exclusive
+   * create keeps CLI and Worker writes from overwriting each other.
+   */
   override async put(
     key: string,
     value: string | ReadableStream<Uint8Array>,

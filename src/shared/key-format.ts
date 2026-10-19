@@ -1,3 +1,4 @@
+/** Returns an error message for an unusable key, or null when it looks like a key. */
 export function keyProblem(key: string): string | null {
   if (key.length === 0) return "Enter your API key.";
 

@@ -2,6 +2,7 @@ import { readTokenFor, roomNameFor, SHARE_BODY_MAX_BYTES } from "../../../src/sh
 import type { AdmissionApi, AdmissionDenied } from "./admission.js";
 import type { PublishResult, ReadResult } from "./room.js";
 
+/** A room as the router reaches it: a Durable Object stub in production, a ShareRoom in tests. */
 export interface RoomApi {
   exists(): Promise<boolean>;
   publish(body: ArrayBuffer): Promise<PublishResult>;
@@ -9,8 +10,10 @@ export interface RoomApi {
   remove(): Promise<void>;
 }
 
+/** The room with this name. The same name always reaches the same room. */
 export type RoomDirectory = (name: string) => RoomApi;
 
+/** The protocol endpoint shared by clients and the Worker. */
 export const LIST_PATH = "/v1/list";
 
 /** AES-GCM output is at least a 12-byte nonce and a 16-byte tag. */
@@ -232,6 +235,7 @@ async function deleteList(request: Request, rooms: RoomDirectory): Promise<Respo
   });
 }
 
+/** Answers one request. Client mistakes and storage failures become responses, not rejections. */
 export async function route(request: Request, rooms: RoomDirectory, admission: AdmissionApi): Promise<Response> {
   if (new URL(request.url).pathname !== LIST_PATH) return text("Not found", 404);
 

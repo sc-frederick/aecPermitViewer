@@ -21,6 +21,10 @@ function fromSqlite(value: SQLInputValue): SqlValue {
   return scalarSchema.parse(value);
 }
 
+/**
+ * Durable Object SQLite storage on node:sqlite. Alarms are recorded, not run, and `exec` takes one statement, which is
+ * all the room uses.
+ */
 export class MemoryRoomStorage implements RoomStorage {
   alarm: number | null = null;
   private db = new DatabaseSync(":memory:");
@@ -46,24 +50,31 @@ export class MemoryRoomStorage implements RoomStorage {
     this.alarm = null;
   }
 
+  /** Leaves an empty database with no tables, as the real `deleteAll` does. */
   async deleteAll(): Promise<void> {
     this.db.close();
     this.db = new DatabaseSync(":memory:");
   }
 }
 
+/** Rooms by name, each a ShareRoom over its own storage, reached the way the Worker reaches Durable Objects. */
 export class MemoryRooms {
   readonly storages = new Map<string, MemoryRoomStorage>();
   private readonly rooms = new Map<string, ShareRoom>();
+  /** Clock in epoch milliseconds, read by both the rooms and admission. */
   now = Date.parse("2026-09-28T12:00:00.000Z");
+  /** When true, every room and admission call rejects, like an unavailable Durable Object. */
   failing = false;
+  /** Storage for the deployment's admission coordinator, separate from room storage. */
   readonly admissionStorage = new MemoryRoomStorage();
   private readonly budget: ShareAdmission;
 
+  /** Runs the production admission policy over `admissionStorage`. */
   constructor(limits: AdmissionLimits = DEFAULT_ADMISSION_LIMITS) {
     this.budget = new ShareAdmission(this.admissionStorage, limits);
   }
 
+  /** The production admission policy, reading the same `now` as the rooms. */
   readonly admission: AdmissionApi = {
     check: async (name, source) => {
       this.check();

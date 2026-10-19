@@ -31,6 +31,14 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
   return files;
 }
 
+/**
+ * Checks a staged browser directory against its packaged `sha256-manifest.json` before launch. Chromium's Windows
+ * debug.log is runtime data and isn't checked.
+ *
+ * @param directory - The browser payload directory, which holds the manifest.
+ * @throws Error when the manifest is malformed, the file list differs from the manifest's, an entry is neither a file
+ *   nor a directory, or any file's SHA-256 differs. The payload is then treated as tampered and must not be launched.
+ */
 export async function verifyBrowserPayload(directory: string): Promise<void> {
   const parsed = browserManifestSchema.safeParse(
     JSON.parse(await readFile(path.join(directory, "sha256-manifest.json"), "utf8")),

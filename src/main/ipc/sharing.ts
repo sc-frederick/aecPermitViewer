@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../app-context.js";
 import { createHandle, NO_INPUT } from "./handle.js";
 
+/** Registers the window's requests to share this app's list or follow another's. */
 export function registerSharingHandlers(context: AppContext): void {
   const handle = createHandle(context);
 

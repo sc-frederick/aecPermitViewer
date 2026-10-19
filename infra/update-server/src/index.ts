@@ -6,6 +6,7 @@ import { decideInstallerUpload, decideManifestReplacement, type VersionedManifes
 
 declare const FixedLengthStream: { new (length: number): TransformStream<Uint8Array, Uint8Array> };
 
+/** Bindings from wrangler.jsonc. `UPLOAD_TOKEN` is a secret; without it every upload is refused. */
 export interface FeedEnv {
   readonly BUCKET: FeedBucket;
   readonly UPLOAD_TOKEN?: string;

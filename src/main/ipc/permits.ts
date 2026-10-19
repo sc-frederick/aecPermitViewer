@@ -22,6 +22,7 @@ const FOLLOWING: BridgeResult<never> = {
   error: "You're viewing a shared list. Stop following it in Settings to change permits.",
 };
 
+/** Registers the window's requests to read the app state and to add, check, change, remove, and open permits. */
 export function registerPermitHandlers(context: AppContext): void {
   const handle = createHandle(context);
 

@@ -90,6 +90,7 @@ function startCheck(context: AppContext, permitId: string, key: string, stillWan
   };
 }
 
+/** The check queue, running checks against the current store with the saved key. */
 export function createQueue(context: AppContext): CheckQueue {
   return new CheckQueue({
     scopeOf: (permitId) => permitScope(context, permitId),

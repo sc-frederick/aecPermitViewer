@@ -106,9 +106,12 @@ const observationSchema = z.object({
  */
 const uniqueViolationSchema = z.object({ code: z.literal("ERR_SQLITE_ERROR"), errcode: z.literal(2067) });
 
+/** The jurisdiction already has a permit whose number compares equal to the one being added. */
 export class AlreadyTracked extends Error {
   readonly _tag = "AlreadyTracked" as const;
+  /** The jurisdiction that already has the permit. */
   readonly jurisdictionId: JurisdictionId;
+  /** The number as it was entered, not as it compares. */
   readonly permitNumber: string;
 
   constructor(jurisdictionId: JurisdictionId, permitNumber: string, cause: unknown) {
@@ -119,6 +122,7 @@ export class AlreadyTracked extends Error {
   }
 }
 
+/** The new permit's id, or the reason it was not added. */
 export type AddPermitResult = { _tag: "ok"; value: string } | { _tag: "err"; error: AlreadyTracked };
 
 interface RunCompletion {
@@ -172,6 +176,11 @@ function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
   };
 }
 
+/**
+ * The app's SQLite database of permits, check runs, status observations, and settings. Opening it migrates older
+ * schema versions after writing a backup, and marks runs left unfinished by an earlier exit as interrupted.
+ * All methods are synchronous; failures other than the typed results below throw.
+ */
 export class PermitStore {
   private readonly db: DatabaseSync;
   private readonly statements = new Map<string, StatementSync>();
@@ -348,11 +357,13 @@ export class PermitStore {
     });
   }
 
+  /** Close the database. The store must not be used afterward. */
   close(): void {
     this.statements.clear();
     this.db.close();
   }
 
+  /** How many rows this connection has changed since it opened; a different count means something was written. */
   changeCount(): number {
     return changeCountSchema.parse(this.sql("SELECT total_changes() AS changes").get()).changes;
   }
@@ -399,6 +410,10 @@ export class PermitStore {
     ).run(new Date().toISOString());
   }
 
+  /**
+   * Saves a permit and returns its new id. A permit whose number compares equal to one already saved for the same
+   * jurisdiction is not added again and returns AlreadyTracked. Other SQLite failures throw.
+   */
   addPermit(permitNumber: string, jurisdictionId: JurisdictionId = HILLSBOROUGH_ID): AddPermitResult {
     if (!getJurisdiction(jurisdictionId)) throw new Error("Unsupported jurisdiction");
     const id = randomUUID();
@@ -426,18 +441,28 @@ export class PermitStore {
     return { _tag: "ok", value: id };
   }
 
+  /**
+   * Saved permits, newest first. Permits whose jurisdiction the app no longer supports are left out but kept on disk.
+   *
+   * @param checkingIds - Permits with a check in progress, reported with `checking: true`.
+   */
   listPermits(checkingIds: ReadonlySet<string> = new Set()): PermitRow[] {
     return this.rows(storedPermitSchema, `${PERMIT_SELECT} ORDER BY p.created_at DESC`).flatMap(
       (row) => mapPermit(row, checkingIds.has(row.id)) ?? [],
     );
   }
 
+  /** The permit, or null when it doesn't exist or its jurisdiction is no longer supported. `checking` is always false. */
   getPermit(id: string): PermitRow | null {
     const row = this.row(storedPermitSchema, `${PERMIT_SELECT} WHERE p.id = ?`, id);
 
     return row ? mapPermit(row, false) : null;
   }
 
+  /**
+   * The permit with its current status and record link, but with the latest attempt taken from its most recent
+   * completed run other than `runId`. Used to compare a finishing run with what came before it.
+   */
   getPermitBeforeRun(permitId: string, runId: string): PermitRow | null {
     const permit = this.getPermit(permitId);
 
@@ -459,6 +484,7 @@ export class PermitStore {
     };
   }
 
+  /** Records a started check with the versions and model configuration it runs under. */
   startRun(input: {
     permitId: string;
     appVersion: string;
@@ -489,6 +515,12 @@ export class PermitStore {
     return id;
   }
 
+  /**
+   * Complete a run started by `startRun` and schedule the permit's next check from the outcome. The observation is saved,
+   * and becomes the permit's latest status and record link, only when the outcome is `success`.
+   *
+   * @throws Error when the run doesn't exist.
+   */
   finishRun(input: RunCompletion): void {
     this.transaction(() => this.completeRun(input));
   }
@@ -549,6 +581,10 @@ export class PermitStore {
     }
   }
 
+  /**
+   * Saves a status the user read on a hand-checked portal as a completed check. The run starts and finishes in one
+   * transaction, so a failure can't leave an unfinished run for the next open to mark as interrupted.
+   */
   recordManualStatus(input: { permitId: string; status: string; recordUrl: string; appVersion: string }): void {
     const permit = this.getPermit(input.permitId);
 
@@ -582,6 +618,7 @@ export class PermitStore {
     });
   }
 
+  /** The permit's check runs, newest start first, and its saved observations, newest observation first. */
   history(permitId: string): PermitHistory {
     const runs = this.rows(
       checkRunSchema,
@@ -598,6 +635,14 @@ export class PermitStore {
     return { runs, observations };
   }
 
+  /**
+   * One entry per calendar day, newest first, for at most `days` days before the exclusive `before` timestamp (UTC
+   * ISO). Days follow this computer's time zone, including DST. A day's entry is its latest successful run with an
+   * observation, else its latest run. Each day costs a few indexed seeks, and only the chosen observations' review JSON
+   * is parsed.
+   *
+   * @throws Error when `days` is not an integer from 1 to 120.
+   */
   dailyHistory(permitId: string, days = 120, before: string | null = null): PermitHistory {
     if (!Number.isInteger(days) || days < 1 || days > 120) throw new Error("Invalid history page size");
     const runs: CheckRunRow[] = [];
@@ -655,10 +700,12 @@ export class PermitStore {
     return { runs, observations, nextBefore: older ? cursor : null };
   }
 
+  /** A saved observation, or null when none has that id. */
   getObservation(id: string): ObservationRow | null {
     return this.row(observationSchema, `SELECT ${OBSERVATION_COLUMNS} FROM status_observations WHERE id = ?`, id);
   }
 
+  /** The jurisdiction of the permit an observation belongs to, or null when either is gone or no longer supported. */
   getObservationJurisdictionId(id: string): JurisdictionId | null {
     const row = this.row(
       jurisdictionRefSchema,
@@ -684,16 +731,19 @@ export class PermitStore {
     return profile.adapterVersion;
   }
 
+  /** Turns scheduled checks on or off. */
   setMonitoring(mode: "manual" | "scheduled"): void {
     this.putSetting("monitoring", mode);
   }
 
+  /** Whether scheduled checks run. Defaults to scheduled when never set. */
   getMonitoring(): "manual" | "scheduled" {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
 
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
+  /** The saved daily check times, or the defaults when none are saved or the saved value no longer parses. */
   getCheckTimes(): CheckTimes {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'check_times'");
     const stored = row ? normalizeCheckTimes(row.value.split(",")) : null;
@@ -701,6 +751,10 @@ export class PermitStore {
     return stored ?? DEFAULT_CHECK_TIMES;
   }
 
+  /**
+   * Saves new check times and moves future due times to the next new slot, in one transaction. Permits already overdue
+   * are left due, so each still gets its one catch-up check.
+   */
   setCheckTimes(times: CheckTimes, now: Date): void {
     this.transaction(() => {
       const previousTimes = this.getCheckTimes();
@@ -729,20 +783,24 @@ export class PermitStore {
     });
   }
 
+  /** A boolean setting, or `fallback` when it has never been saved. */
   getFlag(key: string, fallback: boolean): boolean {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key);
 
     return row ? row.value === "1" : fallback;
   }
 
+  /** Saves a boolean setting. */
   setFlag(key: string, value: boolean): void {
     this.putSetting(key, value ? "1" : "0");
   }
 
+  /** A text setting, or null when it has never been saved or was cleared. */
   getText(key: string): string | null {
     return this.row(settingSchema, "SELECT value FROM settings WHERE key = ?", key)?.value ?? null;
   }
 
+  /** Saves a text setting; null clears it. */
   setText(key: string, value: string | null): void {
     if (value === null) this.sql("DELETE FROM settings WHERE key = ?").run(key);
     else this.putSetting(key, value);
@@ -754,6 +812,12 @@ export class PermitStore {
     ).run(key, value);
   }
 
+  /**
+   * Included permits whose next check is unset or at or before `now`, earliest due first. Hand-checked permits are
+   * never returned.
+   *
+   * @param now - An ISO timestamp, compared as text with the stored ISO due times.
+   */
   duePermitIds(now: string): string[] {
     return this.rows(
       dueSchema,
@@ -763,6 +827,7 @@ export class PermitStore {
     ).flatMap((row) => (isManualJurisdiction(row.jurisdictionId) ? [] : [row.id]));
   }
 
+  /** Moves a permit's due time to `slot` unless it is already due later, so a cancelled check isn't picked up again. */
   deferDue(id: string, slot: Date): void {
     const value = slot.toISOString();
     this.sql("UPDATE permits SET next_due_at = ? WHERE id = ? AND (next_due_at IS NULL OR next_due_at < ?)").run(
@@ -772,15 +837,21 @@ export class PermitStore {
     );
   }
 
+  /** Delete the permit with its runs and observations. Returns false when no permit had that id. */
   removePermit(id: string): boolean {
     return this.sql("DELETE FROM permits WHERE id = ?").run(id).changes === 1;
   }
 
+  /**
+   * Pulls any due time later than the next slot forward to it. Due times saved by older versions or under different
+   * check times can be later.
+   */
   alignSchedule(now: Date): void {
     const slot = nextSlotAfter(now, this.getCheckTimes()).toISOString();
     this.sql("UPDATE permits SET next_due_at = ? WHERE next_due_at > ?").run(slot, slot);
   }
 
+  /** Saves the permit's project number; null or blank clears it. Returns false when no permit has that id. */
   setProjectNumber(id: string, projectNumber: string | null): boolean {
     return (
       this.sql("UPDATE permits SET project_number = ? WHERE id = ?").run(projectNumber?.trim() || null, id).changes ===
@@ -788,6 +859,11 @@ export class PermitStore {
     );
   }
 
+  /**
+   * Include or exclude a permit from scheduled checks. Including it makes it due immediately.
+   *
+   * @throws Error when including a hand-checked permit, which scheduled checks can't read.
+   */
   setPermitMonitoring(id: string, enabled: boolean): void {
     const permit = this.getPermit(id);
 

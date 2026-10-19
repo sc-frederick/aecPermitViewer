@@ -7,12 +7,14 @@ function isMissingFile(cause: unknown): boolean {
   return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 }
 
+/** The platform's per-user encryption. Tests supply a fake with the same shape. */
 export interface KeyEncryption {
   available: () => Promise<boolean>;
   encrypt: (key: string) => Promise<Buffer>;
   decrypt: (encrypted: Buffer) => Promise<{ result: string; shouldReEncrypt: boolean }>;
 }
 
+/** This computer can't encrypt a key for the current user, so nothing was saved. */
 export class KeyStorageUnavailable extends Error {
   readonly _tag = "KeyStorageUnavailable" as const;
 
@@ -21,6 +23,7 @@ export class KeyStorageUnavailable extends Error {
   }
 }
 
+/** Encrypting or writing the key failed. A key saved earlier, if any, is left as it was. */
 export class KeyWriteFailed extends Error {
   readonly _tag = "KeyWriteFailed" as const;
 
@@ -29,8 +32,13 @@ export class KeyWriteFailed extends Error {
   }
 }
 
+/** The result of saving a key. */
 export type KeySave = { _tag: "saved" } | { _tag: "failed"; error: KeyStorageUnavailable | KeyWriteFailed };
 
+/**
+ * The TypeSafe key, encrypted for the current user in the app's data folder. Windows encrypts it with DPAPI; macOS with
+ * a key kept in the login Keychain.
+ */
 export class KeyStore {
   private readonly secretPath: string;
   private mutations: Promise<void> = Promise.resolve();
@@ -45,6 +53,10 @@ export class KeyStore {
     this.secretPath = path.join(dataRoot, "secrets", "typesafe-key.bin");
   }
 
+  /**
+   * Whether a key is saved and usable here, without reading or decrypting it. A saved key reports `unreadable` once a
+   * read of it has failed, until it is read successfully or replaced.
+   */
   async state(): Promise<StoredKeyState> {
     if (this.devKey) return "configured";
 
@@ -59,6 +71,7 @@ export class KeyStore {
     }
   }
 
+  /** Encrypts the key for this user and replaces any saved key. The plaintext is never written to disk. */
   async save(key: string): Promise<KeySave> {
     this.generation += 1;
 
@@ -77,6 +90,7 @@ export class KeyStore {
     });
   }
 
+  /** Deletes the saved key after earlier mutations finish. */
   async remove(): Promise<void> {
     this.generation += 1;
     await this.mutate(async () => {
@@ -85,6 +99,10 @@ export class KeyStore {
     });
   }
 
+  /**
+   * The key, or null when none is saved or this computer can't store one. A saved key that can't be read or decrypted
+   * rejects, so it isn't mistaken for a missing one. A save or removal during the read restarts it on the new file.
+   */
   async read(): Promise<string | null> {
     if (this.devKey) return this.devKey;
 

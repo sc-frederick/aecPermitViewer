@@ -13,6 +13,7 @@ import { reviewsSchema } from "../shared/review-schema.js";
 import { outstandingReviews } from "../shared/reviews.js";
 import { normalizeCheckTimes, type CheckTimes } from "../shared/schedule.js";
 
+/** Days of history shared per permit: one entry per day, as the details sheet shows it. */
 export const SHARED_HISTORY_DAYS = 120;
 
 const MAX_SHARED_PERMITS = 2000;
@@ -73,6 +74,7 @@ const sharedListSchema = z.object({
     .max(MAX_SHARED_PERMITS),
 });
 
+/** A shared list as a follower uses it: permits in the publisher's order, and each permit's history by id. */
 export interface SharedList {
   readonly schedule: CheckTimes | null;
   readonly permits: readonly PermitRow[];
@@ -98,6 +100,7 @@ function recentHistory(history: PermitHistory, days: number): PermitHistory {
   };
 }
 
+/** Serializes the list to publish. `schedule` is the publisher's check times, or null if it only checks on request. */
 export function buildSharedList(
   permits: readonly PermitRow[],
   historyOf: (permitId: string) => PermitHistory,
@@ -109,6 +112,12 @@ export function buildSharedList(
   );
 }
 
+/**
+ * Parses a published list. Permits under a jurisdiction this app version doesn't know are left out rather than failing
+ * the whole list, so a publisher on a newer version can still be followed.
+ *
+ * @throws ZodError or SyntaxError when the text isn't a list in this format.
+ */
 export function parseSharedList(json: string): SharedList {
   const list = sharedListSchema.parse(JSON.parse(json));
   const histories = new Map<string, PermitHistory>();
@@ -148,6 +157,10 @@ function sharedListJson(schedule: readonly string[] | null, entries: readonly st
   return `{"format":1,"schedule":${JSON.stringify(schedule)},"permits":[${entries.join(",")}]}`;
 }
 
+/**
+ * Builds the same JSON as `buildSharedList`, yielding to the event loop before each history read and each entry's
+ * serialization so a long list doesn't block the main process.
+ */
 export async function buildSharedListAsync(
   permits: readonly PermitRow[],
   historyOf: (permitId: string) => PermitHistory,
