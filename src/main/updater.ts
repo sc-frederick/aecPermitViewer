@@ -11,7 +11,6 @@ const payloadSchema = z.object({
   url: z.url(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   size: z.number().int().positive().max(1_000_000_000),
-  // Empty for releases without an Authenticode signature, which leaves the Ed25519 manifest as the only trust anchor.
   publisher: z.string().max(200),
 });
 
@@ -28,10 +27,8 @@ const configSchema = z.object({
   expectedPublisher: z.string(),
 });
 
-/** The most bytes read from the update feed, whose signed JSON envelope is far smaller. */
 const MAX_MANIFEST_BYTES = 32_768;
 
-/** A download that receives nothing for this long is aborted. */
 const DOWNLOAD_STALL_MS = 60_000;
 
 function newer(candidate: string, current: string): boolean {
@@ -92,10 +89,6 @@ function safeHttpsUrl(value: string): URL | null {
   }
 }
 
-/**
- * Fetches `url`, following up to three redirects by hand so each target must be a plain HTTPS URL. Each redirect's
- * body is released before the next request.
- */
 async function fetchHttps(url: URL, signal: AbortSignal): Promise<Response> {
   let current = url;
 
@@ -214,9 +207,7 @@ export class UpdateSuperseded extends Error {
   readonly _tag = "UpdateSuperseded" as const;
 
   constructor(
-    /** The operation whose result was discarded. */
     readonly operation: "check" | "download" | "install",
-    /** The error the operation stopped with, if it failed rather than finished. */
     override readonly cause?: unknown,
   ) {
     super(`Update ${operation} was superseded`);
@@ -227,18 +218,11 @@ export class UpdateSuperseded extends Error {
 export class UpdateNotReady extends Error {
   readonly _tag = "UpdateNotReady" as const;
 
-  constructor(
-    /** What was missing: an offered update or a finished download. */
-    readonly needed: "available" | "downloaded",
-  ) {
+  constructor(readonly needed: "available" | "downloaded") {
     super(needed === "available" ? "No verified update available" : "No verified update downloaded");
   }
 }
 
-/**
- * The update on offer and how far it has got. A download belongs to the payload it started with; `abort` stops it when
- * that payload is withdrawn, and only the download that still owns the current offer may make it `ready`.
- */
 type UpdateState =
   | { readonly _tag: "idle" }
   | { readonly _tag: "available"; readonly payload: UpdatePayload }
@@ -268,11 +252,8 @@ function samePayload(left: UpdatePayload, right: UpdatePayload): boolean {
 export class UpdateManager {
   private readonly config: z.infer<typeof configSchema>;
   private state: UpdateState = { _tag: "idle" };
-  /** Advances whenever the offer is replaced or withdrawn; work started under an older value is stale. */
   private generation = 0;
-  /** Advances with each check, so only the most recent one may apply its answer. */
   private checkSequence = 0;
-  /** Settles once the latest download has finished all its file work, successful or not. Never rejects. */
   private downloadSettled: Promise<void> = Promise.resolve();
 
   constructor(
@@ -344,8 +325,6 @@ export class UpdateManager {
     const generation = this.generation;
     const abort = new AbortController();
 
-    // A superseded download may still be finishing its file work; this one waits for it so the two never touch the
-    // update folder at once.
     const operation = this.downloadSettled
       .then(() => this.saveInstaller(payload, abort.signal))
       .then(
@@ -402,7 +381,6 @@ export class UpdateManager {
     return file;
   }
 
-  /** Replaces the offer with `payload`, or withdraws it. Re-offering the same release keeps its download. */
   private offer(payload: UpdatePayload | null): void {
     const state = this.state;
 
@@ -413,7 +391,6 @@ export class UpdateManager {
     this.state = payload ? { _tag: "available", payload } : { _tag: "idle" };
   }
 
-  /** Downloads `payload`'s installer into the update folder, verifies it, and returns its final path. */
   private async saveInstaller(payload: UpdatePayload, signal: AbortSignal): Promise<string> {
     if (signal.aborted) throw new UpdateSuperseded("download");
     const updateDir = path.join(this.dataRoot, "updates");
@@ -423,7 +400,6 @@ export class UpdateManager {
     const installerUrl = safeHttpsUrl(payload.url);
 
     if (!installerUrl) throw new Error("Update URL invalid");
-    // The installer is large, so abort on a stalled connection rather than a fixed total time.
     const stall = new AbortController();
     let stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
     let hash: string;
@@ -441,7 +417,6 @@ export class UpdateManager {
         stallTimer = setTimeout(() => stall.abort(), DOWNLOAD_STALL_MS);
       });
     } catch (cause) {
-      // Aborting ends the connection, whatever step failed.
       stall.abort();
 
       if (signal.aborted) throw new UpdateSuperseded("download", cause);
@@ -458,7 +433,6 @@ export class UpdateManager {
     try {
       await this.verifyPublisher(temporary, payload.publisher, signal);
 
-      // A withdrawn offer must not replace the installer or clear the folder.
       if (signal.aborted) throw new UpdateSuperseded("download");
       await rm(final, { force: true });
       await rename(temporary, final);
@@ -479,8 +453,6 @@ export class UpdateManager {
   }
 
   private async verifyPublisher(file: string, publisher: string, signal?: AbortSignal): Promise<void> {
-    // verifyReleaseEnvelope required publisher to equal the configured expectedPublisher, so an empty value means this
-    // build is configured for unsigned releases.
     if (!publisher) return;
 
     if (process.platform !== "win32") throw new Error("Authenticode verification requires Windows");

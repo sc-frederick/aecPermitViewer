@@ -1,13 +1,9 @@
-// HTTP routes for shared permit lists. Credentials travel in the Authorization header, never the URL, so they stay out
-// of request logs. Publishing and deleting take the write key; fetching takes the read token. Both lead to the same room
-// because the room is named from the read token, which the Worker derives from the write key.
 import { readTokenFor, roomNameFor, SHARE_BODY_MAX_BYTES } from "../../../src/shared/share-protocol.js";
 import type { AdmissionApi, AdmissionDenied } from "./admission.js";
 import type { PublishResult, ReadResult } from "./room.js";
 
 /** A room as the router reaches it: a Durable Object stub in production, a ShareRoom in tests. */
 export interface RoomApi {
-  /** True when the room holds ciphertext, without allocating storage or reading the body. Detects legacy rooms. */
   exists(): Promise<boolean>;
   publish(body: ArrayBuffer): Promise<PublishResult>;
   read(knownRevision: number | null): Promise<ReadResult>;
@@ -43,7 +39,6 @@ type BodyRead =
   | { readonly _tag: "too_large" }
   | { readonly _tag: "malformed" };
 
-/** Reads at most `limit` bytes, stopping as soon as the body exceeds it. */
 async function readBounded(request: Request, limit: number): Promise<BodyRead> {
   const declared = Number(request.headers.get("content-length"));
 
@@ -86,7 +81,6 @@ async function readBounded(request: Request, limit: number): Promise<BodyRead> {
   return { _tag: "ok", bytes: bytes.buffer };
 }
 
-/** Runs a room call, answering 503 when the Durable Object fails. The cause is logged, never returned. */
 async function inRoom(operation: string, work: () => Promise<Response>): Promise<Response> {
   try {
     return await work();
@@ -107,7 +101,6 @@ async function fetchList(request: Request, rooms: RoomDirectory): Promise<Respon
   return inRoom("read", async () => {
     const result = await rooms(name).read(known === undefined ? null : Number(known));
 
-    // An unknown token and a deleted list look the same, so a token can't be probed for a list that once existed.
     if (result._tag === "absent") return text("No shared list", 404);
     const etag = `"r${result.revision}"`;
 
@@ -157,14 +150,11 @@ async function sourceFor(request: Request): Promise<string> {
         ? [...start, ...Array<string>(8 - start.length - end.length).fill("0"), ...end]
         : start;
 
-      // IPv6 privacy addresses from one network consume the same quota.
       source = `${groups
         .slice(0, 4)
         .map((group) => group.padStart(4, "0"))
         .join(":")}/64`;
-    } catch {
-      // Invalid inputs retain the shared unknown-source bucket.
-    }
+    } catch {}
   }
 
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`permitmon-share-source\0${source}`));
@@ -195,8 +185,6 @@ async function publishList(request: Request, rooms: RoomDirectory, admission: Ad
     const source = await sourceFor(request);
     const checked = await admission.check(name, source);
 
-    // Request-rate and metadata limits reject before touching a room or reading the body. Creation-only limits fall
-    // through to a storage-free existence probe, so a legacy room with no admission record still updates at capacity.
     if (checked._tag === "denied" && (checked.reason === "source_writes" || checked.reason === "tracked_sources"))
       return admissionResponse(checked);
     let legacy = false;

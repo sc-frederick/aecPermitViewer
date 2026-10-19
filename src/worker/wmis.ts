@@ -11,14 +11,12 @@ import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import type { DisplayedRecord, PortalAdapter, SearchObservation } from "./adapter.js";
 
-/** An SWFWMD permit program searched through its public WMIS page. */
 type WmisProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "wmis" }>;
 
 const ERP = "#TabContainer1_TabPanel1_SearchERPInfo_";
 
 const WUP = "#TabContainer1_TabPanel1_SearchWupInfo1_";
 
-/** Search controls on each program's page. ERP collects numbers in a list with Add before searching. */
 const FORMS = {
   ERP: {
     permit: `${ERP}TextBoxWupName`,
@@ -38,7 +36,6 @@ const RESULTS_GRID = "table[id$='_customGrid']";
 
 const NO_RECORDS = "No records matched search criteria. Please try again.";
 
-/** Where the ERP and well construction record pages show their identity and status. */
 const RECORD_FIELDS = {
   ERP: {
     heading: "#Detail1_LabelPermitNumberExt",
@@ -50,7 +47,6 @@ const RECORD_FIELDS = {
 
 type ResultRow = Record<string, string>;
 
-/** The visible results grid's rows keyed by column heading, or null when no results are shown. */
 async function resultRows(page: Page): Promise<ResultRow[] | null> {
   const grid = page.locator(RESULTS_GRID).filter({ visible: true });
 
@@ -77,7 +73,6 @@ async function resultRows(page: Page): Promise<ResultRow[] | null> {
 
 const digits = (value: string | undefined): value is string => /^\d{1,8}$/.test(value ?? "");
 
-/** A result row's identity, written the way the record's own page or the worker reports it. */
 function rowIdentity(row: ResultRow, profile: WmisProfile): string | null {
   const permit = row["Permit #"];
   const revision = row["Rev #"];
@@ -117,7 +112,6 @@ async function listValues(page: Page, selector: string): Promise<string[]> {
     .then((values) => values.map((value) => value.trim()));
 }
 
-/** True when the form's search criteria are exactly the requested number and nothing else. */
 async function criteriaEntered(page: Page, profile: WmisProfile, requested: string): Promise<boolean> {
   const wanted = parseWmisNumber(requested, profile.module);
 
@@ -158,7 +152,6 @@ async function criteriaEntered(page: Page, profile: WmisProfile, requested: stri
   return Number(listed[1]) === wanted.permit && Number(listed[2]) === wanted.revision;
 }
 
-/** Offer the next step on a search page, or report that its results hold the record itself (water use). */
 async function observeWmisSearch(page: Page, profile: WmisProfile, requested: string): Promise<SearchObservation> {
   const wanted = parseWmisNumber(requested, profile.module);
   const entered = await criteriaEntered(page, profile, requested);
@@ -170,7 +163,6 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
     const resultNumbers = exact.map((match) => match.identity);
     const visibleControls = ["Search results"];
 
-    // Water use record pages don't show a status, so the matching result row is the record.
     if (exact.length === 1 && profile.module === "WUP") {
       return { phase: "detail", inputValue, formLabels: [], visibleControls, resultNumbers, candidates: [] };
     }
@@ -243,10 +235,6 @@ async function observeWmisSearch(page: Page, profile: WmisProfile, requested: st
   };
 }
 
-/**
- * True once a search for exactly the requested number returned the portal's no-records message, or only rows
- * whose numbers were read and differ (an ERP permit under another type prefix). Unreadable rows don't count.
- */
 async function wmisSearchFoundNothing(page: Page, profile: WmisProfile, requested: string): Promise<boolean> {
   if (!(await criteriaEntered(page, profile, requested))) return false;
 
@@ -287,7 +275,6 @@ async function fillWmisSearch(page: Page, profile: WmisProfile, requested: strin
 
   if (profile.module !== "ERP") return;
 
-  // Add posts the page back with the number in the search list.
   const [list, add] =
     wanted.kind === "application"
       ? [FORMS.ERP.applicationList, FORMS.ERP.addApplication]
@@ -355,7 +342,6 @@ async function labelBefore(page: Page, selector: string): Promise<string | null>
     .catch(() => null);
 }
 
-/** Read the record's displayed identity and record-level status: a record page, or water use's result row. */
 async function readWmisRecord(page: Page, profile: WmisProfile, requested: string): Promise<DisplayedRecord> {
   if (profile.module === "WUP") {
     const match = onlyElement(exactRows(await resultRows(page), profile, requested));
@@ -392,7 +378,6 @@ async function readWmisRecord(page: Page, profile: WmisProfile, requested: strin
   return {
     displayedNumber,
     statusLabel: await labelBefore(page, fields.status),
-    // An unset ERP status drop-down reads "<< Unselected >>", which is not a status.
     statusValue: statusValue && !/^<<.*>>$/.test(statusValue) ? statusValue : null,
     recordUrl: page.url(),
   };

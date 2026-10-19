@@ -24,7 +24,6 @@ import {
 import type { PermitStore } from "./store.js";
 import { formatCheckTime } from "../shared/schedule.js";
 
-/** The store changed during every attempt to build the list; the publisher reports it and retries later. */
 class SharedListChanged extends Error {
   readonly _tag = "SharedListChanged" as const;
 
@@ -33,7 +32,6 @@ class SharedListChanged extends Error {
   }
 }
 
-/** Settings rows. The keys sit beside the permit data they protect, which the same database already holds in the clear. */
 const SETTINGS = {
   writeKey: "share_write_key",
   contentKey: "share_content_key",
@@ -43,11 +41,8 @@ const SETTINGS = {
 
 /** What sharing needs from the rest of main. */
 export interface SharingHost {
-  /** Something the window shows about sharing, or the followed list itself, changed. */
   changed(): void;
-  /** Whether this app's checks are queued or running; a shared list is sent once they finish. */
   checking(): boolean;
-  /** A newer followed list replaced `before`. */
   listUpdated(before: SharedList | null, after: SharedList): void;
   report(operation: string, cause: unknown): void;
 }
@@ -74,11 +69,8 @@ function problem(error: string): BridgeResult<null> {
 export class Sharing {
   private publishing: Publishing | null = null;
   private follower: ShareFollower | null = null;
-  /** The last of the operations queued by `serially`. */
   private queue: Promise<unknown> = Promise.resolve();
-  /** Set by `stop`; operations queued after it do nothing. */
   private stopped = false;
-  /** The store's change count when the publisher last heard of a change, so snapshots that change nothing are skipped. */
   private listVersion: number | null = null;
 
   /** @param service - The sharing service, or null when this build has none. */
@@ -88,7 +80,6 @@ export class Sharing {
     private readonly host: SharingHost,
   ) {}
 
-  /** Runs `work` after every operation queued before it has finished. */
   private serially<T>(work: () => Promise<T>): Promise<T> {
     const result = this.queue.then(work);
     this.queue = result.catch(() => undefined);
@@ -144,7 +135,6 @@ export class Sharing {
 
   /** This app's list may have changed; a shared list is sent again if it did. */
   listChanged(): void {
-    // After `stop`, the store may already be closed.
     if (!this.publishing || this.stopped) return;
     const version = this.store.changeCount();
 
@@ -202,7 +192,6 @@ export class Sharing {
     this.store.setText(SETTINGS.writeKey, writeKey);
     this.store.setText(SETTINGS.contentKey, toBase64Url(contentKey));
     const publisher = await this.startPublishing(this.service, writeKey, contentKey);
-    // The first copy goes out at once, so the code works as soon as it's shown. A failure shows in Settings.
     await publisher?.syncNow();
     this.host.changed();
 
@@ -222,7 +211,6 @@ export class Sharing {
     const publishing = this.publishing;
 
     if (!publishing || !this.service) return ok;
-    // A publication after the deletion would bring the list back, so publishing stops before it.
     await publishing.publisher.stop();
 
     try {
@@ -285,7 +273,6 @@ export class Sharing {
     await this.follower?.stop();
     this.store.setText(SETTINGS.followCode, input.trim());
     this.store.setText(SETTINGS.followCache, JSON.stringify(probe.cache));
-    // The probe was this code's first fetch, so the next one waits for the publisher's next run.
     this.startFollowing(this.service, code, probe.cache).startFetched(new Date().toISOString());
     this.host.changed();
 
@@ -318,7 +305,6 @@ export class Sharing {
     });
   }
 
-  /** Starts the publisher for saved keys, or returns null when they don't make a share code. */
   private async startPublishing(
     service: ShareService,
     writeKey: string,
@@ -346,10 +332,6 @@ export class Sharing {
     return publisher;
   }
 
-  /**
-   * Builds the list to publish from one consistent store revision. A store change while the build yields restarts it;
-   * after three attempts it throws SharedListChanged.
-   */
   private async buildList(): Promise<string> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const version = this.store.changeCount();
@@ -366,7 +348,6 @@ export class Sharing {
     throw new SharedListChanged();
   }
 
-  /** Follows a code, showing `cached` until a fetch brings a newer list. The caller starts its fetches. */
   private startFollowing(service: ShareService, code: ShareCode, cached: CachedList | null): ShareFollower {
     const follower = new ShareFollower(
       service,

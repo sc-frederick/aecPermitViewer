@@ -1,16 +1,9 @@
-// The part of the R2 Workers binding the feed uses. Cloudflare's R2Bucket satisfies it structurally, and
-// tests supply an in-memory bucket. Members follow the R2 Workers API reference; see
-// https://developers.cloudflare.com/r2/api/workers/workers-api-reference/.
-
 /** Stored object metadata, as returned by `head`, `put`, and multipart completion. */
 export interface FeedObject {
   readonly size: number;
-  /** Unquoted entity tag, the form `onlyIf.etagMatches` compares. */
   readonly etag: string;
-  /** Quoted entity tag for the HTTP `etag` header. */
   readonly httpEtag: string;
   readonly customMetadata?: { readonly sha256?: string };
-  /** Copies the stored HTTP metadata (content type and similar) onto response headers. */
   writeHttpMetadata(headers: Headers): void;
 }
 
@@ -58,7 +51,6 @@ export interface FeedMultipartOptions {
 export interface FeedBucket {
   head(key: string): Promise<FeedObject | null>;
   get(key: string, options?: { readonly range: FeedRange }): Promise<FeedObjectBody | null>;
-  /** Resolves null when an `onlyIf` precondition fails. */
   put(key: string, value: string | ReadableStream<Uint8Array>, options: FeedPutOptions): Promise<FeedObject | null>;
   delete(key: string): Promise<void>;
   createMultipartUpload(key: string, options: FeedMultipartOptions): Promise<FeedMultipartUpload>;

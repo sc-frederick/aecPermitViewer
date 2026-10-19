@@ -5,10 +5,7 @@ import type { CheckEvent } from "./notifications.js";
 export class DesktopNotificationFailed extends Error {
   readonly _tag = "DesktopNotificationFailed" as const;
 
-  constructor(
-    /** The platform can't show notifications, showing one failed, or none appeared in time. */
-    readonly code: "unsupported" | "failed" | "not_shown",
-  ) {
+  constructor(readonly code: "unsupported" | "failed" | "not_shown") {
     super("Desktop notification was not shown.");
   }
 }
@@ -20,7 +17,6 @@ export type DesktopDelivery = { _tag: "shown" } | { _tag: "failed"; error: Deskt
 export interface NotificationState {
   statusChanges: boolean;
   failures: boolean;
-  /** False where the app doesn't post desktop notifications, so every notice is shown in the window. */
   desktop: boolean;
   windowInFront: boolean;
 }

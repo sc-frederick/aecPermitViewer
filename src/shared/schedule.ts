@@ -1,25 +1,22 @@
+import * as z from "zod/mini";
 import type { RunOutcome } from "./permit.js";
 
-/**
- * Scheduled checks run at the user's chosen times each day, in the computer's local time. A slot
- * missed while the app was closed or asleep is caught up once, but only inside the check window
- * (first slot until half an hour after the last), so nothing fires overnight; the next morning's
- * first slot covers it. A late last slot keeps its full half hour even when that runs past midnight.
- */
-export interface CheckTime {
-  hour: number;
-  minute: number;
-}
+const checkTimeSchema = z.readonly(z.object({ hour: z.number(), minute: z.number() }));
+
+const checkTimesSchema = z.readonly(z.tuple([checkTimeSchema], checkTimeSchema)).brand<"CheckTimes">();
+
+/** A time of day in the computer's local time zone. */
+export type CheckTime = z.infer<typeof checkTimeSchema>;
 
 /** Sorted, de-duplicated, never empty. */
-export type CheckTimes = readonly [CheckTime, ...CheckTime[]];
+export type CheckTimes = z.infer<typeof checkTimesSchema>;
 
 /** The check times used until the user saves their own: 8:30 AM, 12:30 PM, and 4:30 PM. */
-export const DEFAULT_CHECK_TIMES: CheckTimes = [
+export const DEFAULT_CHECK_TIMES: CheckTimes = checkTimesSchema.parse([
   { hour: 8, minute: 30 },
   { hour: 12, minute: 30 },
   { hour: 16, minute: 30 },
-];
+]);
 
 /** The most daily check times a user can set. */
 export const MAX_CHECK_TIMES = 8;
@@ -60,14 +57,13 @@ export function normalizeCheckTimes(values: readonly string[]): CheckTimes | nul
 
   if (!first || rest.length >= MAX_CHECK_TIMES) return null;
 
-  return [first, ...rest];
+  return checkTimesSchema.parse([first, ...rest]);
 }
 
 function at(day: Date, time: CheckTime): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), time.hour, time.minute, 0, 0);
 }
 
-/** When a day's check window closes: half an hour after its last slot, past midnight for a slot after 11:30 PM. */
 function windowEnd(day: Date, times: CheckTimes): Date {
   return new Date(at(day, times[times.length - 1] ?? times[0]).getTime() + WINDOW_GRACE_MINUTES * 60_000);
 }

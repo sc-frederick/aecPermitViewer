@@ -20,7 +20,6 @@ const squirrelConfig = {
   authors: "Permit Monitor",
   setupExe: "PermitMonitorSetup.exe",
   setupIcon: path.resolve(__dirname, "assets/icon.ico"),
-  // Squirrel has no installer pages; this plays while it installs, in place of its default animation.
   loadingGif: path.resolve(__dirname, "assets/install-splash.gif"),
 };
 
@@ -40,11 +39,8 @@ async function appFilesToSign(directory) {
   return files;
 }
 
-// Runtime files and the project license go into the archive. The browser payload ships once, as its own resource below;
-// source, tests, docs, tooling, and build output stay out.
 const RUNTIME_PATHS = [/^\/package\.json$/, /^\/LICENSE$/, /^\/dist(\/|$)/, /^\/node_modules(\/|$)/];
 
-// Tool caches and links that live beside the packages, such as .bin, .cache, and .vite.
 const BUILD_ONLY_PATHS = [/^\/node_modules\/\.[^/]+(\/|$)/, /^\/dist\/.*\.map$/];
 
 function excludedFromApp(file) {
@@ -73,15 +69,12 @@ module.exports = {
     asar: true,
     ignore: excludedFromApp,
     executableName: "PermitMonitor",
-    // Packager adds .ico for Windows and .icns for macOS.
     icon: path.resolve(__dirname, "assets/icon"),
-    // macOS names the Keychain entry for the saved key and the notification settings after this.
     appBundleId: "io.aeccloud.permitmonitor",
     appCategoryType: "public.app-category.business",
     extraResource: [
       path.resolve(__dirname, "vendor/playwright-browsers"),
       path.resolve(__dirname, "dist/authenticode.ps1"),
-      // Copied over Squirrel's app.ico on install and update, so Installed apps shows this app's icon.
       path.resolve(__dirname, "assets/icon.ico"),
     ],
     win32metadata: {

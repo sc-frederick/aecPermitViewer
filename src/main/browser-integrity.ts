@@ -10,7 +10,6 @@ const browserManifestSchema = z.object({
   files: z.array(z.object({ path: z.string(), sha256: z.string() })),
 });
 
-/** Files hashed concurrently, so disk reads overlap hashing. */
 const CONCURRENCY = 4;
 
 const READ_CHUNK_BYTES = 1024 * 1024;
@@ -22,7 +21,6 @@ async function filesIn(directory: string, prefix = ""): Promise<string[]> {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
 
-    // Skip Chromium's runtime debug.log only as a regular file; anything else at that path is still checked.
     if (entry.isFile() && isBrowserDiagnosticFile(relative)) continue;
 
     if (entry.isDirectory()) files.push(...(await filesIn(path.join(directory, entry.name), relative)));
@@ -48,7 +46,6 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
 
   if (!parsed.success) throw new Error("Browser payload manifest is invalid");
   const manifest = parsed.data;
-  // Compared as sorted lists, so the order the manifest lists its files in doesn't matter.
   const expected = manifest.files.map((entry) => entry.path).sort();
   const actual = (await filesIn(directory)).sort();
 
@@ -58,7 +55,6 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
 
   if (manifest.files.some((entry) => !/^[a-f0-9]{64}$/.test(entry.sha256)))
     throw new Error("Browser payload hash is invalid");
-  // Readers share one iterator, so each file is claimed exactly once.
   const pending = manifest.files.values();
   let failed = false;
 
@@ -78,7 +74,6 @@ export async function verifyBrowserPayload(directory: string): Promise<void> {
         if (!timingSafeEqual(hash.digest(), Buffer.from(entry.sha256, "hex")))
           throw new Error("Browser payload file integrity failed");
       } catch (error) {
-        // The other readers stop at their next file.
         failed = true;
         throw error;
       }

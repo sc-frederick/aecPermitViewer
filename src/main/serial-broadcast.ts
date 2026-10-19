@@ -14,7 +14,6 @@ export function serialBroadcast(send: () => Promise<void>): () => Promise<void> 
       .then(() => {
         next = null;
         const sent = send();
-        // A failed send still lets the next one go ahead; its caller hears about the failure.
         current = sent.then(
           () => undefined,
           () => undefined,

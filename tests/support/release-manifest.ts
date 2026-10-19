@@ -3,7 +3,6 @@ import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:cryp
 /** The update feed origin that test manifests and Worker requests use; nothing in the tests contacts the real host. */
 export const FEED_ORIGIN = "https://permitmon-updates.example.test";
 
-/** Signs the manifests `releaseManifest` builds. The feed Worker and publish scripts don't verify it, so any key works. */
 const signingKey = generateKeyPairSync("ed25519").privateKey;
 
 /** What a signed manifest says about one release. */

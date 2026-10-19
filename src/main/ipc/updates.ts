@@ -18,7 +18,6 @@ export function registerUpdateHandlers(context: AppContext): void {
     }
   });
   handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
-    // The feed's installer is for Windows. A Mac copy is replaced by hand from the download page.
     if (process.platform === "darwin") return { ok: false, error: "Download the new version from the download page." };
 
     try {

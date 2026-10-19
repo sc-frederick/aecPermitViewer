@@ -1,15 +1,3 @@
-// The contract between the app and the shared-list Worker (infra/sync-server). Both sides import this file, and it uses
-// only Web Crypto and base64 built-ins so it runs unchanged in Node, Electron main, and Workers.
-//
-// A shared list has three secrets, all made by the publishing app:
-// - the write key (32 random bytes), kept by the publisher and sent only to publish or delete;
-// - the read token (16 bytes derived from the write key), sent by followers to fetch;
-// - the content key (32 random bytes), which encrypts the list and is never sent to the Worker.
-// The share code a follower pastes holds the read token and the content key. The Worker stores ciphertext under a room
-// named by a hash of the read token, so it can route both sides to the same room without holding anything that
-// decrypts the list or proves the right to publish.
-
-/** Marks a share code and its format version. */
 const SHARE_CODE_PREFIX = "PMS1-";
 
 /** The most encrypted bytes one published list may hold. A Durable Object SQLite row holds up to 2 MB. */
@@ -46,7 +34,6 @@ export function fromBase64Url(value: string, length: number): Uint8Array<ArrayBu
 
   for (let index = 0; index < length; index += 1) bytes[index] = binary.charCodeAt(index);
 
-  // A non-canonical encoding (stray low bits in the last character) would name the same bytes two ways.
   return toBase64Url(bytes) === value ? bytes : null;
 }
 

@@ -21,10 +21,7 @@ export function registerDataHandlers(context: AppContext): void {
       return { ok: false, error: "A check is still running. Try again." };
     }
 
-    // An update download writes inside the data folder, so it has to stop and let go of its files first.
     await context.updates.cancel();
-    // The shared copy goes with the local data, so the code others hold stops working. The write key is the only way to
-    // delete it, so local data stays until the deletion goes through.
     const unshared = await context.sharing.stopSharing();
 
     if (!unshared.ok) {
@@ -35,14 +32,11 @@ export function registerDataHandlers(context: AppContext): void {
 
     await context.sharing.stop();
     context.store.close();
-    // Stopping the queue sent a snapshot that now fails on the closed store; recording that would recreate the folder.
     context.diagnostics.stop();
 
     try {
       setOpenAtLogin(false);
-    } catch {
-      /* local data deletion continues */
-    }
+    } catch {}
 
     try {
       await rm(dataRoot(), { recursive: true, force: true });

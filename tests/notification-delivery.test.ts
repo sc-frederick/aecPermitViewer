@@ -19,7 +19,6 @@ interface DeliveryResult {
   value: DesktopDelivery;
 }
 
-/** Real routing policy with observable in-memory notification destinations. */
 function delivery(overrides: Partial<NotificationState> = {}) {
   const state: NotificationState = {
     statusChanges: true,

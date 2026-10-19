@@ -5,7 +5,6 @@ const REDUCED_EFFECTS =
 
 type FallbackReason = GpuFailureReason | "reduced-effects" | "timeout";
 
-/** Paints the backdrop as one still frame and returns a stop function. Any GPU failure leaves the CSS background. */
 function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => void {
   let renderer: ReturnType<typeof shaderRendererGPU> | null = null;
   let observer: ResizeObserver | null = null;
@@ -107,8 +106,6 @@ function startBackground(host: HTMLElement, canvas: HTMLCanvasElement): () => vo
         return;
       }
 
-      // Probe the adapter before importing so unsupported GPUs never load the engine.
-      // The manual renderer has no animation loop or telemetry and stays frame-locked.
       const [core, gradient, grain] = await Promise.all([
         import("shaders/core"),
         import("shaders/core/MultiPointGradient"),

@@ -35,7 +35,6 @@ export interface TrayState {
   checking: number;
   failing: number;
   scheduled: boolean;
-  /** The check times in words, e.g. "8:30 AM, 12:30 PM, and 4:30 PM". */
   checkTimes: string;
 }
 
@@ -79,7 +78,6 @@ export class Background {
   /** Refreshes the icon's tooltip, attention image, and menu; does nothing when `state` is unchanged. */
   update(state: TrayState): void {
     if (!this.tray) return;
-    // Most snapshots leave the tray as it was; rebuilding the native menu each time is wasted work.
     const shown = JSON.stringify(state);
 
     if (shown === this.shownState) return;

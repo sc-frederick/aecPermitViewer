@@ -53,12 +53,9 @@ function preferenceKey(value: string | undefined): PreferenceKey | null {
   return PREFERENCE_KEYS.find((key) => key === value) ?? null;
 }
 
-/** What the window says about a key state that holds checks back. */
 interface KeyStateCopy {
   banner: string;
-  /** The banner button's label, which opens the key settings; null when saving a key can't help. */
   action: string | null;
-  /** The note above the key field in Settings, if any. */
   settings: string | null;
 }
 
@@ -100,7 +97,6 @@ export function renderKey(state: KeyState): void {
   settingsKeyState.hidden = !copy?.settings;
   settingsKeyState.textContent = copy?.settings ?? "";
   keyForm.hidden = state === "unavailable";
-  // A saved key that doesn't work is still saved: it can be replaced or removed.
   const saved = state === "configured" || state === "unreadable" || state === "rejected";
   keyInput.placeholder = state === "configured" ? "Saved. Paste a new key to replace it." : "Paste your API key";
   keySave.textContent = saved ? "Replace" : "Save";
@@ -128,7 +124,6 @@ export function renderPreferences(preferences: AppPreferences, platform: AppSnap
       if (label) label.title = preferences.backgroundAvailable ? "" : "Available on Windows and macOS.";
     }
 
-    // Sign-in and desktop shortcuts come from the Windows installer; a Mac copy has neither.
     if (key === "openAtLogin" || key === "desktopShortcut") {
       input.disabled = !preferences.installedApp;
 
@@ -142,7 +137,6 @@ export function renderPreferences(preferences: AppPreferences, platform: AppSnap
   if (preferences.offerDesktopShortcut && !desktopShortcutAsked) void askDesktopShortcut();
 }
 
-/** Asks on the first launch after installing, since the installer can't. Either answer is saved as the setting. */
 async function askDesktopShortcut(): Promise<void> {
   desktopShortcutAsked = true;
 
@@ -180,7 +174,6 @@ export function initSettings(): void {
       return;
     }
 
-    // Clear the field before sending so the key does not linger in the window.
     const key = keyInput.value.trim();
     keyInput.value = "";
     const result = await busy(keySave, () => api.saveKey(key));
@@ -193,7 +186,6 @@ export function initSettings(): void {
     }
 
     setInlineError(keyInput, keyError, null);
-    // Main sends the updated snapshot before it answers, so the banner is already current.
     notice("Key saved.", "info");
   });
 
@@ -226,7 +218,6 @@ export function initSettings(): void {
 
     if (result.value.state === "unavailable") updateStatus.textContent = "No update feed in this build.";
     else if (result.value.state === "current") updateStatus.textContent = "You're up to date.";
-    // The size is the Windows installer's, so a Mac copy leaves it out.
     else if (ui.currentSnapshot?.platform === "mac") {
       updateStatus.textContent = `Version ${result.value.version} available. Download it, quit Permit Monitor, and replace the copy in Applications.`;
       downloadUpdate.hidden = false;
@@ -246,7 +237,6 @@ export function initSettings(): void {
     }
 
     updateStatus.textContent = "Downloading… This can take a few minutes.";
-    // A check during the download could replace the update being downloaded.
     checkUpdate.disabled = true;
 
     const result = await busy(downloadUpdate, () => api.downloadUpdate()).finally(() => {

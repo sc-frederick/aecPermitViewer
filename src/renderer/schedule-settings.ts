@@ -55,7 +55,6 @@ function renderCheckTimeRows(times: readonly string[]): void {
   markIncompleteCheckTime(null);
 }
 
-/** Labels the rows by position, disables Remove on a lone row, and disables Add at `MAX_CHECK_TIMES`. */
 function syncCheckTimeRows(): void {
   const rows = [...checkTimeList.querySelectorAll("li")];
 
@@ -69,7 +68,6 @@ function syncCheckTimeRows(): void {
   addCheckTime.disabled = rows.length >= MAX_CHECK_TIMES;
 }
 
-/** Flags `input` as the row that still needs a time, or clears the flag when given null. */
 function markIncompleteCheckTime(input: HTMLInputElement | null): void {
   for (const row of checkTimeList.querySelectorAll("input")) {
     if (row === input) row.setAttribute("aria-invalid", "true");
@@ -79,12 +77,10 @@ function markIncompleteCheckTime(input: HTMLInputElement | null): void {
   checkTimeError.hidden = !input;
 }
 
-/** The schedule editor's rows as typed, one per row in order; a cleared or half-typed field reads as "". */
 function editedCheckTimes(): string[] {
   return [...checkTimeList.querySelectorAll("input")].map((input) => input.value);
 }
 
-/** The first row without a full time; it must be filled in or removed before the rows can be saved. */
 function incompleteCheckTime(): HTMLInputElement | null {
   return [...checkTimeList.querySelectorAll("input")].find((input) => !input.value) ?? null;
 }
@@ -98,7 +94,6 @@ export function renderSchedule(snapshot: AppSnapshot): void {
     : "Checks only run when you click Check now.";
   checkTimesSection.hidden = !scheduled;
 
-  // Leave the rows alone while someone is editing them; they re-sort when focus leaves.
   if (checkTimeList.contains(document.activeElement)) return;
   const saved = checkTimes(snapshot).map(formatCheckTime);
 
@@ -119,7 +114,6 @@ async function saveCheckTimes(times: string[]): Promise<void> {
 /** Wires the monitoring mode menu and the check time editor. */
 export function initScheduleSettings(): void {
   checkTimeList.addEventListener("change", () => {
-    // A half-cleared field reads as empty; wait until every row holds a full time.
     if (incompleteCheckTime()) return;
     markIncompleteCheckTime(null);
     void saveCheckTimes(editedCheckTimes());
@@ -135,14 +129,10 @@ export function initScheduleSettings(): void {
     const row = eventButton(event, "button[data-remove-time]")?.closest("li");
 
     if (!row || checkTimeList.children.length === 1) return;
-    // Exclude the clicked row by identity, not by value, so a cleared row can't change which time is removed.
     const kept = [...checkTimeList.querySelectorAll("input")].filter((input) => !row.contains(input));
     const incomplete = kept.find((input) => !input.value);
 
-    // Move focus before removing the row: removing the focused button counts as leaving the list, which restores the
-    // saved times.
     if (incomplete) {
-      // Nothing saves until the cleared row holds a time. Keeping focus in the list keeps the edit on screen.
       incomplete.focus();
       row.remove();
       syncCheckTimeRows();
@@ -152,7 +142,6 @@ export function initScheduleSettings(): void {
     }
 
     const times = kept.map((input) => input.value);
-    // Move focus out of the list so the next snapshot can redraw it.
     addCheckTime.focus();
     void saveCheckTimes(times);
   });
@@ -171,7 +160,6 @@ export function initScheduleSettings(): void {
     const taken = new Set(times);
     const last = parseCheckTime(times[times.length - 1] ?? "") ?? { hour: 8, minute: 0 };
 
-    // Add the first free slot in whole-hour steps after the last row's time, wrapping past midnight.
     for (let step = 1; step <= 24; step += 1) {
       const candidate = formatCheckTime({ hour: (last.hour + step) % 24, minute: last.minute });
 

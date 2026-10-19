@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { actionLabel, actionReason, STATUS_WORDING, statusAction } from "../src/shared/action.js";
 import { wordingKey } from "../src/shared/wording-key.js";
-import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
-import { defined } from "./support/defined.js";
+import type { JurisdictionId } from "../src/shared/jurisdictions.js";
 
 function actionOn(jurisdictionId: JurisdictionId, status: string) {
   return statusAction(jurisdictionId, status)?.action;
@@ -59,7 +58,6 @@ describe("who a status waits on", () => {
       action: "applicant",
       basis: "unlisted",
     });
-    // Wording listed for one authority is not carried to another.
     expect(statusAction("hillsborough-county-building", "Fees Due")).toEqual({
       action: "applicant",
       basis: "unlisted",
@@ -79,12 +77,10 @@ describe("who a status waits on", () => {
     expect(statusAction("swfwmd-erp", "Issued")).toBeNull();
   });
 
-  it("covers every county and city, and files each wording under one action", () => {
-    for (const profile of JURISDICTIONS) {
-      if (profile.authorityType === "water-management-district") continue;
-      const wording = defined(STATUS_WORDING[profile.id], `status wording for ${profile.id}`);
+  it("files each authority's normalized wording under one action", () => {
+    for (const [id, wording] of Object.entries(STATUS_WORDING)) {
       const keys = Object.values(wording).flatMap((statuses) => statuses.map(wordingKey));
-      expect(new Set(keys).size, profile.id).toBe(keys.length);
+      expect(new Set(keys).size, id).toBe(keys.length);
     }
   });
 });

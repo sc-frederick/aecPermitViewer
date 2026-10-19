@@ -1,6 +1,3 @@
-// Stores shared permit lists for Permit Monitor: one SQLite-backed Durable Object per list, holding only the latest
-// encrypted copy. The rules live in room.ts and router.ts, which run without the Workers runtime in tests; this file
-// binds them to it.
 import { DurableObject } from "cloudflare:workers";
 import { admissionLimitsSchema, ShareAdmission, type AdmissionResult } from "./admission.js";
 import { ShareRoom, type PublishResult, type ReadResult } from "./room.js";

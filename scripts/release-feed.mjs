@@ -4,9 +4,6 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseManifest } from "../infra/update-server/src/manifest.ts";
 
-// The local release that both publication scripts upload: the installer built by make:win and the manifest
-// written by sign-release-manifest.mjs. The feed's rules live in infra/update-server/src/release-policy.ts.
-
 /** The installer the release job or a person publishes. */
 export const installerPath = path.resolve("out/make/squirrel.windows/x64/PermitMonitorSetup.exe");
 

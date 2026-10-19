@@ -22,11 +22,7 @@ let settleConfirm: ((accepted: boolean) => void) | null = null;
 
 const closeHooks = new Map<HTMLDialogElement, () => void>();
 
-/**
- * Moves the notice into the frontmost open modal dialog, or back to the body. A modal dialog covers the page and makes
- * it inert, so a notice outside it could be neither seen nor announced. Confirm dialogs only open over a sheet, never
- * under one, so an open confirm dialog is always in front.
- */
+// Modal dialogs make the rest of the page inert, so notices must live inside the frontmost dialog.
 function placeNotice(): void {
   const host =
     document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
@@ -89,8 +85,6 @@ export function closeSheet(dialog: HTMLDialogElement): void {
 
 /** Wires sheet dismissal, notice placement, and the confirm dialog's buttons. */
 export function initOverlays(): void {
-  // Sheets close on Escape, a backdrop click, or their close button. State resets in closeSheet's hooks rather than
-  // in a "close" listener so it doesn't depend on that event being delivered.
   for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet")) {
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) closeSheet(dialog);
@@ -102,7 +96,6 @@ export function initOverlays(): void {
     dialog.querySelector<HTMLButtonElement>("[data-close]")?.addEventListener("click", () => closeSheet(dialog));
   }
 
-  // A notice already showing follows the dialog in front as dialogs open and close.
   for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("toggle", placeNotice);
 
   confirmDialog.addEventListener("cancel", (event) => {

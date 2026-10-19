@@ -2,7 +2,6 @@ import type { PermitRow } from "./permit.js";
 
 /** Permits that share one project number, compared by `projectKey`. */
 export interface ProjectGroup {
-  /** Null holds the permits without a project number. */
   projectNumber: string | null;
   permits: PermitRow[];
 }

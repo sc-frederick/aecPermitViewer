@@ -41,7 +41,6 @@ export function keyStateProblem(state: StoredKeyState): string | null {
   }
 }
 
-/** The key state shown to the user: the stored state, or `rejected` while the queue is paused on a rejected key. */
 function effectiveKeyState(context: AppContext, stored: StoredKeyState): KeyState {
   return stored === "configured" && context.checks.keyPaused ? "rejected" : stored;
 }
@@ -80,7 +79,6 @@ export async function snapshot(context: AppContext): Promise<AppSnapshot> {
 
 /** Sends one snapshot to the window and the tray's counts to the tray. Callers go through `AppContext.broadcast`. */
 export async function sendSnapshot(context: AppContext): Promise<void> {
-  // Every change to this app's list passes through here, so a shared copy follows it.
   context.sharing.listChanged();
 
   if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
@@ -96,7 +94,6 @@ export async function sendSnapshot(context: AppContext): Promise<void> {
     });
     context.mainWindow.webContents.send("permit:snapshot-changed", current);
   } catch (cause) {
-    // The next UI request will surface local storage errors through its reply.
     context.diagnostics.record("snapshot:broadcast", null, cause);
   }
 }

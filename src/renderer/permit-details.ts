@@ -56,13 +56,10 @@ let historyGeneration = 0;
 
 let loadedHistory: PermitHistory | null = null;
 
-/** `historyKey` of the history on screen, so snapshots that don't change it skip the refetch. */
 let historyShown: string | null = null;
 
-/** `historyKey` of the request in flight, so snapshots arriving meanwhile don't send a duplicate. */
 let historyLoading: string | null = null;
 
-/** `historyKey` whose read failed, so snapshots that don't change it leave the failure and its retry on screen. */
 let historyFailed: string | null = null;
 
 function renderDetailsSummary(permit: PermitRow): void {
@@ -115,7 +112,6 @@ function renderDetailsSummary(permit: PermitRow): void {
   detailsCheck.dataset.action = permit.checking ? "cancel" : "check";
   detailsOpen.disabled = !permit.lastRecordUrl;
   detailsDaily.checked = permit.monitoringEnabled;
-  // Scheduled checks can't read a hand-checked portal, so the option isn't offered.
   detailsDailyOption.hidden = manual;
 
   const next =
@@ -129,7 +125,6 @@ function renderDetailsSummary(permit: PermitRow): void {
   detailsRemove.disabled = permit.checking;
   detailsProject.readOnly = ui.currentSnapshot?.share.mode === "following";
 
-  // Don't overwrite what someone is typing, or a value that failed to save.
   if (document.activeElement !== detailsProject && detailsProject.getAttribute("aria-invalid") !== "true")
     detailsProject.value = permit.projectNumber ?? "";
 }
@@ -181,7 +176,6 @@ function renderHistory(history: PermitHistory): void {
   }
 }
 
-/** Shows a failed history read with a retry button. An empty list would misreport the permit as never checked. */
 function renderHistoryFailure(message: string): void {
   const item = make("li", "timeline-error");
   const body = make("div");
@@ -193,16 +187,10 @@ function renderHistoryFailure(message: string): void {
   historyList.replaceChildren(item);
 }
 
-/** Cache key for a permit's history, which changes only when its latest attempt or verified status does. */
 function historyKey(permit: PermitRow): string {
   return JSON.stringify([permit.id, permit.latestAttemptAt, permit.latestOutcome, permit.lastObservedAt]);
 }
 
-/**
- * Fetches and renders a permit's history, or the page older than `before`, unless a request for the same `historyKey`
- * is in flight. A reply made stale by a newer request, a different permit, or a closed sheet is dropped. A failed first
- * page shows in the list with a retry, never as an empty history; a failed older page shows as a notice. Never rejects.
- */
 async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   const key = historyKey(permit);
 
@@ -210,7 +198,6 @@ async function loadHistory(permit: PermitRow, before?: string): Promise<void> {
   const generation = ++historyGeneration;
   historyLoading = key;
 
-  // A rejected call got no answer from main; treat it like a reported failure so it can be retried.
   const result = await api
     .history(permit.id, before)
     .catch((): BridgeResult<PermitHistory> => ({ ok: false, error: NO_ANSWER }));
@@ -255,7 +242,6 @@ export function openDetails(permitId: string): void {
 
   if (!detailsSheet.open) detailsSheet.showModal();
 
-  // Reopening the permit already shown keeps its history, or the request already in flight.
   if (switching || historyKey(permit) !== historyShown) {
     historyList.replaceChildren();
     historyShown = null;
@@ -284,7 +270,6 @@ export function refreshHistory(snapshot: AppSnapshot): void {
   if (permit && historyKey(permit) !== historyShown && historyKey(permit) !== historyFailed) void loadHistory(permit);
 }
 
-/** Forgets the closed sheet's permit and drops any history reply still in flight. */
 function resetDetails(): void {
   ui.detailsPermitId = null;
   historyGeneration += 1;
@@ -309,7 +294,6 @@ export function initPermitDetails(): void {
     if (event.key === "Enter") detailsProject.blur();
   });
 
-  // Saves on commit (Enter or blur), like the other details settings.
   detailsProject.addEventListener("change", async () => {
     const permitId = ui.detailsPermitId;
     const permit = ui.currentSnapshot?.permits.find((entry) => entry.id === permitId);
@@ -371,7 +355,6 @@ export function initPermitDetails(): void {
     notice(`${permit.permitNumber} removed.`, "info");
   });
 
-  // Each history button is distinct, so a click matches at most one of them.
   historyList.addEventListener("click", (event) => {
     const retry = eventButton(event, "button[data-history-retry]");
     const permit = ui.currentSnapshot?.permits.find((entry) => entry.id === ui.detailsPermitId);

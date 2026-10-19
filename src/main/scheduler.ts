@@ -19,10 +19,6 @@ export function scheduledEligible(context: AppContext, permitId: string): boolea
 export function createScheduler(context: AppContext): Scheduler {
   let schedulerTimer: NodeJS.Timeout | null = null;
 
-  /**
-   * Queues due permits. `stop` removes the timer and resume listener before the store closes; the `shuttingDown` guard
-   * covers the other callers.
-   */
   const scheduleDue = (): void => {
     if (
       context.shuttingDown ||
@@ -33,7 +29,6 @@ export function createScheduler(context: AppContext): Scheduler {
       return;
     const now = new Date();
 
-    // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
     if (!withinCheckWindow(now, context.store.getCheckTimes())) return;
 
     for (const id of context.store.duePermitIds(now.toISOString())) context.checks.enqueue(id, "scheduled");

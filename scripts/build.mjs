@@ -9,8 +9,6 @@ await mkdir("dist", { recursive: true });
 
 await rm("dist/chunks", { recursive: true, force: true });
 
-// Tests and live checks on Windows can leave Chromium's debug.log in the staged browser. Delete it before Forge
-// copies resources; the browser's own files are left alone.
 const stagedBrowser = "vendor/playwright-browsers";
 
 if (existsSync(stagedBrowser)) {
@@ -35,17 +33,14 @@ const updateConfig = {
   expectedPublisher: process.env.UPDATE_EXPECTED_PUBLISHER ?? "",
 };
 
-// expectedPublisher stays empty for unsigned builds; the signed manifest is then the only update check.
 if (process.env.RELEASE_BUILD === "1" && (!updateConfig.feedUrl || !updateConfig.publicKeySpkiBase64)) {
   throw new Error("A release build requires the update feed URL and public key.");
 }
 
 await writeFile("dist/update-config.json", JSON.stringify(updateConfig));
 
-// Shared lists (infra/sync-server). Empty turns sharing off; `wrangler dev` URLs on localhost work in development.
 await writeFile("dist/sync-config.json", JSON.stringify({ serviceUrl: process.env.SHARE_SERVICE_URL ?? "" }));
 
-// Each run records the Playwright release that drove it, read from the installed package so it can't drift from the pin.
 const { version: playwrightVersion } = createRequire(import.meta.url)("playwright/package.json");
 
 const shared = {
@@ -80,7 +75,6 @@ await Promise.all([
   copyFile("src/renderer/index.html", "dist/index.html"),
   copyFile("src/renderer/styles.css", "dist/styles.css"),
   copyFile("src/main/authenticode.ps1", "dist/authenticode.ps1"),
-  // The icon file and the install animation are for Windows and the installer, not the window.
   cp("assets", "dist/assets", {
     recursive: true,
     filter: (source) => !source.endsWith(".ico") && !source.endsWith(".icns") && !source.endsWith("install-splash.gif"),

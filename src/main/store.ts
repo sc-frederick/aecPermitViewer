@@ -31,8 +31,7 @@ import {
   type CheckTimes,
 } from "../shared/schedule.js";
 
-/** The schema version this build writes. Opening an older database backs it up and migrates it; a newer one throws. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const userVersionSchema = z.object({ user_version: z.number() });
 
@@ -126,7 +125,6 @@ export class AlreadyTracked extends Error {
 /** The new permit's id, or the reason it was not added. */
 export type AddPermitResult = { _tag: "ok"; value: string } | { _tag: "err"; error: AlreadyTracked };
 
-/** How a started run ended. `observation` is saved only with a `success` outcome. */
 interface RunCompletion {
   runId: string;
   permitId: string;
@@ -142,11 +140,9 @@ function userVersion(db: DatabaseSync): number {
   return userVersionSchema.parse(db.prepare("PRAGMA user_version").get()).user_version;
 }
 
-/** check_runs columns named as CheckRunRow fields. */
 const RUN_COLUMNS = `id, permit_id AS permitId, started_at AS startedAt, finished_at AS finishedAt, outcome,
   action_count AS actionCount, request_count AS requestCount`;
 
-/** status_observations columns named as ObservationRow fields. */
 const OBSERVATION_COLUMNS = `id, run_id AS runId, permit_id AS permitId, verified_permit_number AS verifiedPermitNumber,
   status_label AS statusLabel, status_value AS statusValue, observed_at AS observedAt, record_url AS recordUrl, reviews`;
 
@@ -158,7 +154,6 @@ const PERMIT_SELECT = `
   LEFT JOIN status_observations o ON o.id = p.last_observation_id
   LEFT JOIN check_runs r ON r.id = p.last_attempt_id`;
 
-/** A saved permit, or null when its jurisdiction is no longer in the app; its rows stay in case support returns. */
 function mapPermit(row: StoredPermit, checking: boolean): PermitRow | null {
   const jurisdiction = getJurisdiction(row.jurisdiction_id);
 
@@ -221,8 +216,6 @@ export class PermitStore {
 
     if (version > SCHEMA_VERSION) throw new Error("Database was created by a newer app version.");
 
-    // permits.interval_hours is unused; scheduling reads the check times in settings. Dropping the column rewrites
-    // every permit row, so it stays until a migration has another reason to rewrite permits.
     if (version === 0)
       this.transaction(() => {
         this.db.exec(`
@@ -245,7 +238,6 @@ export class PermitStore {
           comparison_value TEXT NOT NULL,
           created_at TEXT NOT NULL,
           monitoring_enabled INTEGER NOT NULL DEFAULT 0 CHECK (monitoring_enabled IN (0,1)),
-          interval_hours INTEGER NOT NULL DEFAULT 24,
           next_due_at TEXT,
           last_attempt_id TEXT,
           last_observation_id TEXT,
@@ -289,10 +281,8 @@ export class PermitStore {
         this.db.exec("PRAGMA user_version = 1");
       });
 
-    // Version 2 needs no schema change: syncProfiles writes every jurisdiction profile on each open.
     if (version < 2) this.db.exec("PRAGMA user_version = 2");
 
-    // Version 3: the user's project number, for grouping permits.
     const columns = this.db
       .prepare("PRAGMA table_info(permits)")
       .all()
@@ -316,20 +306,23 @@ export class PermitStore {
 
         this.db.exec("PRAGMA user_version = 4");
       });
-    // idx_runs_started is unused. Kept because dropping it would need its own migration; older app versions ignore it.
-    this.db.exec("CREATE INDEX IF NOT EXISTS idx_runs_started ON check_runs(started_at)");
+
+    if (version < 5)
+      this.transaction(() => {
+        this.db.exec("DROP INDEX IF EXISTS idx_runs_started");
+
+        if (columns.some((column) => column.name === "interval_hours"))
+          this.db.exec("ALTER TABLE permits DROP COLUMN interval_hours");
+
+        this.db.exec("PRAGMA user_version = 5");
+      });
+
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_runs_success_permit_started ON check_runs(permit_id, started_at DESC) WHERE outcome = 'success'",
     );
   }
 
-  /**
-   * Upserts the built-in jurisdiction profiles so permits can reference any supported authority. A profile removed from
-   * the app keeps its row, because saved permits and history still point to it; reads skip those permits until it
-   * returns.
-   */
   private syncProfiles(): void {
-    /** How each family compares an entered number with the displayed one, for families that don't compare exactly. */
     const MATCHING_RULES: Partial<Record<JurisdictionProfile["portalFamily"], string>> = {
       click2gov: "click2gov-serial-1",
       wmis: "wmis-serial-1",
@@ -375,7 +368,6 @@ export class PermitStore {
     return changeCountSchema.parse(this.sql("SELECT total_changes() AS changes").get()).changes;
   }
 
-  /** Prepares each statement once; the snapshot and scheduler run the same few queries repeatedly. */
   private sql(source: string): StatementSync {
     let statement = this.statements.get(source);
 
@@ -387,7 +379,6 @@ export class PermitStore {
     return statement;
   }
 
-  /** Parses a row as it leaves SQLite, so a column that drifts from its type fails at the query that read it. */
   private row<T>(schema: z.ZodType<T>, source: string, ...params: SQLInputValue[]): T | null {
     const row = this.sql(source).get(...params);
 
@@ -428,8 +419,6 @@ export class PermitStore {
     const id = randomUUID();
 
     try {
-      // New permits join the scheduled checks by default; each can be excluded from its details.
-      // Hand-checked permits never do, because a scheduled check can't read their portal.
       this.sql(
         `INSERT INTO permits (id, jurisdiction_id, permit_number, comparison_value, created_at, monitoring_enabled)
         VALUES (?, ?, ?, ?, ?, ?)`,
@@ -442,8 +431,6 @@ export class PermitStore {
         isManualJurisdiction(jurisdictionId) ? 0 : 1,
       );
     } catch (cause) {
-      // The only UNIQUE constraint on permits is (jurisdiction_id, comparison_value). A clash on the fresh UUID
-      // primary key would report SQLITE_CONSTRAINT_PRIMARYKEY instead and still throw.
       if (uniqueViolationSchema.safeParse(cause).success) {
         return { _tag: "err", error: new AlreadyTracked(jurisdictionId, permitNumber, cause) };
       }
@@ -538,7 +525,6 @@ export class PermitStore {
     this.transaction(() => this.completeRun(input));
   }
 
-  /** The work of `finishRun`, for callers already inside a transaction. */
   private completeRun(input: RunCompletion): void {
     const finishedAt = new Date().toISOString();
     const started = this.row(startedSchema, "SELECT started_at AS startedAt FROM check_runs WHERE id = ?", input.runId);
@@ -679,8 +665,6 @@ export class PermitStore {
       const date = new Date(latest.startedAt);
       const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
 
-      // When the day's latest run is a success with an observation, it is the pick; reuse it instead of seeking and
-      // parsing it again. Otherwise the indexed successful-run lookup below chooses.
       const latestObservation =
         latest.outcome === "success" ? this.row(observationSchema, observationSelect, latest.id) : null;
 
@@ -756,7 +740,6 @@ export class PermitStore {
   getMonitoring(): "manual" | "scheduled" {
     const row = this.row(settingSchema, "SELECT value FROM settings WHERE key = 'monitoring'");
 
-    // Anything but "manual" means scheduled, including "daily" from older databases.
     return row?.value === "manual" ? "manual" : "scheduled";
   }
 
@@ -787,7 +770,6 @@ export class PermitStore {
       const next = nextSlotAfter(now, times);
 
       for (const permit of future) {
-        // A pending one-hour retry after `api_unavailable` keeps its time unless the next new slot comes sooner.
         const retry =
           permit.outcome === "api_unavailable" &&
           permit.finishedAt &&

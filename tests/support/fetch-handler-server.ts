@@ -5,9 +5,7 @@ import { defined } from "./defined.js";
 
 /** A running local server and what went wrong inside it. */
 export interface FetchHandlerServer {
-  /** The server's own address, `http://127.0.0.1:<port>`. */
   readonly origin: string;
-  /** Each error the handler threw, as text; each was answered with a 500. */
   readonly failures: readonly string[];
 }
 

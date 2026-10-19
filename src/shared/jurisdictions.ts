@@ -8,7 +8,6 @@ export const JURISDICTIONS = [
     startUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx?module=Building&TabName=Building",
     tenant: "HCFL",
     module: "Building",
-    // HillsGovHub's Global Search finds a record number in any of these modules.
     globalSearch: true,
     modules: ["Building", "LandDevelopment", "Fire", "Enforcement", "Administrative"],
     coverageNote:
@@ -23,7 +22,6 @@ export const JURISDICTIONS = [
     startUrl: "https://aca-prod.accela.com/PASCO/Default.aspx",
     tenant: "PASCO",
     module: "Building",
-    // PascoGateway's home-page Global Search finds a record number in any of these modules.
     globalSearch: true,
     modules: ["Building", "Permits", "Planning", "Enforcement"],
     coverageNote:
@@ -71,7 +69,6 @@ export const JURISDICTIONS = [
     authorityType: "county-government",
     portalFamily: "tyler-civic-access",
     startUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice",
-    // Civic Access lands on its home page; the public records search is a separate route under the county's site.
     searchUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
     tenant: "",
     module: "Building",
@@ -89,7 +86,6 @@ export const JURISDICTIONS = [
     coverageNote: "Polk County Building records in Accela; historical permits use a separate county lookup.",
     adapterVersion: "accela-reviews-1",
   },
-  // SWFWMD's public WMIS searches each cover one permit program. Record pages are served from a second host.
   {
     id: "swfwmd-erp",
     label: "SWFWMD · Environmental resource permit",
@@ -144,7 +140,6 @@ export const JURISDICTIONS = [
     tenant: "",
     module: "All",
     statusLabels: ["Permit Status", "Application Status", "App Status"],
-    // The district's firewall turns away browsers that name themselves HeadlessChrome, though its search is public.
     plainUserAgent: true,
     numberExample: "48-112909-P or 260901-67337",
     coverageNote:
@@ -195,8 +190,6 @@ export const JURISDICTIONS = [
       "Northwest Florida Water Management District ERP, water use, and well construction records in its ePermit search, which updates nightly. Enter the full number, such as IND-113-18663-5 or 2E-131-6688-3.",
     adapterVersion: "epermit-1",
   },
-  // None of these portals allows an anonymous automated lookup, so they are checked by hand: the app opens
-  // the official search and records the status the user reads there.
   {
     id: "orange-county-building",
     label: "Orange County",

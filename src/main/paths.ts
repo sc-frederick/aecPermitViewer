@@ -1,8 +1,6 @@
 import { app } from "electron";
 import path from "node:path";
 
-// Files the build writes to dist/ sit beside the bundled main script, so they are found from `__dirname`.
-
 /** The folder holding the database, logs, saved key, browser cache, and update downloads. Delete local data removes it. */
 export function dataRoot(): string {
   const local = process.platform === "win32" ? process.env.LOCALAPPDATA : null;

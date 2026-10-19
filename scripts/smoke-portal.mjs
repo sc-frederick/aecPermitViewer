@@ -9,10 +9,8 @@ const permitNumber = process.argv[2] ?? "HC-BLD-26-0087599";
 
 const jurisdictionId = process.argv[3] ?? "hillsborough-county-building";
 
-// A record link from an earlier check, which the worker opens instead of searching where the record page allows.
 const previousRecordUrl = process.argv[4] ?? null;
 
-// Verify the worker's result the way main does before it saves an observation.
 const shared = await build({
   entryPoints: ["src/shared/permit.ts"],
   bundle: true,
@@ -125,7 +123,6 @@ process.parentPort = port;
 
 process.env.PERMIT_PORTAL_SMOKE = "1";
 
-// Use the staged, hash-checked payload, as the app's check runner does, not Playwright's user cache.
 process.env.PLAYWRIGHT_BROWSERS_PATH = path.resolve("vendor/playwright-browsers");
 
 require("../dist/worker.cjs");

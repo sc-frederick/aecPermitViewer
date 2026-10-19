@@ -10,7 +10,6 @@ import { ui, type Filter } from "./state.js";
 
 const permitTable = element("permit-table", HTMLTableElement);
 
-/** How a check outcome reads in the window: its dot color and whether it counts as failed. */
 type OutcomeKind = "ok" | "failed" | "checking" | "none";
 
 /** Classifies a check outcome for display; a cancelled check reads as no outcome. */
@@ -88,7 +87,6 @@ function actionButton(label: string, action: PermitAction, permitId: string, cla
   return node;
 }
 
-/** One permit's row and the controls kept across updates, so a change elsewhere leaves focus where it was. */
 interface PermitRowView {
   row: HTMLTableRowElement;
   open: HTMLButtonElement;
@@ -100,16 +98,13 @@ interface PermitRowView {
   attempt: HTMLTableCellElement;
   check: HTMLButtonElement;
   record: HTMLButtonElement;
-  /** Serialized inputs of the last draw; `updateRow` skips the row while they match. */
   source: string;
 }
 
 const rowViews = new Map<string, PermitRowView>();
 
-/** One tbody per project group, or one for the ungrouped list, kept across renders like `rowViews`. */
 const groupBodies = new Map<string, HTMLTableSectionElement>();
 
-/** Rebuilds a cell's content only when `source` differs from the one it was last built from. */
 function setCell(cell: HTMLElement, source: string, build: () => Node[]): void {
   if (cell.dataset.source === source) return;
   cell.dataset.source = source;
@@ -118,6 +113,7 @@ function setCell(cell: HTMLElement, source: string, build: () => Node[]): void {
 
 function createRow(permit: PermitRow): PermitRowView {
   const row = make("tr");
+  row.dataset.permitId = permit.id;
 
   if (!ui.firstRender && !ui.knownPermitIds.has(permit.id)) row.className = "row-enter";
   const identity = make("td");
@@ -142,14 +138,12 @@ function createRow(permit: PermitRow): PermitRowView {
   return { row, open, jurisdiction, unscheduled, status, action, observed, attempt, check, record, source: "" };
 }
 
-/** Brings a row up to date, touching only the cells and controls whose content changed. */
 function updateRow(
   view: PermitRowView,
   permit: PermitRow,
   classified: StatusAction | null,
   monitoring: AppSnapshot["monitoring"],
 ): void {
-  // The year is part of the key because timestamps show a year only when it isn't the current one.
   const year = new Date().getFullYear();
   const source = JSON.stringify([permit, monitoring, year]);
 
@@ -203,7 +197,6 @@ function updateRow(
   view.record.setAttribute("aria-label", `Open record for ${permit.permitNumber}`);
 }
 
-/** Keeps a project group's heading row first in its tbody, or removes it from the plain list. */
 function syncGroupHead(body: HTMLTableSectionElement, group: ProjectGroup | null, count: number): void {
   const existing = body.rows[0]?.classList.contains("group-row") ? body.rows[0] : null;
 
@@ -249,7 +242,6 @@ export function renderTable(
 ): void {
   const shown = new Set(visible.map((permit) => permit.id));
 
-  // Rows leave first, so they never sit between rows that stay and force those to move.
   for (const [id, view] of rowViews) {
     if (!shown.has(id)) {
       view.row.remove();
@@ -257,7 +249,6 @@ export function renderTable(
     }
   }
 
-  // Group only once a project number is in use; until then the table stays one plain list.
   const groups: Array<{ key: string; group: ProjectGroup | null; permits: readonly PermitRow[] }> = visible.some(
     (permit) => permit.projectNumber,
   )

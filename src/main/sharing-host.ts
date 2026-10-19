@@ -11,7 +11,6 @@ export function createSharing(context: AppContext): Sharing {
     },
     checking: () => context.checks.checkingIds().size > 0,
     listUpdated: (before, after) => {
-      // The first list after following is just what there is; only later lists bring news.
       if (!before) return;
 
       for (const event of describeSharedUpdate(before.permits, after.permits)) announce(context, event);

@@ -22,16 +22,11 @@ export function filterValue(value: string): Filter | null {
   return FILTERS.find((entry) => entry === value) ?? null;
 }
 
-/** Window state that more than one section reads or writes. */
 interface WindowState {
-  /** The snapshot on screen; null until main sends the first one. */
   currentSnapshot: AppSnapshot | null;
   filter: Filter;
-  /** The permit the details sheet shows; null while the sheet is closed. */
   detailsPermitId: string | null;
-  /** Permit ids in the last rendered snapshot; a row for any other id animates in as new. */
   knownPermitIds: ReadonlySet<string>;
-  /** True until the first snapshot renders; rows drawn by that render don't animate in. */
   firstRender: boolean;
 }
 

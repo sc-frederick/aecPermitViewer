@@ -17,7 +17,6 @@ import {
 } from "../../shared/permit.js";
 import { PROJECT_NUMBER_MAX } from "../../shared/project-number.js";
 
-/** The reply to any change to this app's own permits while the window shows a followed list. */
 const FOLLOWING: BridgeResult<never> = {
   ok: false,
   error: "You're viewing a shared list. Stop following it in Settings to change permits.",
@@ -30,7 +29,6 @@ export function registerPermitHandlers(context: AppContext): void {
   ipcMain.handle("permit:snapshot", async (event) => {
     if (!safeSender(context, event)) return null;
 
-    // The window has no snapshot to show instead, so the request still fails; the cause is kept.
     return snapshot(context).catch((cause: unknown) => {
       context.diagnostics.record("permit:snapshot", null, cause);
       throw cause;
@@ -73,7 +71,6 @@ export function registerPermitHandlers(context: AppContext): void {
 
     if (problem) return { ok: false, error: problem };
 
-    // A rejected key may have been fixed on the service's side, so asking for a check still tries it.
     context.checks.enqueue(permit.id, "manual");
 
     return { ok: true, value: null };
@@ -84,7 +81,6 @@ export function registerPermitHandlers(context: AppContext): void {
     const profile = permit ? getJurisdiction(permit.jurisdictionId) : null;
 
     if (!permit || !profile || profile.portalFamily !== "manual") return { ok: false, error: "Permit not found." };
-    // The number goes on the clipboard so it can be pasted straight into the portal's search.
     clipboard.writeText(permit.permitNumber);
     await shell.openExternal(profile.startUrl);
 
@@ -135,7 +131,6 @@ export function registerPermitHandlers(context: AppContext): void {
     },
   );
   handle("permit:open-record", permitIdSchema, "No record link yet.", async (id) => {
-    // A followed list's links come from another app, so they get the same portal check as this app's own.
     const permit = context.sharing.following ? context.sharing.permit(id) : context.store.getPermit(id);
 
     if (!permit?.lastRecordUrl || !parsePortalUrl(permit.lastRecordUrl, "detail", permit.jurisdictionId)) {
@@ -188,7 +183,6 @@ export function registerPermitHandlers(context: AppContext): void {
       return { ok: true, value: null };
     },
   );
-  // An unknown permit ID is answered as not found, so the invalid-input message only covers the project number.
   handle(
     "permit:set-project-number",
     setProjectNumberSchema.extend({ permitId: z.string() }),

@@ -14,10 +14,6 @@ const CONTENT_KEY = new Uint8Array(32).fill(11);
 
 const publishers: SharePublisher[] = [];
 
-/**
- * Serves the production router and admission policy over real HTTP, backed by the SQLite room fixture, with every
- * request arriving from one address. Each response status is added to `responses`.
- */
 async function serve(rooms: MemoryRooms, responses: number[]): Promise<ShareService> {
   const server = await serveFetchHandler(async (request) => {
     request.headers.set("cf-connecting-ip", "192.0.2.1");

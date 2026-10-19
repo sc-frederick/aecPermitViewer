@@ -1,13 +1,9 @@
-// Serves Permit Monitor installers and the signed update manifest from R2, and accepts manual release
-// uploads. The app trusts only the Ed25519 signature on the manifest, so this Worker is a delivery path,
-// not a trust anchor.
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { FeedBucket, FeedObject, FeedRange } from "./bucket.js";
 import { decodeUtf8, jsonText, parseManifest, sha256Hex } from "./manifest.js";
 import { decideInstallerUpload, decideManifestReplacement, type VersionedManifest } from "./release-policy.js";
 
-// Workers provides this global. Keep its runtime surface narrow so the same router can run with a local bucket.
 declare const FixedLengthStream: { new (length: number): TransformStream<Uint8Array, Uint8Array> };
 
 /** Bindings from wrangler.jsonc. `UPLOAD_TOKEN` is a secret; without it every upload is refused. */
@@ -22,12 +18,10 @@ const INSTALLER = /^PermitMonitorSetup-\d+\.\d+\.\d+\.exe$/;
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
 
-// The Mac archive for a version must be stored before the shared manifest can advance to it.
 const MAC_ZIP = /^PermitMonitor-\d+\.\d+\.\d+-mac-arm64\.zip$/;
 
 const MANIFEST_MAX_BYTES = 32_768;
 
-// A completion lists at most 10,000 parts of about 60 JSON bytes each.
 const UPLOAD_REQUEST_MAX_BYTES = 1_048_576;
 
 const RETRY_AFTER_SECONDS = "5";
@@ -50,7 +44,6 @@ const completionText = jsonText.pipe(
 type StorageOperation =
   "head" | "get" | "put" | "delete" | "create_multipart" | "upload_part" | "complete_multipart" | "abort_multipart";
 
-/** An R2 rejection. Every one is answered with 503 and a retry hint; the cause is logged, not returned. */
 interface StorageFailure {
   readonly _tag: "storage_failure";
   readonly operation: StorageOperation;
@@ -62,14 +55,12 @@ type Stored<T> = { readonly _tag: "ok"; readonly value: T } | StorageFailure;
 type BodyRead =
   { readonly _tag: "ok"; readonly text: string } | { readonly _tag: "too_large" } | { readonly _tag: "malformed" };
 
-/** The published manifest as the version rule needs it, or the response that ends the upload. */
 type PublishedRead =
   | { readonly _tag: "found"; readonly manifest: VersionedManifest; readonly etag: string }
   | { readonly _tag: "absent" }
   | { readonly _tag: "refused"; readonly response: Response };
 
 export default {
-  /** Routes feed downloads and authenticated uploads. Client mistakes and R2 failures become responses, not rejections. */
   async fetch(request: Request, env: FeedEnv): Promise<Response> {
     const url = new URL(request.url);
     const name = decodePath(url.pathname.slice(1));
@@ -123,7 +114,6 @@ function unavailable(failure: StorageFailure): Response {
   });
 }
 
-/** Reads at most `limit` bytes, stopping as soon as the body exceeds it, and decodes them as strict UTF-8. */
 async function readBounded(request: Request, limit: number): Promise<BodyRead> {
   const declared = Number(request.headers.get("content-length"));
 
@@ -178,7 +168,6 @@ function recordedSha256(object: FeedObject): string | null {
   return recorded !== undefined && sha256Hex.safeParse(recorded).success ? recorded : null;
 }
 
-// Redirects a stable link to the current Windows installer or Mac zip. `file` maps a version to its file name.
 async function latest(env: FeedEnv, url: URL, file: (version: string) => string): Promise<Response> {
   const manifest = await stored("get", MANIFEST, () => env.BUCKET.get(MANIFEST));
 
@@ -196,11 +185,6 @@ async function latest(env: FeedEnv, url: URL, file: (version: string) => string)
   return Response.redirect(new URL(`/${file(payload.version.text)}`, url).toString(), 302);
 }
 
-/**
- * Resolves a single RFC 9110 `bytes=` range against `size`. Returns null when the header should be ignored
- * (another unit, several ranges, or bad syntax), which serves the whole object, and "unsatisfiable" when it
- * is well formed but selects no bytes.
- */
 function resolveRange(header: string, size: number): FeedRange | "unsatisfiable" | null {
   const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
 
@@ -236,8 +220,6 @@ function objectHeaders(object: FeedObject, key: string, cacheControl: string): H
   return headers;
 }
 
-// Only HEAD and Range requests read metadata first, since a range has to be checked against the stored size.
-// A plain GET costs one R2 read.
 async function serve(request: Request, env: FeedEnv, key: string, cacheControl: string): Promise<Response> {
   const rangeHeader = request.headers.get("range");
 
@@ -267,7 +249,6 @@ async function serve(request: Request, env: FeedEnv, key: string, cacheControl: 
 
       if (part._tag !== "ok") return unavailable(part);
 
-      // Deleted between the two reads.
       if (!part.value) return text("Not found", 404);
       const headers = objectHeaders(part.value, key, cacheControl);
       headers.set("content-range", `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`);
@@ -294,7 +275,6 @@ async function authorized(request: Request, env: FeedEnv): Promise<boolean> {
   );
 
   const expected = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(`Bearer ${env.UPLOAD_TOKEN}`)));
-  // Both digests are 32 bytes, so the loop takes the same time wherever they differ.
   let difference = 0;
 
   for (let index = 0; index < expected.length; index += 1) difference |= (given[index] ?? 0) ^ (expected[index] ?? 0);
@@ -302,8 +282,6 @@ async function authorized(request: Request, env: FeedEnv): Promise<boolean> {
   return difference === 0;
 }
 
-// Multipart uploads assemble at unique private staging keys. Only a conditional put may create a public
-// versioned key: R2 multipart completion has no destination precondition and must never publish directly.
 async function upload(request: Request, env: FeedEnv, url: URL, key: string): Promise<Response> {
   if (!(await authorized(request, env))) return text("Unauthorized", 401);
 
@@ -347,7 +325,6 @@ async function upload(request: Request, env: FeedEnv, url: URL, key: string): Pr
   return text("Method not allowed", 405);
 }
 
-/** Applies the immutability rule to `key`. Returns null when the installer may be written, else the response. */
 async function installerGuard(env: FeedEnv, key: string, claim: InstallerClaim): Promise<Response | null> {
   const existing = await stored("head", key, () => env.BUCKET.head(key));
 
@@ -407,7 +384,6 @@ async function completeInstaller(
 
   if (!completion.success) return text("Malformed completion request", 400);
   const multipart = env.BUCKET.resumeMultipartUpload(stagingKey, uploadId);
-  // Another upload may have finished since this one started.
   const refused = await installerGuard(env, key, completion.data);
 
   if (refused) {
@@ -416,7 +392,6 @@ async function completeInstaller(
     return aborted._tag === "ok" ? removeStaging(env, stagingKey, refused) : unavailable(aborted);
   }
 
-  // A retry after completion resumes from the private object instead of completing an expired multipart ID.
   const staged = await stored("head", stagingKey, () => env.BUCKET.head(stagingKey));
 
   if (staged._tag !== "ok") return unavailable(staged);
@@ -464,8 +439,6 @@ async function completeInstaller(
   if (source._tag !== "ok") return unavailable(source);
 
   if (!source.value) return text("Staged upload disappeared; start another upload", 409);
-  // R2 get streams do not always retain their known length. FixedLengthStream keeps this copy bounded and
-  // gives R2 put an exact byte count. Abort the producer if a precondition rejects without consuming it.
   const stream = new FixedLengthStream(completion.data.size);
   const controller = new AbortController();
 
@@ -484,8 +457,6 @@ async function completeInstaller(
   );
 
   controller.abort();
-  // A pending transform write may be waiting for a reader that storage never acquired. Cancelling the
-  // readable releases that backpressure as well as aborting the source; either operation alone can hang.
   await stream.readable.cancel().catch(() => undefined);
   await transfer;
 
@@ -504,8 +475,6 @@ async function removeStaging(env: FeedEnv, stagingKey: string, response: Respons
   return removed._tag === "ok" ? response : unavailable(removed);
 }
 
-// Refuses a manifest unless its installer is stored with the advertised size and hash and its Mac archive is
-// stored too, so clients never see a version they can't download. Also refuses one that would move the feed back.
 async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
   const read = await readBounded(request, MANIFEST_MAX_BYTES);
 
@@ -522,7 +491,6 @@ async function putManifest(request: Request, env: FeedEnv): Promise<Response> {
   if (installer._tag !== "ok") return unavailable(installer);
   const recorded = installer.value ? recordedSha256(installer.value) : null;
 
-  // Older installers have no recorded hash and are matched by size alone.
   if (!installer.value || installer.value.size !== payload.size || (recorded !== null && recorded !== payload.sha256)) {
     return text("Manifest does not match a published installer", 409);
   }
@@ -576,7 +544,6 @@ async function publishedManifest(env: FeedEnv): Promise<PublishedRead> {
   if (body._tag !== "ok") return { _tag: "refused", response: unavailable(body) };
   const payload = parseManifest(body.value);
 
-  // Replacing an unreadable manifest would bypass the version rule, so that is left to a person.
   if (!payload) return { _tag: "refused", response: text("Published manifest is unreadable; replace it by hand", 500) };
 
   return { _tag: "found", manifest: { version: payload.version, text: body.value }, etag: found.etag };

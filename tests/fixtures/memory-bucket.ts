@@ -103,7 +103,6 @@ export class MemoryBucket implements FeedBucket {
       throw new Error("put: SHA-256 checksum mismatch");
     }
 
-    // No awaits between checking the destination and committing it: conditions apply at commit time.
     if (options.onlyIf instanceof Headers) {
       if (options.onlyIf.get("if-none-match") === "*" && this.objects.has(key)) return null;
     } else if (options.onlyIf && this.objects.get(key)?.etag !== options.onlyIf.etagMatches) return null;

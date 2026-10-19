@@ -1,4 +1,4 @@
-import type { JurisdictionId } from "./jurisdictions.js";
+import type { JurisdictionId, JurisdictionProfile } from "./jurisdictions.js";
 import type { PermitRow } from "./permit.js";
 import { describeReview, outstandingReviews, type ReviewEntry } from "./reviews.js";
 import { wordingKey } from "./wording-key.js";
@@ -15,8 +15,9 @@ const actionText: Record<ActionOn, string> = { applicant: "AEC", authority: "AHJ
  */
 export type ActionBasis = "listed" | "cautious" | "unlisted";
 
-/** The survey's wording groups for one authority. `cautious` is the survey's "AEC, to be safe" column. */
 type StatusWording = Readonly<Record<ActionOn | "cautious", readonly string[]>>;
+
+type LocalJurisdictionId = Extract<JurisdictionProfile, { authorityType: "county-government" | "municipality" }>["id"];
 
 /**
  * Each county and city portal's status wording, as its records displayed it in September 2026 (see
@@ -25,7 +26,7 @@ type StatusWording = Readonly<Record<ActionOn | "cautious", readonly string[]>>;
  * look. They are listed apart from explicit requests so the badge can mark them. AHJ is only for wording the survey saw
  * the authority working under, and None only for records that were issued, finished, or deliberately ended.
  */
-export const STATUS_WORDING: Partial<Record<JurisdictionId, StatusWording>> = {
+export const STATUS_WORDING: Record<LocalJurisdictionId, StatusWording> = {
   "hillsborough-county-building": {
     applicant: ["Awaiting Client Reply"],
     cautious: ["Expired"],
@@ -122,7 +123,6 @@ export const STATUS_WORDING: Partial<Record<JurisdictionId, StatusWording>> = {
     ],
     none: ["Issued", "Issued - PPR INSP", "Final", "Complete", "Void", "Void*"],
   },
-  // Hand-checked portals: the wording their own guides and published data use, since the user types what they see.
   "orange-county-building": {
     applicant: ["Internet Incomplete", "Deficient", "Deficiencies", "Not Approved", "Ready to Issue", "Stop Work"],
     cautious: ["Address Pending", "Pending W/Comments", "Expired", "Application Expired"],

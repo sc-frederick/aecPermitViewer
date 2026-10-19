@@ -17,7 +17,6 @@ function localDay(value: string): string {
  */
 export function dailyHistory(history: PermitHistory, dayOf: (value: string) => string = localDay): HistoryDay[] {
   const days = new Map<string, HistoryDay>();
-  // A run has at most one observation, so index observations by run id once.
   const observationByRun = new Map(history.observations.map((entry) => [entry.runId, entry]));
 
   for (const run of history.runs) {

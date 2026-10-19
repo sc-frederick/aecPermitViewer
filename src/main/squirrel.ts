@@ -30,11 +30,10 @@ function shortcutArgs(action: "create" | "remove", locations: string): string[] 
 function installAppIcon(): void {
   try {
     copyFileSync(path.join(process.resourcesPath, "icon.ico"), path.join(path.dirname(updateExePath()), "app.ico"));
-  } catch {
-    /* Installed apps keeps the previous icon */
-  }
+  } catch {}
 }
 
+// Squirrel waits up to 15 seconds for install, update, and uninstall handlers before continuing.
 /**
  * Handles the install, update, and uninstall events Squirrel runs the app for, and returns true when this launch was
  * one of them. Squirrel waits up to 15 seconds and then carries on, so failures are left behind rather than reported.
@@ -56,9 +55,7 @@ export function handleSquirrelEvent(argv: readonly string[], beforeUninstall: ()
     case "--squirrel-uninstall":
       try {
         beforeUninstall();
-      } catch {
-        /* the uninstaller continues regardless */
-      }
+      } catch {}
 
       run(shortcutArgs("remove", "Desktop,StartMenu"));
 

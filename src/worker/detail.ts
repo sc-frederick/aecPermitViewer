@@ -10,11 +10,9 @@ import { readAccelaReviews } from "./accela-reviews.js";
 import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord } from "./adapter.js";
 
-/** Where a record page shows its number and record-level status, and the status's own label when the page has one. */
 interface DetailFields {
   number: string;
   status: string;
-  /** Null where the label is part of the status selector itself. */
   label: string | null;
 }
 
@@ -30,10 +28,6 @@ const CLICK2GOV_FIELDS: DetailFields = {
   label: null,
 };
 
-/**
- * Tyler Civic Access record pages. The address names the kind of record, and each kind binds its own number and status,
- * so a plan is read from plan fields only and a permit from permit fields only.
- */
 const TYLER_FIELDS = {
   permit: {
     number: '#focusText span[ng-bind-html="vm.model.PermitNumber"]',
@@ -47,7 +41,6 @@ const TYLER_FIELDS = {
   },
 } as const satisfies Record<string, DetailFields>;
 
-/** The kind of Tyler record an address shows, from its "#/permit/<id>" or "#/plan/<id>" route; null for anything else. */
 function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
   const hash = new URL(url).hash;
 
@@ -58,7 +51,6 @@ function tylerRecordKind(url: string): keyof typeof TYLER_FIELDS | null {
   return null;
 }
 
-/** The fields to read on this record page, or null when the family or page isn't read by these generic steps. */
 function detailFields(profile: AutomatedJurisdictionProfile, url: string): DetailFields | null {
   switch (profile.portalFamily) {
     case "accela":
@@ -76,10 +68,6 @@ function detailFields(profile: AutomatedJurisdictionProfile, url: string): Detai
   }
 }
 
-/**
- * The trimmed text of the one visible element matching `selector`, read in a single browser round trip. Null when
- * nothing matches, more than one element does, or the match isn't visible (no size, or hidden by style).
- */
 async function visibleText(page: Page, selector: string): Promise<string | null> {
   const texts = await page.locator(selector).evaluateAll((nodes) =>
     nodes.map((node) => {
@@ -95,7 +83,6 @@ async function visibleText(page: Page, selector: string): Promise<string | null>
   return texts.length === 1 ? (texts[0] ?? null) : null;
 }
 
-/** St. Petersburg's record link, rebuilt from the application number because Click2Gov's own address is a form post. */
 function stPeteRecordUrl(number: string): string | null {
   const parts = parseApplicationNumber(number);
 
@@ -158,9 +145,9 @@ export async function waitForDetail(page: Page, profile: AutomatedJurisdictionPr
 /** The keyword search input on Tyler Civic Access portals. */
 export const TYLER_SEARCH_FIELD = "#SearchKeyword";
 
-/** Tyler shows one of three labels after a search: "Found N results", "Found 1 result", or "No results were found". */
 const TYLER_RESULT_MESSAGE = "#moduleResultMessage label";
 
+// Tyler's startup requests can clear a keyword entered before they finish.
 /**
  * Waits for a Tyler search or home page to be usable, then for its startup requests to finish, since a keyword typed
  * before then can be cleared. The search route waits for its keyword field; the home page for the field or the menu's
@@ -183,7 +170,6 @@ export async function waitForTylerSearch(page: Page): Promise<void> {
 export async function waitForLanding(page: Page, profile: AutomatedJurisdictionProfile): Promise<void> {
   const url = page.url();
 
-  // Same precedence as the worker: a search address is a search page even if it could also show a record.
   if (parsePortalUrl(url, "search", profile.id)) {
     if (profile.portalFamily === "tyler-civic-access") await waitForTylerSearch(page);
 

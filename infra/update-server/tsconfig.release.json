@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src/manifest.ts", "src/release-policy.ts"]
+}

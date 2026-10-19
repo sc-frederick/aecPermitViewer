@@ -9,5 +9,4 @@
   "preview_urls": false,
   "routes": [{ "pattern": "permitmon-updates.aeccloud.io", "custom_domain": true }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "permitmon-updates" }]
-  // Secret: UPLOAD_TOKEN (also stored as the UPDATE_UPLOAD_TOKEN GitHub Actions secret).
 }

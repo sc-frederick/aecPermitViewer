@@ -11,6 +11,7 @@ export type ReviewEntry = {
   dueDate: string | null;
 };
 
+// Accela lists same-day review events oldest first.
 /**
  * Latest entry per process by decision date, using the due date only for pending rounds. Accela lists same-day
  * events oldest first, so the last such entry wins. A new TBD round replaces that discipline's older corrections.
@@ -61,8 +62,6 @@ const SUBMISSIONS = new Set([
   "routed for review",
 ]);
 
-// Only intake/coordination tasks establish a submission for the whole record, so a resubmittal on one discipline
-// doesn't clear another discipline's outstanding request.
 const COORDINATION = new Set([
   "application submittal",
   "application review",
@@ -70,6 +69,7 @@ const COORDINATION = new Set([
   "plans coordination",
 ]);
 
+// The portal supplies dates without times, so same-day corrections cannot be ordered against resubmittal.
 /**
  * Requests still awaiting an applicant response. A resubmittal or routing event on an intake/coordination task starts
  * a new round and clears requests dated before it; uploads and payments alone don't. A request dated the same day as

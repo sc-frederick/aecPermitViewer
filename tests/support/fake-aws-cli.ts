@@ -8,9 +8,7 @@ const FAKE_AWS = path.resolve("tests/fixtures/fake-aws.mjs");
 
 /** Where an installed fake AWS CLI lives. */
 export interface FakeAwsCli {
-  /** The folder holding the `aws` command, for the front of PATH. */
   readonly bin: string;
-  /** The fake's storage: objects live at `<store>/<bucket>/<key>`. */
   readonly store: string;
 }
 

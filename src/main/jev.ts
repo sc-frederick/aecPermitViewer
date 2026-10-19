@@ -11,16 +11,13 @@ import { z } from "zod";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
 
-/** A confidence or probability, from 0 to 1. Zod 4 numbers already reject NaN and infinity. */
 const unitIntervalSchema = z.number().min(0).max(1);
 
-/** The reply envelope. The SDK returns the body unchecked, so the model name and answers are parsed before use. */
 const replySchema = z.object({
   model: z.string().min(1),
   answers: z.object({ next: z.unknown() }),
 });
 
-/** A choice answer's shape. `readChoice` then checks its labels against the offered criteria. */
 const choiceAnswerSchema = z.object({
   type: z.literal("choice"),
   choice: z.string(),
@@ -70,13 +67,8 @@ const MIN_CONFIDENCE = 0.75;
 
 const MIN_MARGIN = 0.15;
 
-/** The most requests one navigation choice makes: a first try and one retry after a rate limit. */
 const MAX_ATTEMPTS = 2;
 
-/**
- * Per-request SDK settings. With the SDK's own retries off, each HTTP request is one attempt counted by `onAttempt`.
- * The client and each call both set them, so a client configured elsewhere can't add uncounted retries.
- */
 const REQUEST_SETTINGS = { retry: { maxRetries: 0 }, timeout: 8_000 } as const;
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -101,11 +93,6 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/**
- * Checks an answer against the labels that were offered: it must choose one of them and give every one, and nothing
- * else, a probability, with the probabilities summing to 1. Returns the chosen label, the reported confidence, and the
- * chosen label's lead over the likeliest other label.
- */
 function readChoice(
   answer: ChoiceAnswer,
   offered: readonly string[],

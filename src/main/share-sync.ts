@@ -1,7 +1,3 @@
-// Keeps a shared list current on both ends with as few syncs as its changes allow. The publisher sends once its checks
-// have finished and the list has changed, so a scheduled run goes out as one publication. A follower fetches a while
-// after each of the publisher's check times, when that run should be done. Both sides also sync on request. Neither
-// throws into the app; failures become a short message for Settings.
 import { z } from "zod";
 import { nextSlotAfter, type CheckTimes } from "../shared/schedule.js";
 import { parseSharedList, type SharedList } from "./share-list.js";
@@ -77,7 +73,6 @@ export class SharePublisher {
     this.timer = null;
     await this.running;
 
-    // Stopping sharing stops the publisher before deleting the shared copy; publishing here would bring it back.
     if (this.stopped) return null;
     const attempt = this.publish(true);
     this.running = attempt
@@ -103,7 +98,6 @@ export class SharePublisher {
     this.timer = setTimeout(() => {
       this.timer = null;
 
-      // Mid-run, the list changes with every check; waiting sends the whole run at once.
       if (this.checking()) {
         this.schedule(PUBLISH_SETTLE_MS);
 
@@ -126,7 +120,6 @@ export class SharePublisher {
     this.changed();
   }
 
-  /** Sends the list if it changed since the last publication, or regardless when `force` is set. */
   private async publish(force: boolean): Promise<SyncProblem> {
     let json: string;
 
@@ -187,7 +180,6 @@ export type CachedList = z.infer<typeof cachedListSchema>;
 export type Probe =
   { _tag: "ok"; cache: CachedList } | { _tag: "absent" } | { _tag: "undecryptable" } | { _tag: "unreadable" };
 
-/** Settings text for each follow failure. */
 const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   absent: "The shared list was removed. Ask for a new code.",
   undecryptable: "This code no longer opens the shared list. Ask for a new code.",
@@ -196,7 +188,6 @@ const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   persistence: "Couldn't save the shared list locally. Retrying.",
 };
 
-/** Opens and parses a fetched list. */
 function readList(
   sealed: Uint8Array,
   contentKey: Uint8Array,
@@ -212,7 +203,6 @@ function readList(
   }
 }
 
-/** Why the latest fetch didn't bring a list. */
 type FollowFailure = "absent" | "undecryptable" | "unreadable" | "unreachable" | "persistence";
 
 /** Fetches the list a share code opens, without following it. Rejects when the service can't be reached. */
@@ -313,7 +303,6 @@ export class ShareFollower {
     if (this.timer) clearTimeout(this.timer);
     const now = new Date();
 
-    // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
     const next =
       this.failure === "unreachable" || this.failure === "persistence"
         ? new Date(now.getTime() + RETRY_MS)

@@ -18,25 +18,18 @@ export type FailureClass = "sqlite" | "system" | "tagged" | "defect" | "unclassi
  */
 export interface ClassifiedCause {
   class: FailureClass;
-  /** The error's constructor name, or `non-error` when something other than an Error was thrown. */
   name: string;
-  /** The `_tag` of one of the app's own errors. */
   tag: string | null;
-  /** A Node or driver code such as `ENOENT` or `ERR_SQLITE_ERROR`. */
   code: string | null;
-  /** SQLite's extended result code, such as 2067 for a unique constraint. */
   errcode: number | null;
-  /** The system call that failed, such as `rename`. */
   syscall: string | null;
 }
 
-/** An identifier-like value: codes, tags, and names never carry free text into the log. */
 const identifier = z
   .string()
   .max(64)
   .regex(/^[\w.-]+$/);
 
-/** Structured fields read from a thrown value. Each falls back on its own, so one odd field doesn't hide the rest. */
 const causeFieldsSchema = z.object({
   name: identifier.catch("Error"),
   _tag: identifier.optional().catch(undefined),
@@ -82,7 +75,6 @@ export interface Diagnostic {
   cause: ClassifiedCause;
 }
 
-/** Past this size the log is moved aside to `<file>.1`, replacing any older one, so it never grows without bound. */
 const MAX_LOG_BYTES = 256 * 1024;
 
 /**
@@ -90,7 +82,6 @@ const MAX_LOG_BYTES = 256 * 1024;
  * lives in the app's data folder and is deleted with it.
  */
 export class DiagnosticLog {
-  /** True between `stop()` and `restart()`. */
   private stopped = false;
 
   constructor(
@@ -112,9 +103,7 @@ export class DiagnosticLog {
 
       if (size > MAX_LOG_BYTES) renameSync(this.filePath, `${this.filePath}.1`);
       appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
-    } catch {
-      // Ignored on purpose; see `record`.
-    }
+    } catch {}
   }
 
   /**

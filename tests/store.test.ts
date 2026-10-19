@@ -5,12 +5,16 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { PermitStore } from "../src/main/store.js";
 import { HILLSBOROUGH_ID } from "../src/shared/permit.js";
+import { normalizeCheckTimes } from "../src/shared/schedule.js";
 import { JURISDICTIONS, type JurisdictionId } from "../src/shared/jurisdictions.js";
 import { defined } from "./support/defined.js";
 import { temporaryDirectory } from "./support/temporary-directory.js";
 
-/** Set by `newStore`. A value left from an earlier test names a directory already removed, so using it fails. */
 let newestStoreDirectory: string | undefined;
+
+function checkTimes(...values: string[]) {
+  return defined(normalizeCheckTimes(values), "valid check times");
+}
 
 function newStore(): PermitStore {
   const directory = temporaryDirectory("permit-monitor-test-");
@@ -19,12 +23,10 @@ function newStore(): PermitStore {
   return new PermitStore(path.join(directory, "data.sqlite"));
 }
 
-/** The directory of the store `newStore` created most recently. */
 function newestDirectory(): string {
   return defined(newestStoreDirectory, "a store created by newStore");
 }
 
-/** Adds a permit the test expects to be new and returns its id; throws if the store refuses it. */
 function addPermit(store: PermitStore, permitNumber: string, jurisdictionId?: JurisdictionId): string {
   const added = store.addPermit(permitNumber, jurisdictionId);
 
@@ -33,7 +35,6 @@ function addPermit(store: PermitStore, permitNumber: string, jurisdictionId?: Ju
   return added.value;
 }
 
-/** Run metadata every started check records; its values don't matter to these tests. */
 const RUN = {
   appVersion: "test",
   playwrightVersion: "test",
@@ -41,7 +42,6 @@ const RUN = {
   promptVersion: "test-prompt",
 } as const;
 
-/** A verified Hillsborough record; each test states the time it observed. */
 function verifiedRecord(observedAt: string) {
   return {
     verifiedPermitNumber: "HC-BLD-26-0087599",
@@ -54,7 +54,6 @@ function verifiedRecord(observedAt: string) {
   };
 }
 
-/** Runs raw SQL on the newest store's file over a second connection, for states the store's API never writes. */
 function withDatabase<T>(work: (db: DatabaseSync) => T): T {
   const db = new DatabaseSync(path.join(newestDirectory(), "data.sqlite"));
 
@@ -365,13 +364,7 @@ describe("scheduled checks", () => {
           .prepare("UPDATE permits SET next_due_at = ? WHERE id = ?")
           .run(new Date(2026, 8, 24, 12, 30).toISOString(), permitId),
       );
-      store.setCheckTimes(
-        [
-          { hour: 7, minute: 0 },
-          { hour: 10, minute: 15 },
-        ],
-        new Date(2026, 8, 24, 9, 0),
-      );
+      store.setCheckTimes(checkTimes("07:00", "10:15"), new Date(2026, 8, 24, 9, 0));
       expect(store.getCheckTimes()).toEqual([
         { hour: 7, minute: 0 },
         { hour: 10, minute: 15 },
@@ -479,6 +472,87 @@ describe("project numbers", () => {
 });
 
 describe("migration backups", () => {
+  it("backs up version 4 and removes obsolete schema without changing permits, history, or settings", () => {
+    const store = newStore();
+    const filePath = path.join(newestDirectory(), "data.sqlite");
+    const permitId = addPermit(store, "HC-BLD-26-0087599");
+    const runId = store.startRun({ permitId, ...RUN });
+    store.finishRun({
+      runId,
+      permitId,
+      outcome: "success",
+      actionCount: 1,
+      requestCount: 0,
+      actualModel: null,
+      browserVersion: "test",
+      observation: verifiedRecord("2026-09-24T12:00:00.000Z"),
+    });
+    store.setProjectNumber(permitId, "28069");
+    store.setCheckTimes(checkTimes("07:00", "15:30"), new Date(2026, 8, 24, 12));
+
+    const before = {
+      permit: store.getPermit(permitId),
+      history: store.history(permitId),
+      times: store.getCheckTimes(),
+    };
+
+    store.close();
+
+    withDatabase((db) => {
+      db.exec("ALTER TABLE permits ADD COLUMN interval_hours INTEGER NOT NULL DEFAULT 24");
+      db.exec("CREATE INDEX idx_runs_started ON check_runs(started_at)");
+      db.exec("PRAGMA user_version = 4");
+    });
+
+    const migrated = new PermitStore(filePath);
+
+    try {
+      expect(migrated.getPermit(permitId)).toEqual(before.permit);
+      expect(migrated.history(permitId)).toEqual(before.history);
+      expect(migrated.getCheckTimes()).toEqual(before.times);
+      withDatabase((db) => {
+        expect(
+          db
+            .prepare("PRAGMA table_info(permits)")
+            .all()
+            .map((column) => column.name),
+        ).not.toContain("interval_hours");
+        expect(
+          db
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .all()
+            .map((index) => index.name),
+        ).not.toContain("idx_runs_started");
+      });
+
+      const backup = defined(
+        readdirSync(newestDirectory()).find((name) => /^data\.sqlite\.before-v5-\d+\.bak$/.test(name)),
+        "the pre-v5 backup",
+      );
+
+      const db = new DatabaseSync(path.join(newestDirectory(), backup), { readOnly: true });
+
+      try {
+        expect(
+          db
+            .prepare("PRAGMA table_info(permits)")
+            .all()
+            .map((column) => column.name),
+        ).toContain("interval_hours");
+        expect(
+          db
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .all()
+            .map((index) => index.name),
+        ).toContain("idx_runs_started");
+      } finally {
+        db.close();
+      }
+    } finally {
+      migrated.close();
+    }
+  });
+
   it("backs up version 3 and adds review history without changing old verified observations", () => {
     const store = newStore();
     const directory = newestDirectory();
@@ -522,7 +596,6 @@ describe("migration backups", () => {
     const filePath = path.join(directory, "data.sqlite");
     store.close();
 
-    // The child commits in WAL mode and exits with SQLite still open, so nothing checkpoints the WAL into the main file.
     const writer = spawnSync(
       process.execPath,
       [
@@ -550,7 +623,6 @@ describe("migration backups", () => {
 
     const backups = readdirSync(directory).filter((name) => /^data\.sqlite\.before-v3-\d+\.bak$/.test(name));
     expect(backups).toHaveLength(1);
-    // Restoring means putting the backup where a fresh install would open it, with no WAL beside it.
     const restored = path.join(directory, "restored.sqlite");
     copyFileSync(path.join(directory, defined(backups[0], "the pre-v3 backup")), restored);
     const restoredStore = new PermitStore(restored);
@@ -640,23 +712,10 @@ describe("schedule edits", () => {
           overdue,
         );
       });
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 14, minute: 0 },
-          { hour: 17, minute: 0 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "14:00", "17:00"), now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 14).toISOString());
       expect(store.duePermitIds(new Date(2026, 8, 29, 12, 30).toISOString())).toEqual([overdue]);
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 11, minute: 0 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "11:00"), now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 11).toISOString());
       expect(store.duePermitIds(new Date(2026, 8, 29, 11).toISOString())).toContain(permitId);
       expect(store.getPermit(overdue)?.nextDueAt).toBe(new Date(2026, 8, 29, 8, 30).toISOString());
@@ -691,37 +750,13 @@ describe("schedule edits", () => {
         );
       });
       const now = new Date(2026, 8, 29, 10);
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 14, minute: 0 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "14:00"), now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 10, 30).toISOString());
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 10, minute: 15 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "10:15"), now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 10, 15).toISOString());
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 14, minute: 0 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "14:00"), now);
       store.deferDue(permitId, new Date(2026, 8, 29, 14));
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 15, minute: 0 },
-        ],
-        now,
-      );
+      store.setCheckTimes(checkTimes("08:30", "15:00"), now);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(new Date(2026, 8, 29, 15).toISOString());
     } finally {
       store.close();
@@ -744,13 +779,7 @@ describe("schedule edits", () => {
           overdue,
         );
       });
-      store.setCheckTimes(
-        [
-          { hour: 8, minute: 30 },
-          { hour: 23, minute: 40 },
-        ],
-        new Date(2026, 8, 29, 23, 45),
-      );
+      store.setCheckTimes(checkTimes("08:30", "23:40"), new Date(2026, 8, 29, 23, 45));
       expect(store.getPermit(future)?.nextDueAt).toBe(new Date(2026, 8, 30, 8, 30).toISOString());
       expect(store.duePermitIds(new Date(2026, 8, 30, 0, 5).toISOString())).toEqual([overdue]);
     } finally {
@@ -771,9 +800,7 @@ describe("schedule edits", () => {
         );
       });
       const before = store.getCheckTimes();
-      expect(() => store.setCheckTimes([{ hour: 14, minute: 0 }], new Date(2026, 8, 29, 10))).toThrow(
-        "fixture failure",
-      );
+      expect(() => store.setCheckTimes(checkTimes("14:00"), new Date(2026, 8, 29, 10))).toThrow("fixture failure");
       expect(store.getCheckTimes()).toEqual(before);
       expect(store.getPermit(permitId)?.nextDueAt).toBe(due);
     } finally {

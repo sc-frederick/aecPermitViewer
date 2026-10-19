@@ -1,5 +1,3 @@
-// Client for the shared-list Worker (infra/sync-server). The Worker only receives ciphertext: lists are gzipped, then
-// sealed with AES-256-GCM under the content key, which never leaves the share code.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync, gzip, gzipSync } from "node:zlib";
@@ -11,10 +9,8 @@ const NONCE_BYTES = 12;
 
 const TAG_BYTES = 16;
 
-/** Binds ciphertext to this format, so it can't be replayed as something else sealed under the same key. */
 const ASSOCIATED_DATA = Buffer.from("permitmon-share-v1");
 
-/** A decompressed list larger than this is refused, whatever its compressed size. */
 const MAX_LIST_BYTES = 32_000_000;
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -74,10 +70,7 @@ export function openList(
 export class ListTooLarge extends Error {
   readonly _tag = "ListTooLarge" as const;
 
-  constructor(
-    /** The size that exceeded the limit: the sealed list, or the response as declared or read. */
-    readonly bytes: number,
-  ) {
+  constructor(readonly bytes: number) {
     super(`Shared list is ${bytes} bytes sealed`);
   }
 }
@@ -86,10 +79,7 @@ export class ListTooLarge extends Error {
 export class ShareServiceError extends Error {
   readonly _tag = "ShareServiceError" as const;
 
-  constructor(
-    /** The unexpected HTTP status. */
-    readonly status: number,
-  ) {
+  constructor(readonly status: number) {
     super(`Sharing service answered ${status}`);
   }
 }
@@ -146,7 +136,6 @@ export function loadShareService(configPath: string): ShareService | null {
   return url ? new ShareService(url) : null;
 }
 
-/** Reads a response body, throwing ListTooLarge once it exceeds `limit` bytes. */
 async function boundedBytes(response: Response, limit: number): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
 
@@ -182,7 +171,6 @@ export class ShareService {
     this.listUrl = new URL("v1/list", serviceUrl.href.endsWith("/") ? serviceUrl : `${serviceUrl.href}/`);
   }
 
-  /** Sends one request with the token as its bearer credential, and `body` as octets when there is one. */
   private request(
     method: string,
     token: string,

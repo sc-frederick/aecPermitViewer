@@ -1,7 +1,3 @@
-// Publication rules for the update feed, shared by the Worker's manual upload path and the CI release
-// job. Versioned installers are immutable once published, and the current manifest only moves forward.
-// The publication scripts load this file through Node's type stripping, so it may only import types and must
-// avoid TypeScript syntax that needs code generation (enums, parameter properties).
 import type { ReleaseVersion } from "./manifest.js";
 
 /** What the feed knows about a stored installer: its byte count and, when recorded at upload, its SHA-256. */

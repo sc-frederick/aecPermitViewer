@@ -1,7 +1,3 @@
-// The signed release manifest as the feed and the publication scripts read it. Only the payload fields the
-// feed checks are parsed here; the app verifies the Ed25519 signature itself (src/main/updater.ts).
-// The publication scripts load this file through Node's type stripping, so its only import is the bare
-// `zod` specifier and it uses no TypeScript syntax that needs code generation.
 import { z } from "zod";
 
 /** A parsed `major.minor.patch` release version, the only form the app's updater accepts. */
@@ -46,7 +42,6 @@ export const jsonText = z.string().transform((value, context): z.core.util.JSONT
 
 const envelopeText = jsonText.pipe(z.object({ signed: z.base64(), signature: z.base64() }));
 
-// Mirrors the app's payload schema, so the feed never publishes a manifest every client would reject.
 const payloadText = jsonText.pipe(
   z.object({
     version: z

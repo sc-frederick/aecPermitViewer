@@ -27,10 +27,7 @@ export class KeyStorageUnavailable extends Error {
 export class KeyWriteFailed extends Error {
   readonly _tag = "KeyWriteFailed" as const;
 
-  constructor(
-    /** The encryption or file system error. */
-    override readonly cause: unknown,
-  ) {
+  constructor(override readonly cause: unknown) {
     super("The key couldn't be written");
   }
 }
@@ -45,9 +42,7 @@ export type KeySave = { _tag: "saved" } | { _tag: "failed"; error: KeyStorageUna
 export class KeyStore {
   private readonly secretPath: string;
   private mutations: Promise<void> = Promise.resolve();
-  /** True when the last read of the saved key failed and no key has been saved or removed since. */
   private lastReadFailed = false;
-  /** Counts saves and removals, so a read that finishes after one doesn't judge the new file by the old one. */
   private generation = 0;
 
   constructor(
@@ -153,7 +148,6 @@ export class KeyStore {
     return decrypted.result;
   }
 
-  /** Runs disk mutations, including re-encryption, one at a time. A failed mutation doesn't block the next one. */
   private mutate<T>(work: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(work);
     this.mutations = result.then(

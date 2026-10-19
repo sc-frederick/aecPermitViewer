@@ -11,7 +11,6 @@ export type CheckEventKind = "first-status" | "status-changed" | "review-action"
 /** A notice for the window or a desktop notification. */
 export interface CheckEvent {
   kind: CheckEventKind;
-  /** The permit the notice is about; null for app-wide notices. */
   permitId: string | null;
   title: string;
   body: string;
@@ -44,7 +43,6 @@ export function keyNotice(problem: KeyProblem): CheckEvent {
   }
 }
 
-/** The quoted wording, plus the review requests or action label when the new status waits on the applicant. */
 function statusBody(quoted: string, after: PermitRow): string {
   const classified = permitAction(after);
 

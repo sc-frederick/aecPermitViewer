@@ -1,6 +1,3 @@
-// A fixed admission budget for the deployment. Only PUT admission crosses this object; list reads and storage remain
-// per-room. Room reservations are permanent, so expiry failures, ambiguous RPC results and delete/recreate races cannot
-// free capacity while ciphertext still exists elsewhere. Source counters are bounded and expire at UTC-day boundaries.
 import * as z from "zod/mini";
 import { SHARE_BODY_MAX_BYTES } from "../../../src/shared/share-protocol.js";
 import type { RoomStorage } from "./room.js";
@@ -44,9 +41,7 @@ export type AdmissionResult = { readonly _tag: "allowed"; readonly registered: b
 
 /** The narrow admission port reached by the HTTP router. */
 export interface AdmissionApi {
-  /** Charges the source's write-request quota and checks creation/capacity without reserving a room. */
   check(roomName: string, source: string): Promise<AdmissionResult>;
-  /** Reserves one permanent room slot and charges creation quotas, atomically and idempotently. */
   register(roomName: string, source: string): Promise<AdmissionResult>;
 }
 

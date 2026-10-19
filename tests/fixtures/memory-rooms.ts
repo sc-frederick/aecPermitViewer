@@ -15,7 +15,6 @@ function toSqlite(value: SqlValue): SQLInputValue {
 
 const scalarSchema = z.union([z.string(), z.number(), z.null()]);
 
-/** A column as a Durable Object returns it: BLOBs as ArrayBuffer. */
 function fromSqlite(value: SQLInputValue): SqlValue {
   if (value instanceof Uint8Array) return value.slice().buffer;
 
@@ -61,7 +60,6 @@ export class MemoryRoomStorage implements RoomStorage {
 /** Rooms by name, each a ShareRoom over its own storage, reached the way the Worker reaches Durable Objects. */
 export class MemoryRooms {
   readonly storages = new Map<string, MemoryRoomStorage>();
-  /** One room per name for the life of the test, as a Durable Object instance outlives the requests it serves. */
   private readonly rooms = new Map<string, ShareRoom>();
   /** Clock in epoch milliseconds, read by both the rooms and admission. */
   now = Date.parse("2026-09-28T12:00:00.000Z");

@@ -44,17 +44,14 @@ export interface PermitRow {
   id: string;
   jurisdictionId: JurisdictionId;
   permitNumber: string;
-  /** The user's own job or project number, used to group permits. */
   projectNumber: string | null;
   monitoringEnabled: boolean;
   lastStatus: string | null;
-  /** Workflow history from the latest successful check; null when none was read, as on non-Accela portals. */
   reviews: ReviewEntry[] | null;
   lastObservedAt: string | null;
   lastRecordUrl: string | null;
   latestAttemptAt: string | null;
   latestOutcome: RunOutcome | null;
-  /** When scheduled checks will next pick this permit up, if it is included. */
   nextDueAt: string | null;
   checking: boolean;
 }
@@ -85,7 +82,6 @@ export interface ObservationRow {
 
 /** A permit's check runs and the observations its successful runs saved, newest first. */
 export interface PermitHistory {
-  /** Exclusive UTC cursor for an older daily page; absent on raw or shared histories. */
   nextBefore?: string | null;
   runs: CheckRunRow[];
   observations: ObservationRow[];
@@ -197,10 +193,6 @@ export function parseWmisNumber(value: string, module: string): WmisNumber | nul
   return null;
 }
 
-/**
- * The identity a WMIS page displayed. The worker reports ERP's record heading (with " · Prefix NN" when the
- * record has a type prefix), a water use permit's "permit.revision" result cells, and a well permit's heading.
- */
 function parseWmisDisplayed(
   value: string,
   module: string,
@@ -279,10 +271,7 @@ export function sameEpermitRowNumber(requested: string, shown: string): boolean 
   );
 }
 
-/**
- * The worker reports the exactly matching result row's number and the record's own Project Number together,
- * such as "ERP-123-255799-1 · Project Number 255799 - 1", because the record page omits the prefix.
- */
+// ePermit record pages omit the prefix; the matching result row supplies the full permit number.
 function sameEpermitNumber(requested: string, displayed: string): boolean {
   const input = parseEpermitNumber(requested);
   const [, rowNumber, permit, sequence] = /^(\S+) · Project Number (\d+) - (\d+)$/.exec(displayed.trim()) ?? [];
@@ -320,7 +309,6 @@ export function parseRegPermittingNumber(value: string): { kind: "application" |
   return null;
 }
 
-/** RegPermitting's record classes: ERP, water use, well construction, and Works of the District. */
 const REG_RECORD_CLASSES = [
   "SFWMD-REG-PERMIT-WORK",
   "SFWMD-REG-WUPERMIT-WORK",
@@ -330,6 +318,7 @@ const REG_RECORD_CLASSES = [
 
 const REG_ENTRY_PATH = "/prweb/PRAuth/RegExternal";
 
+// RegPermitting's settled URL requires sign-in; the entry URL with the record key is public.
 /**
  * The record link RegPermitting opens without a session, from the record key ("<class> <number>") its own record
  * view carries. The address the page settles on afterward needs a sign-in, so it is never saved.
@@ -349,6 +338,7 @@ export function regPermittingRecordUrl(profile: JurisdictionProfile, key: string
   return `${new URL(profile.startUrl).origin}${REG_ENTRY_PATH}?pyActivity=%40baseclass.doUIAction&action=openWorkByHandle&key=${encodeURIComponent(`${recordClass} ${number.toUpperCase()}`)}`;
 }
 
+// Click2Gov and WMIS omit leading zeros in displayed serials.
 /**
  * Whether the displayed number is the requested one under the jurisdiction's rules. Click2Gov drops leading zeros from
  * the displayed application serial and WMIS from its permit serials; other portals compare parsed or exact forms.
@@ -399,7 +389,6 @@ export function permitComparisonValue(number: string, jurisdictionId: Jurisdicti
   if (profile?.portalFamily === "regpermitting") return parseRegPermittingNumber(number)?.number ?? number;
 
   if (profile?.portalFamily === "epermit") {
-    // The number and sequence identify the record, so a number entered with and without its prefix is one permit.
     const parts = parseEpermitNumber(number);
 
     return parts ? `${parts.permit}-${parts.sequence}` : number;
@@ -429,7 +418,6 @@ export function permitNumberProblem(jurisdictionId: JurisdictionId, number: stri
   return null;
 }
 
-/** Each WMIS program's public record page and the numeric parameters that identify a record. */
 const WMIS_RECORD_PAGES: Record<
   Extract<JurisdictionProfile, { portalFamily: "wmis" }>["module"],
   { path: string; params: readonly string[] }
@@ -452,7 +440,6 @@ export function wmisRecordUrl(profile: JurisdictionProfile, values: Record<strin
   return url.toString();
 }
 
-/** True when a WMIS record link names the same record as the identity the page displayed. */
 function wmisLinkMatches(recordUrl: URL, displayed: string, module: string): boolean {
   const shown = parseWmisDisplayed(displayed, module);
   const value = (name: string) => Number(recordUrl.searchParams.get(name));
@@ -489,7 +476,6 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
   )
     return null;
 
-  // A hand-checked portal's pages are whatever the user linked on the official host.
   if (profile.portalFamily === "manual") return url;
 
   if (profile.portalFamily === "wmis") {
@@ -621,7 +607,6 @@ export function parsePortalUrl(value: string, page: "search" | "detail", jurisdi
   return url;
 }
 
-/** The record-level status field each portal family labels on its detail page. */
 const STATUS_LABELS = {
   accela: "Record Status",
   click2gov: "Application Status",
@@ -671,7 +656,6 @@ export function parseDisplayedStatus(input: {
   const label = input.statusLabel.trim().replace(/:$/, "");
 
   if (!statusLabels(profile).includes(label)) return { _tag: "err", outcome: "status_unavailable" };
-  // An SFWMD permit's status is its Permit Status; an application's is its own status, not its permit's.
   const regNumber = profile.portalFamily === "regpermitting" ? parseRegPermittingNumber(input.requestedNumber) : null;
 
   if (regNumber && (regNumber.kind === "permit") !== (label === "Permit Status"))

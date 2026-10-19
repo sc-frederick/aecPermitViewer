@@ -21,7 +21,6 @@ if (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME !== `v${version}`
   throw new Error(`Release tag ${process.env.GITHUB_REF_NAME} does not match package version ${version}.`);
 }
 
-// The installer is several hundred megabytes, so it is hashed as a stream rather than read into memory.
 const { size } = await stat(installerPath);
 
 const hash = createHash("sha256");

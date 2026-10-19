@@ -1,7 +1,7 @@
 {
   "app": {
     "source": "wrangler.jsonc",
-    "sourceHash": "dfb4f6efca61784ebcc340c91f00e386cc17ca3549389089c52a0eb87af84a7e",
+    "sourceHash": "809df41d4d3ded823e8455c9074da9745a4a825e2cbaf516f335006134e7820e",
     "deploymentOwner": "cf",
     "prepare": null,
     "persistTo": ".wrangler/state",
