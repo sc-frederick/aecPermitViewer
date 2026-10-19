@@ -58,14 +58,12 @@ function retainedRooms(rooms: MemoryRooms): number {
   return retained;
 }
 
-/** How many rows the admission coordinator keeps in `table`. */
 function admissionRows(rooms: MemoryRooms, table: "admitted_rooms" | "admission_sources"): number {
   const [row] = rooms.admissionStorage.sql.exec(`SELECT count(*) AS count FROM ${table}`).toArray();
 
   return z.object({ count: z.number() }).parse(row).count;
 }
 
-/** The room the write key made of 32 bytes of `fill` publishes to. */
 async function roomForKey(fill: number): Promise<string> {
   const token = defined(await readTokenFor(toBase64Url(new Uint8Array(32).fill(fill))), "a read token");
 
@@ -92,7 +90,6 @@ describe("share protocol", () => {
     expect(text).not.toMatch(/[+/=]/);
     expect(fromBase64Url(text, 16)).toEqual(bytes);
     expect(fromBase64Url(text, 15)).toBeNull();
-    // The last character carries unused low bits; changing only those must not name the same bytes.
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     const lowBitFlipped = defined(alphabet[alphabet.indexOf(text.slice(-1)) ^ 1], "a neighboring base64url character");
     expect(fromBase64Url(`${text.slice(0, -1)}${lowBitFlipped}`, 16)).toBeNull();
@@ -111,7 +108,6 @@ describe("share protocol", () => {
   });
 
   it("keeps deriving the tokens, rooms, and codes that existing shares were made with", async () => {
-    // Fixed values: a change here strands every share code already handed out.
     expect(WRITE_KEY).toBe("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc");
     expect(await readToken()).toBe("jZ2FJRJRqUu7lUZXPxvNgw");
     expect(await roomNameFor("jZ2FJRJRqUu7lUZXPxvNgw")).toBe(
@@ -140,7 +136,6 @@ describe("sync Worker", () => {
     const token = await readToken();
 
     expect((await call(rooms, "GET", token)).status).toBe(404);
-    // Reading a room nobody published to stores nothing.
     expect(
       rooms.storages
         .get(defined(await roomNameFor(token), "a room name"))
@@ -171,12 +166,10 @@ describe("sync Worker", () => {
     const token = await readToken();
     await call(rooms, "PUT", WRITE_KEY, { body: body("list") });
 
-    // A read token is not a write key: it names no room when used as one.
     expect((await call(rooms, "PUT", token, { body: body("vandal") })).status).toBe(401);
     expect((await call(rooms, "DELETE", token)).status).toBe(401);
     expect((await call(rooms, "GET", null)).status).toBe(401);
     expect((await call(rooms, "GET", "not a token")).status).toBe(401);
-    // Another valid write key reaches another room, not this one.
     const other = toBase64Url(new Uint8Array(32).fill(8));
     rooms.now += MIN_PUBLISH_INTERVAL_MS;
     expect((await call(rooms, "PUT", other, { body: body("other") })).status).toBe(200);
@@ -208,8 +201,6 @@ describe("sync Worker", () => {
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect(room?.alarm).toBeNull();
     expect((await call(rooms, "GET", token)).status).toBe(404);
-    // Deleting a missing list succeeds. The room then takes a new publication with a new revision, so a follower
-    // holding the deleted list's etag gets the new contents, not a 304.
     expect((await call(rooms, "DELETE", WRITE_KEY)).status).toBe(204);
     expect((await call(rooms, "PUT", WRITE_KEY, { body: body("again") })).status).toBe(200);
     expect((await call(rooms, "GET", token, { ifNoneMatch: defined(etag, "the deleted list's etag") })).status).toBe(

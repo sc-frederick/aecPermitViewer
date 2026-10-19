@@ -4,7 +4,6 @@ import { desktopPlatform } from "./background.js";
 import { CheckNotifier, DesktopNotificationFailed } from "./notification-delivery.js";
 import type { CheckEvent } from "./notifications.js";
 
-/** The notifier, delivering to the window when it is in front and as desktop notifications through the tray otherwise. */
 export function createNotifier(context: AppContext): CheckNotifier {
   return new CheckNotifier({
     state: () => ({
@@ -29,11 +28,6 @@ export function createNotifier(context: AppContext): CheckNotifier {
   });
 }
 
-/**
- * Desktop notification when the window is out of view; an in-app notice when the user is already looking. Never throws:
- * a delivery failure is recorded, so a notification problem can't stop a result, the queue, or a shared list from
- * reaching the window.
- */
 export function announce(context: AppContext, event: CheckEvent): void {
   void context.notifier
     .announce(event)

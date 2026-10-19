@@ -12,43 +12,26 @@ import type { PermitHistory, PermitRow } from "../src/shared/permit.js";
 import { defined } from "./support/defined.js";
 import { permitRow } from "./support/permit-row.js";
 
-/** The bridge's requests to main: every method except the snapshot and history reads and the event subscriptions. */
 type BridgeRequest = Exclude<keyof PermitBridge, "snapshot" | "history" | `on${string}`>;
 
-/** An argument the renderer can pass with a bridge request. */
 type BridgeArgument = Parameters<PermitBridge[BridgeRequest]>[number];
 
-/** What the test drives in the page: snapshots from "main", and the requests the renderer made. */
 interface TestBridge {
   historyCalls: string[];
-  /** Each schedule the renderer asked main to save, in order. */
   checkTimeCalls: string[][];
-  /** Each setting the renderer asked main to change, in order. */
   preferenceCalls: Array<[string, boolean]>;
-  /** Every request the renderer sent, in order, with the arguments it passed. */
   calls: Array<{ method: BridgeRequest; args: BridgeArgument[] }>;
-  /** Reasons for promise rejections that nothing in the page handled. */
   unhandled: string[];
   push(next: AppSnapshot): void;
-  /** Delivers a foreground notice from main. */
   appEvent(event: AppEvent): void;
-  /** Delivers the permit selected from a native notification. */
   openDetails(permitId: string): void;
-  /** Answers the renderer's first snapshot request when `open` was called with `holdFirstSnapshot`. */
   answerSnapshot(): void;
-  /** Answers every later snapshot request with `next`, as main does once its state changes. */
   serveSnapshot(next: AppSnapshot): void;
-  /** Rejects the held first snapshot request and every later one, as a broken IPC channel would. */
   rejectSnapshots(): void;
-  /** Answers the index-th history request with one observation showing `status`. */
   answerHistory(index: number, status: string, nextBefore?: string, startedAt?: string): void;
-  /** Answers the index-th history request with a failure main reported. */
   failHistory(index: number, error: string): void;
-  /** Rejects the index-th history request, as a broken IPC channel would. */
   rejectHistory(index: number): void;
-  /** Makes every later call of the named bridge method answer with a failure carrying `error`. */
   fail(method: BridgeRequest, error: string): void;
-  /** Makes every later call of the named bridge method succeed with `value`, such as the id of an added permit. */
   succeed(method: BridgeRequest, value: string): void;
 }
 
@@ -59,7 +42,6 @@ declare global {
   }
 }
 
-/** Content types for the bundle's files by extension; anything else is served as HTML. */
 const CONTENT_TYPES = new Map([
   [".js", "text/javascript"],
   [".css", "text/css"],
@@ -67,7 +49,6 @@ const CONTENT_TYPES = new Map([
   [".svg", "image/svg+xml"],
 ]);
 
-// The real renderer bundle runs in the bundled Chromium against a controlled bridge that stands in for main.
 let browser: Browser;
 
 let page: Page;
@@ -129,7 +110,6 @@ afterAll(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-/** A verified Hillsborough permit numbered by `index`, with `overrides` applied. */
 function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
   return permitRow({
     id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
@@ -145,7 +125,6 @@ function permit(index: number, overrides: Partial<PermitRow> = {}): PermitRow {
 
 let revision = 0;
 
-/** A snapshot as main would send it next: each one takes a higher revision than the one before. */
 function snapshot(
   permits: PermitRow[],
   overrides: Partial<Omit<AppSnapshot, "revision" | "permits">> = {},
@@ -175,10 +154,6 @@ function snapshot(
   };
 }
 
-/**
- * Opens the renderer with `initial` as main's reply to its first snapshot request. The bridge records history requests
- * and holds them open. With `holdFirstSnapshot`, that first reply also waits until the test answers it.
- */
 async function open(initial: AppSnapshot, holdFirstSnapshot = false): Promise<void> {
   await page?.close();
   page = await browser.newPage();
@@ -378,7 +353,6 @@ async function checkTimeCalls(): Promise<string[][]> {
   return page.evaluate(() => window.testBridge.checkTimeCalls);
 }
 
-/** The arguments of each `method` request the renderer sent, in order. */
 async function callsTo(method: BridgeRequest): Promise<BridgeArgument[][]> {
   return page.evaluate(
     (name) => window.testBridge.calls.flatMap((call) => (call.method === name ? [call.args] : [])),
@@ -386,7 +360,6 @@ async function callsTo(method: BridgeRequest): Promise<BridgeArgument[][]> {
   );
 }
 
-/** Whether the notice is showing and a click at its center would land on it, so no dialog covers it. */
 async function noticeOnTop(): Promise<boolean> {
   return page.locator("#notice").evaluate((node) => {
     if (!(node instanceof HTMLElement) || node.hidden) return false;
@@ -399,10 +372,8 @@ async function noticeOnTop(): Promise<boolean> {
 
 const fifty = Array.from({ length: 50 }, (_, index) => permit(index + 1));
 
-/** A Pasco permit as main lists it once the add form has added it. */
 const added = permit(51, { jurisdictionId: "pasco-county-building", permitNumber: "BLD-2026-01234" });
 
-/** Has main accept the next add with `added`'s id, then answer the snapshot request that follows with `added` first. */
 async function acceptAdd(others: PermitRow[]): Promise<void> {
   await page.evaluate(
     ({ id, next }) => {
@@ -413,7 +384,6 @@ async function acceptAdd(others: PermitRow[]): Promise<void> {
   );
 }
 
-/** Picks `added`'s jurisdiction, types its number with spaces around it, and submits the add form. */
 async function submitAdd(): Promise<void> {
   await page.selectOption("#jurisdiction", added.jurisdictionId);
   await page.locator("#permit-number").fill(`  ${added.permitNumber}  `);
@@ -425,6 +395,65 @@ beforeEach(async () => {
 });
 
 describe("permit table updates", () => {
+  it("opens a permit's details from every cell and from the keyboard", async () => {
+    const shown = permit(10);
+    const row = page.locator(`#permit-table tr[data-permit-id="${shown.id}"]`);
+    const sheet = page.locator("#details-sheet");
+
+    for (let column = 0; column < 6; column += 1) {
+      await row
+        .locator("td")
+        .nth(column)
+        .click({ position: { x: 4, y: 4 } });
+      await sheet.waitFor();
+      expect(await page.locator("#details-title").textContent()).toBe(shown.permitNumber);
+      await page.keyboard.press("Escape");
+      await sheet.waitFor({ state: "hidden" });
+    }
+
+    for (const key of ["Enter", "Space"]) {
+      await row.getByRole("button", { name: `${shown.permitNumber},`, exact: false }).focus();
+      await page.keyboard.press(key);
+      await sheet.waitFor();
+      expect(await page.locator("#details-title").textContent()).toBe(shown.permitNumber);
+      await page.keyboard.press("Escape");
+      await sheet.waitFor({ state: "hidden" });
+    }
+  });
+
+  it("keeps row actions and text selection independent of opening details", async () => {
+    const ready = permit(1);
+    const checking = permit(2, { checking: true });
+    const unlinked = permit(3, { lastRecordUrl: null });
+    await push(snapshot([ready, checking, unlinked]));
+    const row = page.locator(`#permit-table tr[data-permit-id="${ready.id}"]`);
+
+    await row.getByRole("button", { name: "Check now", exact: true }).click();
+    await row
+      .getByRole("button", { name: `Open record for ${ready.permitNumber}` })
+      .locator("svg")
+      .click();
+    await page
+      .locator(`#permit-table tr[data-permit-id="${checking.id}"]`)
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+    await page.getByRole("button", { name: `Open record for ${unlinked.permitNumber}` }).click({ force: true });
+
+    expect(await callsTo("checkNow")).toEqual([[ready.id]]);
+    expect(await callsTo("openRecord")).toEqual([[ready.id]]);
+    expect(await callsTo("cancel")).toEqual([[checking.id]]);
+
+    const status = defined(await row.locator(".status-value").boundingBox(), "the status to select");
+    await page.mouse.move(status.x + 1, status.y + status.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(status.x + status.width - 1, status.y + status.height / 2, { steps: 5 });
+    await page.mouse.up();
+
+    expect(await page.evaluate(() => window.getSelection()?.toString())).toContain(ready.lastStatus);
+    expect(await page.locator("#details-sheet").isVisible()).toBe(false);
+    expect(await historyCalls()).toEqual([]);
+  });
+
   it("keeps focus and unchanged rows when another permit's check starts", async () => {
     const tenth = defined(fifty[9], "a tenth permit");
     const twentieth = defined(fifty[19], "a twentieth permit");
@@ -518,7 +547,6 @@ describe("adding a permit", () => {
 });
 
 describe("project number prompt", () => {
-  /** Adds `added` alongside `others` and waits for the prompt that follows. */
   async function addAndWaitForPrompt(others: PermitRow[]): Promise<void> {
     await acceptAdd(others);
     await submitAdd();
@@ -825,7 +853,6 @@ describe("details history", () => {
     );
     expect(await historyCalls()).toEqual([first.id, first.id]);
 
-    // The older answer arrives last and is dropped; the newer one is shown.
     await page.evaluate(() => window.testBridge.answerHistory(1, "Newer"));
     await page.evaluate(() => window.testBridge.answerHistory(0, "Older"));
     await expect.poll(() => page.locator("#history-list").innerText()).toContain("Newer");
@@ -842,7 +869,6 @@ describe("details history", () => {
     expect(await page.locator("#history-list").innerText()).not.toContain("No checks yet");
     expect(await page.evaluate(() => window.testBridge.unhandled)).toEqual([]);
 
-    // Snapshots about other permits leave the failure alone rather than asking again.
     await push(snapshot(fifty.map((entry, index) => (index === 5 ? { ...entry, checking: true } : entry))));
     expect(await historyCalls()).toEqual([shown.id]);
 
@@ -937,7 +963,6 @@ describe("snapshot order", () => {
     await expect.poll(() => status.innerText()).toContain("Newer");
 
     await page.evaluate(() => window.testBridge.answerSnapshot());
-    // Give the late reply its chance to render before checking that it didn't.
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
     expect(await status.innerText()).toContain("Newer");
 
@@ -990,7 +1015,6 @@ describe("desktop shortcut", () => {
     await page.locator("#confirm-cancel").click();
     expect(await page.evaluate(() => window.testBridge.preferenceCalls)).toEqual([["desktopShortcut", false]]);
 
-    // A snapshot main sent before it heard the answer doesn't ask again.
     await push(snapshot([permit(1)], { preferences: firstRun }));
     expect(await page.locator("#confirm-dialog").isVisible()).toBe(false);
     expect(await page.locator("#confirm-cancel").textContent()).toBe("Not now");
@@ -1050,7 +1074,6 @@ describe("key banner", () => {
     expect(await page.locator("#settings-key-state").innerText()).toContain("Paste a working key");
     expect(await page.locator("#key-remove").isVisible()).toBe(true);
 
-    // Saving a key that works brings a snapshot without the pause.
     await push(snapshot([permit(1)], { monitoring: "scheduled" }));
     expect(await banner.isVisible()).toBe(false);
     expect(await page.locator("#settings-key-state").isVisible()).toBe(false);
@@ -1105,7 +1128,6 @@ describe("shared lists", () => {
     expect(await page.locator("#follow-on").isVisible()).toBe(true);
     expect(await page.locator("#share-off").isVisible()).toBe(false);
 
-    // A failed fetch keeps the list and says the copy may be old.
     await push(
       snapshot([permit(1)], {
         share: {
@@ -1119,7 +1141,6 @@ describe("shared lists", () => {
     expect(await page.locator("#next-check").textContent()).toBe("Shared list · couldn't update");
     expect(await page.locator("#share-status").textContent()).toBe("Couldn't reach the sharing service. Retrying.");
 
-    // Leaving follow mode brings the controls back.
     await push(snapshot([permit(1)]));
     expect(await page.locator("#share-off").isVisible()).toBe(true);
     expect(await page.locator("#share-sync").isVisible()).toBe(false);

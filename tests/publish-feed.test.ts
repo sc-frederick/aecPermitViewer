@@ -8,9 +8,7 @@ import { temporaryDirectory } from "./support/temporary-directory.js";
 
 const SCRIPT = path.resolve("scripts/publish-feed.mjs");
 
-// The release job runs on Linux, and the fake CLI is reached through a shell wrapper on PATH.
 describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
-  /** A release job workspace, a fake bucket, and an `aws` on PATH that writes to it. */
   function workspace() {
     const root = temporaryDirectory("permit-monitor-feed-");
     const aws = installFakeAwsCli(root);
@@ -19,21 +17,17 @@ describe.skipIf(process.platform === "win32")("CI publication to R2", () => {
     mkdirSync(out, { recursive: true });
 
     return {
-      /** Writes a signed installer, its manifest, and a placeholder Mac zip to the job's output directory. */
       build(version: string, installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
         writeFileSync(path.join(out, "release-manifest.json"), releaseManifest(version, installer));
         writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), `mac ${version}`);
       },
-      /** Replaces the Mac zip with the bytes the macOS job would build. */
       buildMac(zip: string): void {
         writeFileSync(path.join(root, "work", "out", "make", "PermitMonitor-mac-arm64.zip"), zip);
       },
-      /** Swaps the built installer after signing, leaving the manifest describing the original bytes. */
       replaceInstaller(installer: string): void {
         writeFileSync(path.join(out, "PermitMonitorSetup.exe"), installer);
       },
-      /** Stores an object as an earlier release left it; omit `sha256` to model one stored without a recorded hash. */
       seed(key: string, body: string, metadata: { sha256?: string } = {}): void {
         writeFileSync(path.join(bucket, key), body);
         writeFileSync(

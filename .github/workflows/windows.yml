@@ -7,7 +7,6 @@ on:
     tags: ["v*"]
   pull_request:
 
-# A newer push to the same pull request replaces its run. Branch and tag runs always finish.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -25,7 +24,6 @@ jobs:
           node-version: 24.21.0
           cache: npm
       - run: npm ci --allow-git=all --ignore-scripts
-      # These tests use local buckets and executables, need no release credentials, and cannot publish.
       - run: npm test -- tests/publish-feed.test.ts tests/publish-update.test.ts tests/update-server.test.ts
 
   package:
@@ -34,8 +32,6 @@ jobs:
     env:
       UPDATE_FEED_URL: https://permitmon-updates.sc-frederick.workers.dev/release-manifest.json
       UPDATE_PUBLIC_KEY_SPKI_BASE64: MCowBQYDK2VwAyEApu+hz0nmtlIiFeBQQz4vtoqthXAi13VyC1EoXN7rtbc=
-      # Shared lists (infra/sync-server). The Sync server workflow deploys that Worker when it changes on master; check
-      # that its run passed before tagging a release built with this.
       SHARE_SERVICE_URL: https://permitmon-sync.sc-frederick.workers.dev
     steps:
       - uses: actions/checkout@v7
@@ -59,17 +55,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
-      # Renderer and worker tests run in the staged browser.
       - run: npm run browser:stage
       - run: npm test -- --exclude tests/history-growth.test.ts
-      # Runs alone so its 100 ms responsiveness budget doesn't compete with parallel browser and SQLite test workers.
       - run: npm run benchmark:history
       - run: npm run make:win
       - name: Test packaged browser HTTPS path
         shell: pwsh
         run: '& "out/Permit Monitor-win32-x64/PermitMonitor.exe" --smoke-browser; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
-      # The installer is ~280 MB and artifact storage is billed. Keep it only for tag releases (the release job
-      # downloads it) and manual runs. Setup.exe embeds the full .nupkg, so upload the installer alone.
       - uses: actions/upload-artifact@v7
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
@@ -78,8 +70,6 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  # The Mac app is signed ad hoc (no Apple Developer ID), so Gatekeeper blocks it until the user allows it once; see
-  # docs/RELEASE.md. macOS runners use ten times the minutes of Linux ones, so this runs for releases and manual runs only.
   package-mac:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
@@ -96,10 +86,8 @@ jobs:
           node-version: 24.21.0
           cache: npm
       - run: npm ci --allow-git=all
-      # Renderer and worker tests run in the staged browser, which is the Mac headless shell here.
       - run: npm run browser:stage
       - run: npm test -- --exclude tests/history-growth.test.ts
-      # Runs alone so its responsiveness budget doesn't compete with parallel test workers.
       - run: npm run benchmark:history
       - run: npm run package:mac
       # Packaging edits Electron's Info.plist, which breaks the bundle's seal, and Gatekeeper calls an app with a broken
@@ -125,7 +113,6 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [package, package-mac, publication-tests]
-    # Pinned so ubuntu-latest's move to 26.04 doesn't change the release image unannounced.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # One publication to the shared feed at a time, across all tags. GitHub keeps only the newest waiting run
@@ -144,7 +131,6 @@ jobs:
         with:
           node-version: 24.21.0
           cache: npm
-      # The publication script parses what it reads from the feed with zod. Nothing here needs install scripts.
       - run: npm ci --allow-git=all --ignore-scripts
       - uses: actions/download-artifact@v8
         with:
@@ -165,8 +151,6 @@ jobs:
             node scripts/sign-release-manifest.mjs
           rm -f "$key_file"
       # Cloudflare challenges GitHub runner IPs on the Worker hosts, so CI writes to R2's S3 endpoint directly.
-      # Installer and Mac zip first, manifest last. publish-feed.mjs never replaces a versioned artifact with other
-      # bytes and only moves the manifest to a newer version (infra/update-server/src/release-policy.ts).
       - name: Publish to update feed
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

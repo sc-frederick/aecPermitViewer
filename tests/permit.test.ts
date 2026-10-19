@@ -135,7 +135,6 @@ describe("verified portal observation", () => {
       }),
     ).toMatchObject({ _tag: "ok" });
     expect(parsePortalUrl(detailUrl.replaceAll("Building", "Licenses"), "detail", HILLSBOROUGH_ID)).toBeNull();
-    // Tampa searches only its Building module.
     expect(parsePortalUrl(landDevelopment.replaceAll("HCFL", "TAMPA"), "detail", "tampa-building")).toBeNull();
     expect(
       parsePortalUrl(
@@ -267,7 +266,6 @@ describe("SWFWMD WMIS records", () => {
     expect(parseWmisNumber("1001157", "ERP")).toEqual({ kind: "application", id: 1001157 });
     expect(parseWmisNumber("1960.023", "WUP")).toEqual({ kind: "permit", prefix: null, permit: 1960, revision: 23 });
     expect(parseWmisNumber("973309", "WCP")).toEqual({ kind: "well", permit: 973309 });
-    // A seven-digit serial can't be split into a prefix and serial, and water use and well numbers have no prefix or app ID.
     expect(parseWmisNumber("4347590.008", "ERP")).toBeNull();
     expect(parseWmisNumber("20001960.023", "WUP")).toBeNull();
     expect(parseWmisNumber("1960", "WUP")).toBeNull();
@@ -393,7 +391,6 @@ describe("St. Johns River-hosted ePermit records", () => {
     expect(parseEpermitNumber("2e-131-6688-3")).toEqual({ prefix: "2E-131", permit: 6688, sequence: 3 });
     expect(parseEpermitNumber("219072-3")).toEqual({ prefix: null, permit: 219072, sequence: 3 });
     expect(parseEpermitNumber("219072")).toBeNull();
-    // A number missing its sequence can't be split into Permit # and Sequence #.
     expect(parseEpermitNumber("ERP-123-255799")).toBeNull();
     expect(permitNumberProblem("sjrwmd", "219072")).toBe(
       "Use the number as the district writes it, for example 219072-3.",
@@ -460,7 +457,6 @@ describe("SFWMD RegPermitting records", () => {
     expect(parseRegPermittingNumber("48-112909-p")).toEqual({ kind: "permit", number: "48-112909-P" });
     expect(parseRegPermittingNumber("36-00142-S-73")).toMatchObject({ kind: "permit" });
     expect(parseRegPermittingNumber("44-117840-WC")).toMatchObject({ kind: "permit" });
-    // EAA and C-139 permits show no status.
     expect(parseRegPermittingNumber("50-00024-E")).toBeNull();
     expect(permitNumberProblem("sfwmd", "50-00024-E")).not.toBeNull();
   });

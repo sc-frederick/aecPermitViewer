@@ -4,9 +4,6 @@ import { z } from "zod";
 import { chooseNavigation, navigationClient, type NavigationDecision } from "../src/main/jev.js";
 import type { PageObservation } from "../src/shared/worker-protocol.js";
 
-// The real SDK client runs every request through its fetch seam, which answers from the test; nothing leaves the process.
-
-/** A search page offering one step, so Jev is offered `open`, `WAIT`, and `STOP`. */
 const OBSERVATION: PageObservation = {
   phase: "search",
   location: "permit-search",
@@ -19,17 +16,14 @@ const OBSERVATION: PageObservation = {
   candidates: [{ id: "open", description: "Open the exact result.", established: false }],
 };
 
-/** The part of the request body that says which labels were offered. */
 const offeredCriteriaSchema = z.object({
   questions: z.object({ next: z.object({ criteria: z.record(z.string(), z.string()) }) }),
 });
 
-/** The labels offered in each request the service received, in order. */
 interface ServiceLog {
   offered: string[][];
 }
 
-/** The SDK's fetch seam standing in for the service, and what it was asked. */
 interface ScriptedService {
   fetch: Fetch;
   log: ServiceLog;
@@ -37,7 +31,6 @@ interface ScriptedService {
 
 type Reply = (init: RequestInit | undefined) => Promise<Response>;
 
-/** A fetch that answers the n-th request with the n-th reply and records what it was asked. */
 function service(replies: Reply[]): ScriptedService {
   const log: ServiceLog = { offered: [] };
 
@@ -59,7 +52,6 @@ function json(status: number, body: JsonValue, headers: Record<string, string> =
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
-/** A successful reply carrying `next` as the answer. */
 function answering(next: JsonValue): Reply {
   return json(200, { model: "jev-1.13.0", answers: { next }, usage: { input_tokens: 10, output_tokens: 2 } });
 }
@@ -220,8 +212,6 @@ describe("Jev navigation requests", () => {
     expect(log.offered).toHaveLength(1);
   });
 
-  // The server asks for 5 s, the longest wait the app honors. If the signal couldn't end that wait, the test would hit
-  // its timeout or reach the unscripted second request.
   it("reports cancellation during the wait before retrying a rate-limited request", async () => {
     const controller = new AbortController();
 

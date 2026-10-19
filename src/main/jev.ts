@@ -11,16 +11,13 @@ import { z } from "zod";
 import { getJurisdiction, type JurisdictionId } from "../shared/jurisdictions.js";
 import type { PageObservation } from "../shared/worker-protocol.js";
 
-/** A confidence or probability, from 0 to 1. Zod 4 numbers already reject NaN and infinity. */
 const unitIntervalSchema = z.number().min(0).max(1);
 
-/** The reply envelope. The SDK returns the body unchecked, so the model name and answers are parsed before use. */
 const replySchema = z.object({
   model: z.string().min(1),
   answers: z.object({ next: z.unknown() }),
 });
 
-/** A choice answer's shape. `readChoice` then checks its labels against the offered criteria. */
 const choiceAnswerSchema = z.object({
   type: z.literal("choice"),
   choice: z.string(),
@@ -36,23 +33,9 @@ type ChoiceAnswer = z.infer<typeof choiceAnswerSchema>;
  */
 const PROBABILITY_SUM_TOLERANCE = 0.02;
 
-/**
- * Why a reply was refused before the confidence and margin thresholds were applied:
- * - `reply`: the body isn't a reply with a model name and answers.
- * - `invalid_answer`: no answer to the question asked, not a choice answer, or a confidence or probability outside 0 to 1.
- * - `unknown_choice`: the chosen label wasn't offered.
- * - `missing_alternative`: an offered label has no probability, so the margin can't account for it.
- * - `unexpected_alternative`: a probability names a label that wasn't offered.
- * - `not_normalized`: the probabilities don't sum to 1.
- */
 export type MalformedAnswerProblem =
   "reply" | "invalid_answer" | "unknown_choice" | "missing_alternative" | "unexpected_alternative" | "not_normalized";
 
-/**
- * The next navigation step. `actualModel` is the model that answered, or null when no model was asked or none answered.
- * `unsupported_page` is a page Jev can't be asked about or an answer too uncertain to act on; `malformed_response` is a
- * reply that breaks the service's contract; `cancelled` means the run's signal ended the request or its retry wait.
- */
 export type NavigationDecision =
   | { _tag: "chosen"; candidateId: string; actualModel: string | null; attempts: number }
   | { _tag: "wait"; actualModel: string; attempts: number }
@@ -63,20 +46,14 @@ export type NavigationDecision =
   | { _tag: "malformed_response"; problem: MalformedAnswerProblem; actualModel: string | null; attempts: number }
   | { _tag: "unsupported_page"; actualModel: string | null; attempts: number };
 
-/** The model and prompt behind navigation choices. Each run records these as its requested configuration. */
 export const NAVIGATION_MODEL = { model: "jev-1.13.0", promptVersion: "navigation-3" } as const;
 
 const MIN_CONFIDENCE = 0.75;
 
 const MIN_MARGIN = 0.15;
 
-/** The most requests one navigation choice makes: a first try and one retry after a rate limit. */
 const MAX_ATTEMPTS = 2;
 
-/**
- * Per-request SDK settings. With the SDK's own retries off, each HTTP request is one attempt counted by `onAttempt`.
- * The client and each call both set them, so a client configured elsewhere can't add uncounted retries.
- */
 const REQUEST_SETTINGS = { retry: { maxRetries: 0 }, timeout: 8_000 } as const;
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -101,11 +78,6 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/**
- * Checks an answer against the labels that were offered: it must choose one of them and give every one, and nothing
- * else, a probability, with the probabilities summing to 1. Returns the chosen label, the reported confidence, and the
- * chosen label's lead over the likeliest other label.
- */
 function readChoice(
   answer: ChoiceAnswer,
   offered: readonly string[],
@@ -135,7 +107,6 @@ function readChoice(
   return { _tag: "ok", choice: answer.choice, confidence: answer.confidence, margin: chosen - runnerUp };
 }
 
-/** Creates the client for one check run's navigation calls. `fetch` overrides the global fetch; production omits it. */
 export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
   const config: TypeSafeClientConfig = {
     apiKey: key,
@@ -149,12 +120,6 @@ export function navigationClient(key: string, fetch?: Fetch): TypeSafeClient {
   return new TypeSafeClient(config);
 }
 
-/**
- * Asks Jev which offered step, if any, advances the lookup. Callers bound the candidate count. Makes at most two
- * requests within `remainingRequests` and `deadline`, retrying only after a rate limit; any other failure ends the
- * call. The reply is parsed in full before the confidence and margin thresholds apply, so a reply that omits an
- * offered label or reports values outside 0 to 1 is `malformed_response`, never a chosen step.
- */
 export async function chooseNavigation(input: {
   client: TypeSafeClient;
   jurisdictionId: JurisdictionId;

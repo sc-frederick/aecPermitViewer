@@ -10,13 +10,11 @@ import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import { NOTHING_DISPLAYED, type DisplayedRecord, type PortalAdapter, type SearchObservation } from "./adapter.js";
 
-/** SFWMD's RegPermitting, a Pega app whose search and record views load in frames under one session address. */
 type RegPermittingProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "regpermitting" }>;
 
 // The navigation drawer starts collapsed, so the link is present but off screen.
 const SEARCH_RECORDS_LINK = 'a.menu-item-anchor[title="Search Records"]';
 
-/** Search by Application is the default tab; permits have their own tab, field, button, and results grid. */
 const FORMS = {
   application: {
     tab: "Search by Application",
@@ -36,7 +34,6 @@ const RESULT_ROW = "tr[pl_index]";
 
 const NO_RESULTS_ROW = "tr#Grid_NoResults";
 
-/** The results grid shows 20 rows a page, so a full page without the number can't rule it out. */
 const PAGE_SIZE = 20;
 
 const RECORD_HEADING = "span.case_id";
@@ -82,7 +79,6 @@ async function waitForFrameShowing(page: Page, selector: string, timeout: number
   return null;
 }
 
-/** The value beside a read-only field caption, such as "Permit Status". */
 async function fieldValue(frame: Frame, label: string): Promise<string | null> {
   const values = await frame
     .locator("span.field-caption.dataLabelForRead")
@@ -105,12 +101,10 @@ function form(requested: string) {
   return parseRegPermittingNumber(requested)?.kind === "permit" ? FORMS.permit : FORMS.application;
 }
 
-/** The search frame, when either tab's field is showing. */
 async function eitherSearchFrame(page: Page): Promise<Frame | null> {
   return (await frameShowing(page, FORMS.application.input)) ?? (await frameShowing(page, FORMS.permit.input));
 }
 
-/** The search frame, when its field for this kind of number is showing. */
 async function searchFrame(page: Page, requested: string): Promise<Frame | null> {
   return frameShowing(page, form(requested).input);
 }
@@ -128,7 +122,6 @@ async function criteriaEntered(frame: Frame, requested: string): Promise<boolean
   return Boolean(wanted && value.trim().toUpperCase() === wanted.number);
 }
 
-/** The number links in the visible results grid, or null when no results are shown. */
 async function resultLinks(frame: Frame, requested: string): Promise<Locator | null> {
   const grid = frame.locator(form(requested).grid).filter({ visible: true }).first();
 
@@ -145,7 +138,6 @@ function isRequested(text: string, requested: string): boolean {
   return text.toUpperCase() === parseRegPermittingNumber(requested)?.number;
 }
 
-/** Offer the next step, or report that the requested record is open. */
 async function observeRegPermitting(page: Page, requested: string): Promise<SearchObservation> {
   const wanted = parseRegPermittingNumber(requested);
   const none = { inputValue: "", formLabels: [], visibleControls: [], resultNumbers: [], candidates: [] };
@@ -234,7 +226,6 @@ async function observeRegPermitting(page: Page, requested: string): Promise<Sear
   };
 }
 
-/** True once a search for the exact number returned "No cases", or every result on a single page is another number. */
 async function regPermittingFoundNothing(page: Page, requested: string): Promise<boolean> {
   const frame = await searchFrame(page, requested);
 
@@ -305,7 +296,6 @@ async function openRegPermittingResult(page: Page, requested: string): Promise<v
   await waitForFrameShowing(page, RECORD_HEADING, 30_000);
 }
 
-/** Waits up to 20 seconds for the Search Records link to attach. Resolves either way; the next observation decides. */
 export async function waitForSearchRecordsLink(page: Page): Promise<void> {
   await page
     .locator(SEARCH_RECORDS_LINK)
@@ -314,16 +304,10 @@ export async function waitForSearchRecordsLink(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
-/** True once a record view's heading shows within `timeout` ms. The adapter's read waits for its number and status. */
 export async function regPermittingRecordShown(page: Page, timeout: number): Promise<boolean> {
   return Boolean(await waitForFrameShowing(page, RECORD_HEADING, timeout));
 }
 
-/**
- * Read the open record: the number field and status for its kind (Application Number with Application Status or,
- * for water use, App Status; Permit Number with Permit Status). The record link is built from the key in the frame
- * address when there is one (a record opened from a result), else it is the saved link the run opened.
- */
 async function readRegPermittingRecord(
   page: Page,
   profile: RegPermittingProfile,
@@ -384,13 +368,6 @@ async function readReadyRegPermittingRecord(
   return record;
 }
 
-/**
- * Drive SFWMD RegPermitting's Search Records for one requested application or permit number.
- *
- * @param openedRecordUrl - The saved record link this run opened, if any; it is reported as the record link when the
- *   record view's frame carries no key.
- * @param readinessTimeout - Milliseconds to wait for the requested number and its kind-specific status.
- */
 export function regPermittingAdapter(
   page: Page,
   profile: RegPermittingProfile,

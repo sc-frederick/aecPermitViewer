@@ -1,6 +1,5 @@
 import { bindings, defineConfig } from "cf/config";
 
-/** Worker configuration preserving the existing resource identities and runtime settings. */
 export default defineConfig({
   worker: {
     name: "permitmon-updates",

@@ -1,9 +1,5 @@
 import { wordingKey } from "./wording-key.js";
 
-/**
- * One dated workflow entry: a review's portal wording and dates. Pending rounds have no status or decision date yet.
- * Dates are ISO calendar dates, independent of the computer's time zone. `reviewEntrySchema` parses one.
- */
 export type ReviewEntry = {
   process: string;
   status: string | null;
@@ -11,10 +7,7 @@ export type ReviewEntry = {
   dueDate: string | null;
 };
 
-/**
- * Latest entry per process by decision date, using the due date only for pending rounds. Accela lists same-day
- * events oldest first, so the last such entry wins. A new TBD round replaces that discipline's older corrections.
- */
+// Accela lists same-day review events oldest first.
 export function latestReviews(entries: readonly ReviewEntry[]): ReviewEntry[] {
   const latest = new Map<string, ReviewEntry>();
 
@@ -61,8 +54,6 @@ const SUBMISSIONS = new Set([
   "routed for review",
 ]);
 
-// Only intake/coordination tasks establish a submission for the whole record, so a resubmittal on one discipline
-// doesn't clear another discipline's outstanding request.
 const COORDINATION = new Set([
   "application submittal",
   "application review",
@@ -70,11 +61,7 @@ const COORDINATION = new Set([
   "plans coordination",
 ]);
 
-/**
- * Requests still awaiting an applicant response. A resubmittal or routing event on an intake/coordination task starts
- * a new round and clears requests dated before it; uploads and payments alone don't. A request dated the same day as
- * the resubmittal stays outstanding, since the portal gives no times to order them.
- */
+// The portal supplies dates without times, so same-day corrections cannot be ordered against resubmittal.
 export function outstandingReviews(entries: readonly ReviewEntry[]): ReviewEntry[] {
   let submitted: string | null = null;
 
@@ -95,12 +82,10 @@ export function outstandingReviews(entries: readonly ReviewEntry[]): ReviewEntry
   );
 }
 
-/** Stable identity of a request, independent of workflow ordering, whitespace, and reassignment. */
 export function reviewRequestKey(entry: ReviewEntry): string {
   return JSON.stringify([wordingKey(entry.process), wordingKey(entry.status ?? ""), entry.date ?? entry.dueDate]);
 }
 
-/** Human-readable portal evidence, shared by action tooltips and notifications. */
 export function describeReview(entry: ReviewEntry): string {
   return `${entry.process}: “${entry.status ?? "Pending"}”${entry.date ? ` (${entry.date})` : ""}`;
 }

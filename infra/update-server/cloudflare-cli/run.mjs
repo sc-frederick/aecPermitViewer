@@ -174,7 +174,6 @@ if (action === "dev") {
     if (current.isSymbolicLink()) {
       if (resolve(dirname(localState), readlinkSync(localState)) !== originalState) unlinkSync(localState);
     } else {
-      // Preserve any state created before the compatibility link was installed.
       renameSync(localState, `${localState}.before-link-${Date.now()}`);
     }
   }
@@ -203,7 +202,6 @@ if (action === "db:migrate") {
 
   if (local) {
     // cf beta 12 leaves its local resource runtime open after completing D1 commands.
-    // Wrangler remains the compatibility backend until that CLI issue is fixed.
     const legacy = forwarded.filter(
       (arg) => !["--mode", "-m"].includes(arg) && arg !== selectedMode && !arg.startsWith("--mode="),
     );

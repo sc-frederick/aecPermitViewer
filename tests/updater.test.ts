@@ -76,7 +76,6 @@ describe("installer download", () => {
     return path.join(temporaryDirectory("permit-monitor-update-"), "setup.partial.exe");
   }
 
-  /** A download that sends `chunks`, then ends or fails; `cancelled` records whether the app released it. */
   function stream(chunks: readonly string[], ending: "end" | "fail") {
     const state = { cancelled: false };
     const queue = [...chunks];
@@ -144,9 +143,6 @@ describe("installer download", () => {
   });
 });
 
-// A self-signed certificate for localhost and 127.0.0.1, trusted only while these tests run. Regenerate with:
-// openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 36500 -subj "/CN=localhost"
-//   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" -keyout localhost-key.pem -out localhost-cert.pem
 const tlsKey = readFileSync(path.resolve("tests/fixtures/updater/localhost-key.pem"), "utf8");
 
 const tlsCert = readFileSync(path.resolve("tests/fixtures/updater/localhost-cert.pem"), "utf8");
@@ -157,11 +153,6 @@ interface Installer {
   drop: boolean;
 }
 
-/**
- * Serves a signed release feed and its installers over local HTTPS. Each installer sends its first half, then waits for
- * its release before sending the rest (or dropping the connection). Installer requests are recorded, along with those
- * the client hung up on before the end.
- */
 async function updateServer(signingKey: KeyObject) {
   let feed = { status: 404, body: "" };
   const installers = new Map<string, Installer>();
@@ -205,7 +196,6 @@ async function updateServer(signingKey: KeyObject) {
     origin,
     requests,
     hungUp,
-    /** Publishes a signed manifest for `bytes` as `version`, served in full unless held. */
     publish(version: string, bytes: Buffer): void {
       installers.set(version, { bytes, release: Promise.resolve(), drop: false });
 
@@ -217,7 +207,6 @@ async function updateServer(signingKey: KeyObject) {
         ),
       };
     },
-    /** Holds `version`'s installer after its first half until the returned function is called. */
     hold(version: string): () => void {
       let open: () => void = () => undefined;
 
@@ -231,7 +220,6 @@ async function updateServer(signingKey: KeyObject) {
 
       return open;
     },
-    /** Serves `bytes` for `version` from now on without changing its signed manifest; `drop` cuts it off halfway. */
     serve(version: string, bytes: Buffer, ending: "end" | "drop"): void {
       installers.set(version, { bytes, release: Promise.resolve(), drop: ending === "drop" });
     },
@@ -262,7 +250,6 @@ describe("update operations", () => {
     for (const server of servers.splice(0)) await server.close();
   });
 
-  /** A running feed server and an UpdateManager for app version 1.0.0 that reads it, with its own data folder. */
   async function setup() {
     const server = await updateServer(keys.privateKey);
     servers.push(server);
@@ -359,7 +346,6 @@ describe("update operations", () => {
     expect(await updateFiles()).toEqual([]);
     await expect(updates.installerForApprovedHandoff()).rejects.toBeInstanceOf(UpdateNotReady);
 
-    // The release stays on offer, so the next attempt downloads it again.
     server.serve("1.1.0", second, "end");
     await expect(updates.download()).rejects.toThrow("Update hash mismatch");
     await expect(updates.installerForApprovedHandoff()).rejects.toBeInstanceOf(UpdateNotReady);

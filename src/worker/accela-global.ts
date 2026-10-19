@@ -8,27 +8,19 @@ const RESULTS_LABEL = "#ctl00_PlaceHolderMain_lblSearchResults";
 
 const NO_RESULTS = "#ctl00_PlaceHolderMain_pnlNoResults";
 
-/** A record link on Accela's Global Search results page. */
 export const GLOBAL_RESULT_LINK = "a[id$='_lnkPermitNumber']";
 
 const NEXT_PAGE = "a[href*='gdvPermitList']:text-is('Next >')";
 
-/** The permit number on an Accela record page. */
 export const DETAIL_NUMBER = "#ctl00_PlaceHolderMain_lblPermitNumber";
 
-/** Accela Global Search results. `pageIdentity` hashes the visible rows and pager for the worker's fingerprint only. */
 export interface AccelaGlobalResults {
-  /** Offers only an exact record or the next results page; other row numbers never enter the model observation. */
   observe(): Promise<SearchObservation & { pageIdentity: string }>;
-  /** True when a completed results page has no exact match and no next page. */
   foundNothing(): Promise<boolean>;
-  /** Opens the sole exact result after rereading its identity. */
   openResult(): Promise<void>;
-  /** Advances the page and waits for changed rows or a terminal result. */
   next(): Promise<void>;
 }
 
-/** Waits for a record, changed result rows, or the no-results notice after a Global Search postback. */
 export async function waitForAccelaGlobalResults(page: Page, previousRows: string, previousPager = ""): Promise<void> {
   await page
     .waitForFunction(
@@ -54,7 +46,6 @@ export async function waitForAccelaGlobalResults(page: Page, previousRows: strin
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
 }
 
-/** Drives Accela Global Search results, including postbacks that leave the page URL unchanged. */
 export function accelaGlobalResultsAdapter(
   page: Page,
   profile: AutomatedJurisdictionProfile,

@@ -43,10 +43,8 @@ const SEARCH_FIELD = "#ctl00_PlaceHolderMain_generalSearchForm_txtGSPermitNumber
 
 const SEARCH_BUTTON = "#ctl00_PlaceHolderMain_btnNewSearch";
 
-/** What Accela's record search shows when nothing matches. */
 const NO_RESULTS_MESSAGE = "Your search returned no results. Please modify your search criteria and try again.";
 
-// Accela's Global Search box; Pasco injects its own after load.
 const GLOBAL_SEARCH_FIELD = "#search_text_gq, #txtSearchCondition";
 
 const TYLER_SEARCH_BUTTON = "#button-Search";
@@ -77,7 +75,6 @@ let lastObservation: PageObservation | null = null;
 
 let stopped = false;
 
-/** The saved record link this run opened instead of searching, if any. */
 let openedRecordUrl: string | null = null;
 
 function send(message: WorkerToMain): void {
@@ -94,7 +91,6 @@ async function closeAll(): Promise<void> {
   setTimeout(() => process.exit(process.exitCode ?? 0), 50);
 }
 
-/** Reports the run's outcome and closes the browser. */
 function fail(outcome: WorkerFailure): void {
   if (currentRun) send({ kind: "failed", runId: currentRun, outcome });
   void closeAll();
@@ -110,7 +106,6 @@ function locationOf(url: string): PageObservation["location"] {
   return "other";
 }
 
-/** The module driving this run's portal, for families that don't use the generic steps below. */
 function portalAdapter(): PortalAdapter | null {
   if (!page || !jurisdiction) return null;
 
@@ -126,7 +121,6 @@ function portalAdapter(): PortalAdapter | null {
   }
 }
 
-/** Reads the record's displayed number, status, and status label, and the record link to save. */
 async function readRecord(): Promise<DisplayedRecord> {
   const adapter = portalAdapter();
 
@@ -166,7 +160,6 @@ async function exactResultLinks(): Promise<Array<{ text: string; href: string }>
   return jurisdiction ? exactLinks(links, requestedNumber, jurisdiction.id) : [];
 }
 
-/** An observation for main, and the record it read on a detail page so the result doesn't read it again. */
 interface Observed {
   observation: PageObservation;
   record: DisplayedRecord | null;
@@ -325,7 +318,6 @@ async function observe(): Promise<Observed> {
       }
     }
 
-    // An adapter matches its own results above.
     const links = adapter || globalResults ? [] : await exactResultLinks();
 
     if (!adapter && !globalResults) resultNumbers = links.map((link) => link.text);
@@ -350,7 +342,6 @@ async function observe(): Promise<Observed> {
     }
   }
 
-  // Only the start of the page is checked, so it is truncated before it leaves the browser.
   const challengeText = await page.evaluate(() => document.body?.innerText.slice(0, 3000) ?? "").catch(() => "");
 
   if (/captcha|verify you are human|are you a human|access denied|sign in|log in to continue/i.test(challengeText)) {
@@ -416,7 +407,6 @@ async function sendObservationOrResult(): Promise<void> {
         return;
       }
     } else if (jurisdiction?.portalFamily === "accela" && onGlobalResults(page.url())) {
-      // Global Search matches whole record numbers, so a finished search without the exact row has no such record.
       if (await accelaGlobalResultsAdapter(page, jurisdiction, requestedNumber).foundNothing()) {
         fail("not_found_in_supported_search");
 
@@ -515,7 +505,6 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
     void popup.close();
   });
   page.on("framenavigated", (frame) => {
-    // A failed load shows Chromium's error page; the failed goto itself decides whether to retry.
     if (
       frame === page?.mainFrame() &&
       frame.url() !== "about:blank" &&
@@ -549,7 +538,6 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
     if (page && !stopped) await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
   }
 
-  // RegPermitting's record view settles on the same address as its search, so it is recognized by content.
   const recordOpened =
     landed !== startUrl &&
     page !== null &&
@@ -564,7 +552,6 @@ async function start(message: Extract<MainToWorker, { kind: "start" }>): Promise
 
   openedRecordUrl = recordOpened ? target : null;
 
-  // A saved record link opens straight to the record, which has no search controls to wait for.
   if (page && !stopped) await waitForLanding(page, jurisdiction);
 
   if (globalSearch() && page && !stopped && locationOf(page.url()) === "permit-search") {

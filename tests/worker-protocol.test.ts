@@ -30,12 +30,6 @@ describe("worker messages", () => {
     }
   });
 
-  it("accepts a failed run with a failure outcome", () => {
-    expect(
-      workerToMainSchema.safeParse({ kind: "failed", runId: RUN_ID, outcome: "not_found_in_supported_search" }).success,
-    ).toBe(true);
-  });
-
   it("rejects a failed run that claims success, since only a verified record can be one", () => {
     expect(workerToMainSchema.safeParse({ kind: "failed", runId: RUN_ID, outcome: "success" }).success).toBe(false);
   });

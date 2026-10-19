@@ -1,44 +1,28 @@
-// Keeps a shared list current on both ends with as few syncs as its changes allow. The publisher sends once its checks
-// have finished and the list has changed, so a scheduled run goes out as one publication. A follower fetches a while
-// after each of the publisher's check times, when that run should be done. Both sides also sync on request. Neither
-// throws into the app; failures become a short message for Settings.
 import { z } from "zod";
 import { nextSlotAfter, type CheckTimes } from "../shared/schedule.js";
 import { parseSharedList, type SharedList } from "./share-list.js";
 import { ListTooLarge, openList, sealListAsync, type ShareService } from "./share-service.js";
 
-/** How long the list has to sit unchanged, with no checks queued or running, before it is sent. */
 export const PUBLISH_SETTLE_MS = 2 * 60_000;
 
-/** How soon a failed publication or fetch is tried again. */
 export const RETRY_MS = 15 * 60_000;
 
-/** How long after each of the publisher's check times a follower asks for a newer copy; long enough for most runs. */
 export const FOLLOW_DELAY_MS = 90 * 60_000;
 
-/** How often a follower asks when the publisher has no check schedule. */
 export const UNSCHEDULED_FOLLOW_MS = 3 * 3_600_000;
 
 type Report = (operation: string, cause: unknown) => void;
 
-/**
- * When a follower next fetches: FOLLOW_DELAY_MS after the earliest publisher check time whose fetch is still ahead, or
- * UNSCHEDULED_FOLLOW_MS from now when there is no schedule.
- */
 export function nextFetchAt(schedule: CheckTimes | null, now: Date): Date {
   if (!schedule) return new Date(now.getTime() + UNSCHEDULED_FOLLOW_MS);
 
   return new Date(nextSlotAfter(new Date(now.getTime() - FOLLOW_DELAY_MS), schedule).getTime() + FOLLOW_DELAY_MS);
 }
 
-/** Result of a requested sync: why it failed, as Settings shows it, or null. */
 export type SyncProblem = string | null;
 
-/** Sends one app's list when it has changed and its checks have finished. */
 export class SharePublisher {
-  /** When the service last accepted the list from this app run. */
   publishedAt: string | null = null;
-  /** Why the latest publication failed, until one succeeds. */
   problem: string | null = null;
 
   private timer: NodeJS.Timeout | null = null;
@@ -46,11 +30,6 @@ export class SharePublisher {
   private lastJson: string | null = null;
   private stopped = false;
 
-  /**
-   * @param buildList - The list to publish, as JSON; called once per attempt.
-   * @param checking - Whether checks are queued or running; a publication waits for them to finish.
-   * @param changed - Called when `publishedAt` or `problem` changes.
-   */
   constructor(
     private readonly service: ShareService,
     private readonly writeKey: string,
@@ -61,23 +40,17 @@ export class SharePublisher {
     private readonly report: Report,
   ) {}
 
-  /** The list changed: send it once it has gone PUBLISH_SETTLE_MS without another change and no checks are left. */
   notify(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.schedule(PUBLISH_SETTLE_MS);
   }
 
-  /**
-   * Sends the list now, even if unchanged, after any publication under way. Resolves with the failure message or null;
-   * does nothing once stopped.
-   */
   async syncNow(): Promise<SyncProblem> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     await this.running;
 
-    // Stopping sharing stops the publisher before deleting the shared copy; publishing here would bring it back.
     if (this.stopped) return null;
     const attempt = this.publish(true);
     this.running = attempt
@@ -89,7 +62,6 @@ export class SharePublisher {
     return attempt;
   }
 
-  /** Stops publishing. A publication under way finishes, but its result is ignored. */
   async stop(): Promise<void> {
     this.stopped = true;
 
@@ -103,7 +75,6 @@ export class SharePublisher {
     this.timer = setTimeout(() => {
       this.timer = null;
 
-      // Mid-run, the list changes with every check; waiting sends the whole run at once.
       if (this.checking()) {
         this.schedule(PUBLISH_SETTLE_MS);
 
@@ -126,7 +97,6 @@ export class SharePublisher {
     this.changed();
   }
 
-  /** Sends the list if it changed since the last publication, or regardless when `force` is set. */
   private async publish(force: boolean): Promise<SyncProblem> {
     let json: string;
 
@@ -173,21 +143,17 @@ export class SharePublisher {
   }
 }
 
-/** The last list a follower received, kept so the app shows it at start without waiting for the network. */
 export const cachedListSchema = z.object({
   revision: z.number().int().positive(),
   publishedAt: z.string(),
   json: z.string(),
 });
 
-/** The followed list as last received: its revision, publication time, and decrypted JSON. */
 export type CachedList = z.infer<typeof cachedListSchema>;
 
-/** A first fetch with a new share code: the list it opens, or why it doesn't open one. */
 export type Probe =
   { _tag: "ok"; cache: CachedList } | { _tag: "absent" } | { _tag: "undecryptable" } | { _tag: "unreadable" };
 
-/** Settings text for each follow failure. */
 const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   absent: "The shared list was removed. Ask for a new code.",
   undecryptable: "This code no longer opens the shared list. Ask for a new code.",
@@ -196,7 +162,6 @@ const FOLLOW_PROBLEMS: Record<FollowFailure, string> = {
   persistence: "Couldn't save the shared list locally. Retrying.",
 };
 
-/** Opens and parses a fetched list. */
 function readList(
   sealed: Uint8Array,
   contentKey: Uint8Array,
@@ -212,10 +177,8 @@ function readList(
   }
 }
 
-/** Why the latest fetch didn't bring a list. */
 type FollowFailure = "absent" | "undecryptable" | "unreadable" | "unreachable" | "persistence";
 
-/** Fetches the list a share code opens, without following it. Rejects when the service can't be reached. */
 export async function probeShare(service: ShareService, readToken: string, contentKey: Uint8Array): Promise<Probe> {
   const reply = await service.fetch(readToken, null);
 
@@ -227,13 +190,9 @@ export async function probeShare(service: ShareService, readToken: string, conte
   return { _tag: "ok", cache: { revision: reply.revision, publishedAt: reply.publishedAt, json: read.json } };
 }
 
-/** Keeps a followed list current. */
 export class ShareFollower {
-  /** The latest list, or null before one has been read. */
   list: SharedList | null = null;
-  /** When the publisher sent the list shown. */
   publishedAt: string | null = null;
-  /** When this app last heard from the service about the list. */
   checkedAt: string | null = null;
   private failure: FollowFailure | null = null;
   private revision: number | null = null;
@@ -241,13 +200,6 @@ export class ShareFollower {
   private running: Promise<void> | null = null;
   private stopped = false;
 
-  /**
-   * @param cached - The list received earlier, shown until a fetch brings a newer one. A cache that doesn't parse is
-   *   reported and ignored.
-   * @param save - Keeps a newly received list for the next start.
-   * @param updated - A newer list replaced `before` (null when none was shown).
-   * @param changed - Anything the window shows about the list changed.
-   */
   constructor(
     private readonly service: ShareService,
     private readonly readToken: string,
@@ -269,23 +221,19 @@ export class ShareFollower {
     }
   }
 
-  /** Why the latest fetch didn't bring a list, until one does. */
   get problem(): string | null {
     return this.failure ? FOLLOW_PROBLEMS[this.failure] : null;
   }
 
-  /** Fetches now, then after each of the publisher's check times (see nextFetchAt). */
   start(): void {
     void this.refresh();
   }
 
-  /** Fetches after the publisher's next check time, for a list that was fetched at `checkedAt`. */
   startFetched(checkedAt: string): void {
     this.checkedAt = checkedAt;
     this.planNext();
   }
 
-  /** Stops fetching. A fetch under way finishes, but its result is ignored. */
   async stop(): Promise<void> {
     this.stopped = true;
 
@@ -294,10 +242,6 @@ export class ShareFollower {
     await this.running;
   }
 
-  /**
-   * Asks for a newer list now, and plans the next automatic fetch from the list it has afterward. A call while a fetch
-   * is under way shares it. Resolves with why it didn't bring a list, if it didn't. Never rejects.
-   */
   refresh(): Promise<SyncProblem> {
     this.running ??= this.fetch().finally(() => {
       this.running = null;
@@ -313,7 +257,6 @@ export class ShareFollower {
     if (this.timer) clearTimeout(this.timer);
     const now = new Date();
 
-    // A failed fetch tries again sooner than the next run, so a network blip doesn't cost a whole run.
     const next =
       this.failure === "unreachable" || this.failure === "persistence"
         ? new Date(now.getTime() + RETRY_MS)

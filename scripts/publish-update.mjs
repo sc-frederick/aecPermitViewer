@@ -4,12 +4,6 @@ import { parseManifest } from "../infra/update-server/src/manifest.ts";
 import { decideManifestReplacement } from "../infra/update-server/src/release-policy.ts";
 import { installerPath, macZipPath, readLocalMac, readLocalRelease } from "./release-feed.mjs";
 
-// Manual publishing path: uploads both platform artifacts and then the signed manifest through the update
-// server Worker (infra/update-server). Run after sign-release-manifest.mjs, from a network that
-// Cloudflare doesn't challenge (GitHub's runners are challenged; CI writes to R2 directly with
-// publish-feed.mjs). The Worker refuses different bytes for a published artifact and a manifest
-// that isn't newer than the live one; this script checks the manifest rule first so it doesn't
-// upload ~280 MB only to be refused.
 const server = process.env.UPDATE_SERVER_URL;
 
 const token = process.env.UPDATE_UPLOAD_TOKEN;
@@ -81,7 +75,6 @@ if (live.status !== 404) {
     throw new Error(`A different ${version} manifest is already published. Release a new version instead.`);
 }
 
-/** Uploads one artifact into private staging, then asks storage to publish its bytes conditionally. */
 async function publishArtifact(filePath, key, claim) {
   const start = startSchema.parse(await (await call("POST", `/upload/${key}`, JSON.stringify(claim))).json());
 

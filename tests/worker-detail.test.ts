@@ -8,8 +8,6 @@ import type { DisplayedRecord } from "../src/worker/adapter.js";
 import { readDetail, tylerFoundNothing, waitForLanding, waitForTylerResults } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
 
-// Recorded Hernando pages are served at the portal's own address in the bundled Chromium, so the worker reads the same
-// markup it reads live.
 const BASE = "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod";
 
 const PERMIT_URL = `${BASE}#/permit/f3a325c7-9779-4de4-9b08-3a6aff019939`;
@@ -26,7 +24,6 @@ function fixture(name: string): string {
   return readFileSync(path.join("tests", "fixtures", "hernando", name), "utf8");
 }
 
-/** Opens `url` with the portal answering every request with `html`. */
 async function serve(url: string, html: string): Promise<void> {
   page = await browser.newPage();
   await page.route("https://hernandocountyfl-energovweb.tylerhost.net/**", (route) =>
@@ -35,12 +32,10 @@ async function serve(url: string, html: string): Promise<void> {
   await page.goto(url, { waitUntil: "domcontentloaded" });
 }
 
-/** `html` with its body held back until `render()`, the way Tyler's app draws a record or form after the page loads. */
 function renderedLater(html: string): string {
   return html.replace("<body>", '<body><template id="later">').replace("</body>", "</template></body>");
 }
 
-/** Draws the body `renderedLater` held back. */
 async function render(): Promise<void> {
   await page.evaluate(() => {
     const later = document.querySelector("#later");
@@ -49,13 +44,11 @@ async function render(): Promise<void> {
   });
 }
 
-/** A wait in progress: `finished` settles with it, and `done()` says whether it has yet. */
 interface WatchedWait {
   finished: Promise<void>;
   done: () => boolean;
 }
 
-/** Tracks whether `wait` has settled, so a test can show the wait holds until the page is ready. */
 function watch(wait: Promise<void>): WatchedWait {
   let done = false;
 
@@ -67,7 +60,6 @@ function watch(wait: Promise<void>): WatchedWait {
   };
 }
 
-/** Runs the main process's verification on a worker read; throws if a field the worker requires is missing. */
 function verify(record: DisplayedRecord, requestedNumber: string): ReturnType<typeof parseDisplayedStatus> {
   const { displayedNumber, statusLabel, statusValue, recordUrl } = record;
 
@@ -165,8 +157,6 @@ describe("Hernando record pages", () => {
     });
   });
 
-  // The record page has no search controls, so a wait on them would hold the landing for its full 12 seconds, past
-  // the 5-second test timeout on Linux and macOS. Nothing else here depends on speed.
   it("lands on a saved record link once the record renders, without waiting on search controls", async () => {
     await serve(PLAN_URL, renderedLater(fixture("plan-detail.html")));
 
@@ -200,8 +190,6 @@ describe("Hernando search", () => {
     expect(await page.locator("#SearchKeyword").isVisible()).toBe(true);
   });
 
-  // The count label is hidden until the search finishes, next to labels that stay hidden. A wait that picked a hidden
-  // label would hold for its full 12 seconds, past the 5-second test timeout on Linux and macOS.
   it("settles on the result message once it shows, and tells a finished empty search apart", async () => {
     const pending = fixture("search-one-result.html").replace(
       'aria-hidden="false" class=""',

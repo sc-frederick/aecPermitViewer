@@ -6,14 +6,11 @@ import { chooseNavigation, navigationClient, type NavigationDecision } from "./j
 import { parseDisplayedStatus, type ObservationRow, type PermitRow, type RunOutcome } from "../shared/permit.js";
 import type { MainToWorker, WorkerToMain } from "../shared/worker-protocol.js";
 
-/** A status verified on the permit's record page, ready to save with its run. */
 export type VerifiedObservation = Omit<ObservationRow, "id" | "runId" | "permitId">;
 
-/** How a check ended: only a success carries an observation, and every success does. */
 export type CheckEnding =
   { outcome: "success"; observation: VerifiedObservation } | { outcome: Exclude<RunOutcome, "success"> };
 
-/** A finished check: how it ended, and what it cost. */
 export type CheckResult = CheckEnding & {
   actionCount: number;
   requestCount: number;
@@ -21,35 +18,24 @@ export type CheckResult = CheckEnding & {
   browserVersion: string | null;
 };
 
-/** A check under way. `cancel` ends it as cancelled unless it has already ended. */
 export interface ActiveCheck {
   result: Promise<CheckResult>;
   closed: Promise<void>;
   cancel: () => void;
 }
 
-/** A started browser worker process, as a check drives it. The adapter parses what the process sends before delivering it. */
 export interface CheckWorker {
-  /** Sends a message; throws when the process can no longer receive one. */
   send(message: MainToWorker): void;
   kill(): void;
   onMessage(listener: (message: WorkerToMain) => void): void;
-  /** The process has exited, for any reason. */
   onExit(listener: () => void): void;
-  /** The process reported a fatal error. */
   onError(listener: () => void): void;
 }
 
-/** The started worker, or why its process couldn't be created. */
 export type WorkerStart = { _tag: "started"; worker: CheckWorker } | { _tag: "failed"; cause: unknown };
 
-/** Local steps of a check whose failure is reported for diagnosis. */
 export type CheckOperation = "start-worker" | "handle-message" | "cache-cleanup";
 
-/**
- * Receives a check's local failures, which the user only sees as the check's outcome. It must not throw; the check
- * settles the same way whether or not the report was kept.
- */
 export type CheckFailureReport = (operation: CheckOperation, cause: unknown) => void;
 
 const MAX_ACTIONS = 20;
@@ -58,18 +44,14 @@ const MAX_REQUESTS = 20;
 
 const DEADLINE_MS = 180_000;
 
-/** More offered steps than this means the page isn't one the worker understands. */
 const MAX_CANDIDATES = 30;
 
-/** A repeated established step gets four local observations (3.2 seconds) before declaring no progress. */
 const MAX_SETTLE_OBSERVATIONS = 4;
 
 const SETTLE_DELAY_MS = 800;
 
-/** Variables the browser worker needs on Windows. The key and the rest of the app's environment stay out. */
 const WORKER_ENVIRONMENT = ["SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "PATH"] as const;
 
-/** The environment a browser worker starts with: the allow-listed variables and the bundled browser's location. */
 export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
 
@@ -82,11 +64,6 @@ export function workerEnvironment(browserPath: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-/**
- * Starts a browser check for one permit in its own worker process and cache folder. `result` settles once the check has
- * an outcome. `closed` settles once the worker has exited and its cache folder is removed, or reported as left behind.
- * Throws only when the cache folder can't be created, before anything has started.
- */
 export function runCheck(input: {
   runId: string;
   permit: PermitRow;
@@ -95,7 +72,6 @@ export function runCheck(input: {
   cacheRoot: string;
   startWorker: (environment: NodeJS.ProcessEnv) => WorkerStart;
   report: CheckFailureReport;
-  /** Removes one run's cache folder after its worker exits. */
   removeCache?: ((cachePath: string) => Promise<void>) | undefined;
 }): ActiveCheck {
   const controller = new AbortController();
@@ -110,7 +86,6 @@ export function runCheck(input: {
   const cachePath = path.join(input.cacheRoot, input.runId);
   mkdirSync(cachePath, { recursive: true });
 
-  // A folder that can't be removed is reported and left behind; `closed` settles either way.
   const removeCache = () => {
     void (input.removeCache?.(cachePath) ?? rm(cachePath, { recursive: true, force: true })).then(
       markClosed,
@@ -160,9 +135,7 @@ export function runCheck(input: {
       if (!exited) {
         try {
           worker.send({ kind: "cancel", runId: input.runId });
-        } catch {
-          /* already exited */
-        }
+        } catch {}
 
         forceKillTimer = setTimeout(() => {
           worker.kill();
@@ -187,8 +160,6 @@ export function runCheck(input: {
       if (!done) finish({ outcome: "browser_error" });
     });
 
-    // Service and model failures come back from chooseNavigation as decisions, so a failure here is local: the worker
-    // couldn't be reached or main failed. That isn't a TypeSafe outage, so it isn't recorded or retried as one.
     const failLocally = (cause: unknown) => {
       finish({ outcome: "browser_error" });
       input.report("handle-message", cause);
@@ -228,8 +199,6 @@ export function runCheck(input: {
         case "action_count":
           actionCount = message.count;
 
-          // The last permitted action still gets to report its verified result. The observation handler refuses
-          // another choice at the limit; an impossible count above it ends immediately.
           if (actionCount > MAX_ACTIONS) finish({ outcome: "timeout" });
 
           return;
@@ -298,9 +267,6 @@ export function runCheck(input: {
 
           decisionPending = true;
 
-          // A lone step the worker's own checks established needs no model call; the worker still revalidates the page
-          // before acting. Repeated established steps are handled above, so the model can't authorize an action that
-          // loop protection would reject. Jev is only asked about unresolved choices.
           const decision: NavigationDecision = established
             ? { _tag: "chosen", candidateId: only.id, attempts: 0, actualModel: null }
             : await chooseNavigation({
@@ -333,7 +299,6 @@ export function runCheck(input: {
             return;
           }
 
-          // A reply that breaks the service's contract is the service's fault, not the portal's, so it retries like an outage.
           if (decision._tag === "malformed_response") {
             finish({ outcome: "api_unavailable" });
 

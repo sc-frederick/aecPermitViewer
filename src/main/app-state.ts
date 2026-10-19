@@ -6,19 +6,16 @@ import { isFailure } from "../shared/outcomes.js";
 import { describeCheckTimes, formatCheckTime } from "../shared/schedule.js";
 import type { AppSnapshot, KeyState, StoredKeyState } from "../shared/bridge.js";
 
-/** The settings rows behind the preferences stored as flags. */
 export const PREF_FLAGS = {
   notifyStatusChanges: "notify_status_changes",
   notifyFailures: "notify_failures",
   runInBackground: "run_in_background",
 } as const;
 
-/** Whether closing the window hides it to the tray or menu bar instead of quitting. */
 export function keepsRunningInBackground(context: AppContext): boolean {
   return Boolean(context.background?.available) && context.store.getFlag(PREF_FLAGS.runInBackground, true);
 }
 
-/** The saved key's state, treating a key-storage failure as storage being unavailable. */
 export async function storedKeyState(context: AppContext, operation: string): Promise<StoredKeyState> {
   return context.keys.state().catch((cause: unknown) => {
     context.diagnostics.record(operation, null, cause);
@@ -27,7 +24,6 @@ export async function storedKeyState(context: AppContext, operation: string): Pr
   });
 }
 
-/** Why a check someone asked for can't run with the saved key, or null when it can. */
 export function keyStateProblem(state: StoredKeyState): string | null {
   switch (state) {
     case "configured":
@@ -41,15 +37,10 @@ export function keyStateProblem(state: StoredKeyState): string | null {
   }
 }
 
-/** The key state shown to the user: the stored state, or `rejected` while the queue is paused on a rejected key. */
 function effectiveKeyState(context: AppContext, stored: StoredKeyState): KeyState {
   return stored === "configured" && context.checks.keyPaused ? "rejected" : stored;
 }
 
-/**
- * Reads the whole app state. The key state is the only asynchronous read, so it goes first; the revision and everything
- * else are read after it in one turn. A snapshot with a higher revision never holds older permits or settings.
- */
 export async function snapshot(context: AppContext): Promise<AppSnapshot> {
   const stored = await storedKeyState(context, "snapshot:key-state");
   context.snapshotRevision += 1;
@@ -78,9 +69,7 @@ export async function snapshot(context: AppContext): Promise<AppSnapshot> {
   };
 }
 
-/** Sends one snapshot to the window and the tray's counts to the tray. Callers go through `AppContext.broadcast`. */
 export async function sendSnapshot(context: AppContext): Promise<void> {
-  // Every change to this app's list passes through here, so a shared copy follows it.
   context.sharing.listChanged();
 
   if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
@@ -96,7 +85,6 @@ export async function sendSnapshot(context: AppContext): Promise<void> {
     });
     context.mainWindow.webContents.send("permit:snapshot-changed", current);
   } catch (cause) {
-    // The next UI request will surface local storage errors through its reply.
     context.diagnostics.record("snapshot:broadcast", null, cause);
   }
 }

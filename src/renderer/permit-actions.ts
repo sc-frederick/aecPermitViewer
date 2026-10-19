@@ -44,14 +44,22 @@ function requestPermitAction(action: Exclude<PermitAction, "details">, permitId:
   }
 }
 
-/** Wires the table rows' buttons and the details sheet's Check now and Open record buttons. */
 export function initPermitActions(): void {
   permitTable.addEventListener("click", (event) => {
-    const target = eventButton(event, "button[data-action]");
-    const action = permitActionValue(target?.dataset.action);
+    const target = eventButton(event, "button");
 
-    if (!target?.dataset.permitId || !action) return;
-    void runPermitAction(action, target.dataset.permitId);
+    if (target) {
+      const action = permitActionValue(target.dataset.action);
+
+      if (!target.disabled && target.dataset.permitId && action) void runPermitAction(action, target.dataset.permitId);
+
+      return;
+    }
+
+    if (!(event.target instanceof Element) || window.getSelection()?.isCollapsed === false) return;
+    const row = event.target.closest("tr[data-permit-id]");
+
+    if (row instanceof HTMLTableRowElement && row.dataset.permitId) openDetails(row.dataset.permitId);
   });
 
   detailsCheck.addEventListener("click", () => {

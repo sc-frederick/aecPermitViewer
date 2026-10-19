@@ -18,10 +18,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** How the stand-in worker answers what main sends it. `environment` is what the worker process was started with. */
 type WorkerScript = (message: MainToWorker, worker: TestWorker, environment: NodeJS.ProcessEnv) => void;
 
-/** A stand-in for the worker process: it follows a script, and exits once main cancels the run. */
 class TestWorker implements CheckWorker {
   private readonly messageListeners: Array<(message: WorkerToMain) => void> = [];
   private readonly exitListeners: Array<() => void> = [];
@@ -53,11 +51,8 @@ class TestWorker implements CheckWorker {
     this.exitListeners.push(listener);
   }
 
-  onError(): void {
-    // This stand-in never reports a fatal error.
-  }
+  onError(): void {}
 
-  /** Delivers a message to main on a later turn, as a real process would. */
   emit(message: WorkerToMain): void {
     setImmediate(() => {
       for (const listener of this.messageListeners) listener(message);
@@ -69,7 +64,6 @@ class TestWorker implements CheckWorker {
   }
 }
 
-/** Runs one check against a scripted worker, collecting what it reported. */
 function check(
   start: (environment: NodeJS.ProcessEnv) => WorkerStart,
   removeCache?: (cachePath: string) => Promise<void>,
@@ -258,7 +252,6 @@ describe("running a check", () => {
 
     expect((await active.result).outcome).toBe("cancelled");
     await active.closed;
-    // Outlast the runner's 800 ms settle delay so a reobserve that leaked past cancel would arrive.
     await new Promise((resolve) => setTimeout(resolve, 850));
     expect(messages).toEqual(["start", "choose"]);
   });
@@ -361,7 +354,6 @@ describe("running a check", () => {
           });
         }
 
-        // The worker's channel closed before main could send the chosen step.
         if (message.kind === "choose")
           throw Object.assign(new Error("channel closed"), { code: "ERR_IPC_CHANNEL_CLOSED" });
       }),

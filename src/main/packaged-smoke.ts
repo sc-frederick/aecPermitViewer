@@ -4,10 +4,6 @@ import { bundledBrowserPath, workerPath } from "./paths.js";
 import { HILLSBOROUGH_ID } from "../shared/permit.js";
 import { workerToMainSchema, type MainToWorker } from "../shared/worker-protocol.js";
 
-/**
- * Checks one live Hillsborough permit through the packaged worker and bundled browser, choosing the first offered step
- * at each page, then exits the app: 0 when the record page verifies, 1 on any failure or after 45 seconds.
- */
 export async function runPackagedBrowserSmoke(): Promise<void> {
   const runId = "packaged-browser-smoke";
   const permitNumber = "HC-BLD-26-0087599";

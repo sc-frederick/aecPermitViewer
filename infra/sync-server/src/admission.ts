@@ -1,6 +1,3 @@
-// A fixed admission budget for the deployment. Only PUT admission crosses this object; list reads and storage remain
-// per-room. Room reservations are permanent, so expiry failures, ambiguous RPC results and delete/recreate races cannot
-// free capacity while ciphertext still exists elsewhere. Source counters are bounded and expire at UTC-day boundaries.
 import * as z from "zod/mini";
 import { SHARE_BODY_MAX_BYTES } from "../../../src/shared/share-protocol.js";
 import type { RoomStorage } from "./room.js";
@@ -11,7 +8,6 @@ const DAY_MS = 86_400_000;
 
 const positiveLimit = z.coerce.number().check(z.int(), z.positive(), z.maximum(1_000_000));
 
-/** Parsed deployment limits, configured with the corresponding Wrangler variables. */
 export const admissionLimitsSchema = z.object({
   sourceWritesPerMinute: positiveLimit,
   sourceCreationsPerDay: positiveLimit,
@@ -20,10 +16,8 @@ export const admissionLimitsSchema = z.object({
   trackedSources: positiveLimit,
 });
 
-/** The validated limits used by an admission budget. */
 export type AdmissionLimits = z.infer<typeof admissionLimitsSchema>;
 
-/** Defaults mirrored in wrangler.jsonc; tests use the same production policy unless they lower a limit. */
 export const DEFAULT_ADMISSION_LIMITS: AdmissionLimits = {
   sourceWritesPerMinute: 60,
   sourceCreationsPerDay: 5,
@@ -32,21 +26,16 @@ export const DEFAULT_ADMISSION_LIMITS: AdmissionLimits = {
   trackedSources: 4096,
 };
 
-/** A quota rejection. Creation-only rejections still let an existing room with no admission record (legacy) update. */
 export type AdmissionDenied = {
   readonly _tag: "denied";
   readonly reason: "source_writes" | "tracked_sources" | "source_creations" | "deployment_creations" | "room_capacity";
   readonly retryAfterSeconds: number;
 };
 
-/** Admission before reading the request body, or the atomic reservation immediately before a new room is written. */
 export type AdmissionResult = { readonly _tag: "allowed"; readonly registered: boolean } | AdmissionDenied;
 
-/** The narrow admission port reached by the HTTP router. */
 export interface AdmissionApi {
-  /** Charges the source's write-request quota and checks creation/capacity without reserving a room. */
   check(roomName: string, source: string): Promise<AdmissionResult>;
-  /** Reserves one permanent room slot and charges creation quotas, atomically and idempotently. */
   register(roomName: string, source: string): Promise<AdmissionResult>;
 }
 
@@ -70,7 +59,6 @@ function denied(reason: AdmissionDenied["reason"], until: number, now: number): 
  * Object input/output gates make the read/check/write sequence atomic across concurrent callers and object restarts.
  */
 export class ShareAdmission {
-  /** Initializes the fixed coordinator schema; limits must already have passed admissionLimitsSchema. */
   constructor(
     private readonly storage: RoomStorage,
     private readonly limits: AdmissionLimits = DEFAULT_ADMISSION_LIMITS,
@@ -133,7 +121,6 @@ export class ShareAdmission {
     return rooms >= this.limits.registeredRooms ? denied("room_capacity", now + 3_600_000, now) : null;
   }
 
-  /** Charges a write request before any room or body access; known rooms do not consume creation quotas. */
   check(name: string, source: string, now: number): AdmissionResult {
     const state = this.source(source, now);
 
@@ -154,10 +141,6 @@ export class ShareAdmission {
     return this.creationLimit(state, now) ?? { _tag: "allowed", registered: false };
   }
 
-  /**
-   * Rechecks quotas after body validation and reserves the room's slot before its first publication. A room that is
-   * already registered is allowed without charging again.
-   */
   register(name: string, source: string, now: number): AdmissionResult {
     if (this.registered(name)) return { _tag: "allowed", registered: true };
     const state = this.source(source, now);

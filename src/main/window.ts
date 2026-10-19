@@ -7,7 +7,6 @@ import { assetsPath, preloadPath } from "./paths.js";
 
 const BACKGROUND_HINT_SHOWN = "background_hint_shown";
 
-/** Brings the main window to the front, restoring it if minimized. Does nothing before the window exists. */
 export function showWindow(context: AppContext): void {
   if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
 
@@ -21,12 +20,10 @@ function openPermitInWindow(context: AppContext, permitId: string): void {
   context.mainWindow?.webContents.send("permit:open-details", permitId);
 }
 
-/** Turns down every permission request from web content, such as notifications or media. */
 export function denyPermissionRequests(): void {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
 }
 
-/** The tray or menu bar icon, whose menu acts on the window, the permit list, and the schedule. Not started yet. */
 export function createBackground(context: AppContext): Background {
   return new Background(assetsPath(), {
     showWindow: () => showWindow(context),
@@ -44,7 +41,6 @@ export function createBackground(context: AppContext): Background {
   });
 }
 
-/** Sets the application menu: the standard app, edit, and window menus on macOS, and none elsewhere. */
 export function setApplicationMenu(): void {
   // macOS takes Copy, Paste, and Quit from the application menu, so without one the key and share code fields can't be
   // pasted into. Windows shows no menu bar.
@@ -55,10 +51,6 @@ export function setApplicationMenu(): void {
   );
 }
 
-/**
- * Creates the main window, hidden until shown. It can't navigate, open other windows, or attach webviews. Closing it
- * hides it instead when the app keeps running in the background.
- */
 export function createMainWindow(context: AppContext): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1120,

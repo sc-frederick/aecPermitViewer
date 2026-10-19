@@ -2,17 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckQueue, SCOPE_SPACING_MS, type KeyProblem, type StartedCheck } from "../src/main/check-queue.js";
 import type { RunOutcome } from "../src/shared/permit.js";
 
-/**
- * What the test changes between steps: the saved key ("unreadable" makes reading it fail), when reading it finishes,
- * and whether scheduled work still qualifies.
- */
 interface HarnessState {
   key: string | null;
   keyRead: Promise<void>;
   eligible: boolean;
 }
 
-/** A promise the test settles by hand, standing in for a slow prerequisite. */
 interface Gate {
   promise: Promise<void>;
   open: () => void;
@@ -28,7 +23,6 @@ function gate(): Gate {
   return { promise, open };
 }
 
-/** A queue wired to in-memory answers; each started check waits until the test finishes it. */
 function harness(scopes: Record<string, string>) {
   const started: string[] = [];
   const startedKeys: string[] = [];
@@ -67,7 +61,6 @@ function harness(scopes: Record<string, string>) {
     changed: () => undefined,
   });
 
-  /** Ends a running check and lets the queue react. */
   async function finish(permitId: string, outcome: RunOutcome = "success"): Promise<void> {
     running.get(permitId)?.(outcome);
     running.delete(permitId);
@@ -160,7 +153,6 @@ describe("cancelling", () => {
           settle = resolve;
         });
 
-        // Main answers null when the check stopped before its run was saved, such as while the browser is verified.
         return { finished, cancel: () => settle(null) };
       },
       defer: (permitId) => deferred.push(permitId),
@@ -195,7 +187,6 @@ describe("scheduled eligibility", () => {
     queue.enqueue("a2", "scheduled");
     queue.enqueue("a3", "manual");
     await vi.advanceTimersByTimeAsync(0);
-    // The check window closes while the backlog waits.
     state.eligible = false;
     await finish("a1");
     await vi.advanceTimersByTimeAsync(SCOPE_SPACING_MS);
@@ -222,7 +213,6 @@ describe("scheduled eligibility", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(queue.busy).toBe(true);
 
-    // Switching to manual mode prunes the queue, but this entry is already starting.
     state.eligible = false;
     queue.prune();
     keyRead.open();
@@ -255,7 +245,6 @@ describe("scheduled eligibility", () => {
       scopeOf: (permitId) => permitId,
       scheduledEligible: () => eligible,
       readKey: async () => "key",
-      // Like main: wait for the browser payload, then ask the queue before launching anything.
       start: (permitId, _key, stillWanted): StartedCheck => ({
         finished: browser.promise.then(() => {
           if (!stillWanted()) return null;
@@ -430,7 +419,6 @@ describe("keys", () => {
     expect(keyNotices).toEqual([["missing", false]]);
     expect(queue.checkingIds()).toEqual(new Set());
 
-    // The next scheduler pass stays quiet; a check someone asked for says why it didn't run.
     queue.enqueue("a1", "scheduled");
     await vi.advanceTimersByTimeAsync(0);
     queue.enqueue("h1", "manual");

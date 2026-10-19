@@ -3,7 +3,6 @@ import { describeSharedUpdate } from "./notifications.js";
 import { announce } from "./notifier.js";
 import { Sharing } from "./sharing.js";
 
-/** Sharing over the current store. Recreated when the store is reopened after a failed update or deletion. */
 export function createSharing(context: AppContext): Sharing {
   return new Sharing(context.store, context.shareService, {
     changed: () => {
@@ -11,7 +10,6 @@ export function createSharing(context: AppContext): Sharing {
     },
     checking: () => context.checks.checkingIds().size > 0,
     listUpdated: (before, after) => {
-      // The first list after following is just what there is; only later lists bring news.
       if (!before) return;
 
       for (const event of describeSharedUpdate(before.permits, after.permits)) announce(context, event);

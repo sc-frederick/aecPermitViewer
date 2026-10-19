@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { AppContext } from "../app-context.js";
 import { createHandle, NO_INPUT } from "./handle.js";
 
-/** Registers the window's requests to share this app's list or follow another's. */
 export function registerSharingHandlers(context: AppContext): void {
   const handle = createHandle(context);
 
@@ -20,8 +19,6 @@ export function registerSharingHandlers(context: AppContext): void {
   handle("permit:follow", z.string().max(200), "That isn't a share code.", async (code) => {
     const result = await context.sharing.follow(code);
 
-    // None of this app's own checks run while another list is shown, including manual ones such as Check all from the
-    // tray; they would notify about permits the window no longer shows.
     if (result.ok) for (const permit of context.store.listPermits()) context.checks.cancel(permit.id);
 
     return result;

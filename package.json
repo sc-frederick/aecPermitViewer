@@ -8,7 +8,7 @@
   "main": "dist/main.cjs",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p infra/sync-server",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p infra/sync-server && tsc --noEmit -p infra/update-server/tsconfig.release.json",
     "lint": "oxlint --deny-warnings",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

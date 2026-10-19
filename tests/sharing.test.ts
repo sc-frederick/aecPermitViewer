@@ -33,7 +33,6 @@ function tempStore(): PermitStore {
   return new PermitStore(path.join(temporaryDirectory("permit-monitor-share-"), "data.sqlite"));
 }
 
-/** Records a successful check showing `status`, as the check runner does. */
 function observe(store: PermitStore, permitId: string, status: string): void {
   const runId = store.startRun({
     permitId,
@@ -62,9 +61,7 @@ function observe(store: PermitStore, permitId: string, status: string): void {
   });
 }
 
-/** Holds back the service's answers to one kind of request until released. */
 class Hold {
-  /** Resolves when the first held request has been answered by the Worker, before its answer is sent. */
   readonly reached: Promise<void>;
   private readonly released: Promise<void>;
   private arrive = (): void => undefined;
@@ -90,7 +87,6 @@ class Hold {
   }
 }
 
-/** The sync Worker's router on a local HTTP server, holding back answers to the kind of request `held()` names. */
 async function serve(rooms: MemoryRooms, held: () => Hold | null): Promise<string> {
   const server = await serveFetchHandler(async (request) => {
     const response = await route(request, rooms.directory, rooms.admission);
@@ -106,7 +102,6 @@ async function serve(rooms: MemoryRooms, held: () => Hold | null): Promise<strin
 
 class RecordingHost implements SharingHost {
   changes = 0;
-  /** Whether the host reports checks queued or running. */
   busy = false;
   readonly updates: Array<{ before: SharedList | null; after: SharedList }> = [];
   readonly reports: string[] = [];
@@ -173,7 +168,6 @@ describe("shared list format", () => {
     checking: true,
   });
 
-  /** A check on each of `days` days, three a day, each with an observation. */
   function history(days: number): PermitHistory {
     const runs = Array.from({ length: days * 3 }, (_, index) => ({
       id: `r${index}`,
@@ -227,7 +221,6 @@ describe("shared list format", () => {
       })),
     };
 
-    // A permit never checked has no history to share, and a second entry exercises the separator between entries.
     const unchecked = permitRow({ id: "00000000-0000-4000-8000-000000000002", permitNumber: "HC-BLD-26-0087600" });
 
     const historyOf = (permitId: string): PermitHistory =>
@@ -274,7 +267,6 @@ describe("follower timing", () => {
 });
 
 describe("publisher timing", () => {
-  /** A service that records when lists are published, and never fails. */
   class RecordingService extends ShareService {
     readonly publications: number[] = [];
 
@@ -341,7 +333,6 @@ describe("sharing between two apps", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   });
 
-  /** Waits for `sharing` to publish a list newer than `after` and returns the publication time. */
   async function published(sharing: Sharing, after: string | null = null): Promise<string> {
     return vi.waitFor(
       () => {
@@ -376,7 +367,6 @@ describe("sharing between two apps", () => {
       const first = await published(publisher);
       const code = defined(publisher.code(), "share code");
 
-      // The service holds only ciphertext.
       const stored = [...rooms.storages.values()].map(
         (storage) => storage.sql.exec("SELECT body FROM list").toArray()[0]?.body,
       );
@@ -398,7 +388,6 @@ describe("sharing between two apps", () => {
       expect(await follower.startSharing()).toEqual({ ok: false, error: "Stop following the shared list first." });
       expect(await publisher.follow(code)).toEqual({ ok: false, error: "Stop sharing your list first." });
 
-      // Mid-run, the list waits for the checks to finish, then goes out as one publication.
       observe(own, permitId, "Issued");
       publisherHost.busy = true;
       publisher.listChanged();
@@ -409,26 +398,22 @@ describe("sharing between two apps", () => {
       await vi.advanceTimersByTimeAsync(PUBLISH_SETTLE_MS);
       const second = await published(publisher, first);
 
-      // Sync now sends at once, even unchanged, and passes on the service's request to wait.
       rooms.now += 10_000;
       expect(await publisher.sync()).toEqual({ ok: true, value: null });
       expect(publisher.state()).not.toMatchObject({ publishedAt: second });
       expect(await publisher.sync()).toEqual({ ok: false, error: "The list was just sent. Try again in 10 seconds." });
 
-      // The follower's sync brings the new status, with the notice the publisher's own app would have given.
       expect(await follower.sync()).toEqual({ ok: true, value: null });
       const update = defined(followerHost.updates.at(-1), "an update");
       expect(
         describeSharedUpdate(defined(update.before, "the earlier list").permits, update.after.permits),
       ).toMatchObject([{ kind: "status-changed", body: "“In Process” → “Issued”" }]);
 
-      // A restart shows the last list before the network answers.
       const restarted = new Sharing(theirs, service, new RecordingHost());
       await restarted.start();
       expect(restarted.permits().map((permit) => permit.lastStatus)).toEqual(["Issued"]);
       await restarted.stop();
 
-      // Stopping deletes the shared copy, and the follower hears it's gone.
       expect(await publisher.stopSharing()).toEqual({ ok: true, value: null });
       expect(publisher.state()).toEqual({ mode: "off", available: true });
       expect(await follower.sync()).toEqual({ ok: false, error: "The shared list was removed. Ask for a new code." });
@@ -461,7 +446,6 @@ describe("sharing between two apps", () => {
       const code = defined(publisher.code(), "share code");
       const readToken = defined(parseShareCode(code), "parsed code").readToken;
 
-      // Share clicked while Follow's first fetch is under way: it waits for Follow, then refuses.
       const probe = new Hold("GET");
       hold = probe;
       const following = follower.follow(code);
@@ -473,7 +457,6 @@ describe("sharing between two apps", () => {
       expect(follower.state().mode).toBe("following");
       expect(theirs.getText("share_write_key")).toBeNull();
 
-      // Sync now clicked while Stop sharing waits on the deletion: it can't bring the deleted list back.
       const deletion = new Hold("DELETE");
       hold = deletion;
       rooms.now += 60_000;
@@ -507,7 +490,6 @@ describe("sharing between two apps", () => {
         error: "Couldn't remove the shared copy, so it's still shared. Try again.",
       });
       expect(publisher.state().mode).toBe("sharing");
-      // The write key is the only way to delete the copy, so it stays until a deletion goes through.
       expect(own.getText("share_write_key")).not.toBeNull();
       rooms.failing = false;
       expect(await publisher.stopSharing()).toEqual({ ok: true, value: null });
@@ -556,7 +538,6 @@ describe("sharing snapshot consistency", () => {
 
     if (other._tag !== "ok") throw other.error;
     observe(store, other.value, "In Process");
-    // Saved keys that start() picks up as on a normal launch; the content key is the one CapturingService opens with.
     store.setText("share_write_key", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE");
     store.setText("share_content_key", "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk");
     const service = new CapturingService(new URL("http://localhost"));
@@ -565,7 +546,6 @@ describe("sharing snapshot consistency", () => {
     try {
       await sharing.start();
       const publishing = sharing.sync();
-      // sync() awaits any prior attempt, records the store's change count, then yields before its first history read.
 
       const edited = new Promise<void>((resolve) => {
         queueMicrotask(() =>

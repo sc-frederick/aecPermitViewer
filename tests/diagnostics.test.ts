@@ -6,7 +6,6 @@ import { classifyCause, DiagnosticLog, type Diagnostic } from "../src/main/diagn
 import { PermitStore } from "../src/main/store.js";
 import { temporaryDirectory } from "./support/temporary-directory.js";
 
-/** The driver error a real store keeps as the cause when the same permit is added twice. */
 function duplicatePermitError(): Error {
   const store = new PermitStore(path.join(temporaryDirectory("permit-monitor-diagnostics-"), "data.sqlite"));
 

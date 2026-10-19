@@ -13,8 +13,6 @@ import { readDetail } from "../src/worker/detail.js";
 import { defined } from "./support/defined.js";
 import { temporaryDirectory } from "./support/temporary-directory.js";
 
-// Captured from a live Hillsborough permit on September 28, 2026, keeping only the record fields and workflow table.
-// Comments, scripts, links, and images are stripped; nested and collapsed rows and status fields keep Accela's markup.
 const html = readFileSync("tests/fixtures/hillsborough/processing-status.html", "utf8");
 
 const number = "HC-SITECON-26-0000004";

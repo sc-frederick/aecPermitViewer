@@ -22,11 +22,7 @@ let settleConfirm: ((accepted: boolean) => void) | null = null;
 
 const closeHooks = new Map<HTMLDialogElement, () => void>();
 
-/**
- * Moves the notice into the frontmost open modal dialog, or back to the body. A modal dialog covers the page and makes
- * it inert, so a notice outside it could be neither seen nor announced. Confirm dialogs only open over a sheet, never
- * under one, so an open confirm dialog is always in front.
- */
+// Modal dialogs make the rest of the page inert, so notices must live inside the frontmost dialog.
 function placeNotice(): void {
   const host =
     document.querySelector("dialog.confirm:modal") ?? document.querySelector("dialog.sheet:modal") ?? document.body;
@@ -34,7 +30,6 @@ function placeNotice(): void {
   if (noticeElement.parentElement !== host) host.append(noticeElement);
 }
 
-/** Shows `message` in the notice bar in front of any open dialog; errors stay up for 9 seconds, info for 5. */
 export function notice(message: string, kind: "info" | "error" = "error"): void {
   placeNotice();
   noticeText.textContent = message;
@@ -51,10 +46,6 @@ export function notice(message: string, kind: "info" | "error" = "error"): void 
   );
 }
 
-/**
- * Asks a yes-or-no question in the confirm dialog. Resolves true when `accept` is chosen, and false when the dialog is
- * dismissed or another confirmation replaces it.
- */
 export function confirmAction(title: string, body: string, accept: string, cancel = "Cancel"): Promise<boolean> {
   confirmTitle.textContent = title;
   confirmBody.textContent = body;
@@ -68,7 +59,6 @@ export function confirmAction(title: string, body: string, accept: string, cance
   });
 }
 
-/** Closes the confirm dialog, if open, and settles its pending question with `accepted`. */
 export function finishConfirm(accepted: boolean): void {
   if (confirmDialog.open) confirmDialog.close();
   const settle = settleConfirm;
@@ -76,21 +66,16 @@ export function finishConfirm(accepted: boolean): void {
   settle?.(accepted);
 }
 
-/** Registers `hook` to run each time `closeSheet` is called for `dialog`, whether or not it was open. */
 export function onSheetClose(dialog: HTMLDialogElement, hook: () => void): void {
   closeHooks.set(dialog, hook);
 }
 
-/** Closes a sheet if it is open and runs its close hook. */
 export function closeSheet(dialog: HTMLDialogElement): void {
   if (dialog.open) dialog.close();
   closeHooks.get(dialog)?.();
 }
 
-/** Wires sheet dismissal, notice placement, and the confirm dialog's buttons. */
 export function initOverlays(): void {
-  // Sheets close on Escape, a backdrop click, or their close button. State resets in closeSheet's hooks rather than
-  // in a "close" listener so it doesn't depend on that event being delivered.
   for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog.sheet")) {
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) closeSheet(dialog);
@@ -102,7 +87,6 @@ export function initOverlays(): void {
     dialog.querySelector<HTMLButtonElement>("[data-close]")?.addEventListener("click", () => closeSheet(dialog));
   }
 
-  // A notice already showing follows the dialog in front as dialogs open and close.
   for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("toggle", placeNotice);
 
   confirmDialog.addEventListener("cancel", (event) => {

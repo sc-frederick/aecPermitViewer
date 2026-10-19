@@ -1,39 +1,22 @@
 import type { RunOutcome } from "../shared/permit.js";
 
-/** Why a check was queued: someone asked for it, or the daily schedule found the permit due. */
 export type CheckReason = "manual" | "scheduled";
 
-/** Why checks can't run for lack of a usable key: none is saved, the saved one can't be read, or the service turned it down. */
 export type KeyProblem = "missing" | "unreadable" | "rejected";
 
-/** A check that has started; `finished` settles with its recorded outcome, or null when nothing was recorded. */
 export interface StartedCheck {
   finished: Promise<RunOutcome | null>;
   cancel: () => void;
 }
 
-/** What the queue needs from the rest of the app. */
 export interface CheckQueuePorts {
-  /** The portal pacing scope a permit's checks share, such as the host several authorities sit behind; null when it can't be checked. */
   scopeOf: (permitId: string) => string | null;
-  /** Whether a scheduled check may still start now: scheduling on, inside the check window, and the permit included. */
   scheduledEligible: (permitId: string) => boolean;
-  /** The saved key, or null when none is saved. Rejects when a saved key can't be read or decrypted. */
   readKey: () => Promise<string | null>;
-  /**
-   * Starts the browser check. `finished` rejects only when its result couldn't be saved. `stillWanted` answers whether
-   * the check should still go ahead: false once it was cancelled, the queue stopped, or scheduled work stopped qualifying.
-   * The starter calls it after its own waits, immediately before the run begins, and settles `finished` with null when
-   * it returns false.
-   */
   start: (permitId: string, key: string, stillWanted: () => boolean) => StartedCheck;
-  /** A cancelled check that never started waits for the permit's next scheduled slot instead of being picked up again. */
   defer: (permitId: string) => void;
-  /** A check couldn't run for want of a key. `requested` is true when someone asked for that check. */
   keyUnavailable: (problem: KeyProblem, requested: boolean) => void;
-  /** A check's result couldn't be saved locally. */
   saveFailed: () => void;
-  /** The set of permits being checked changed. */
   changed: () => void;
 }
 
@@ -47,17 +30,10 @@ interface Current extends Entry {
   cancel: () => void;
 }
 
-/** One read of the saved key. Tagged so that no saved key's text can pass for a missing or unreadable one. */
 type KeyRead = { _tag: "key"; key: string } | { _tag: "missing" } | { _tag: "unreadable" };
 
-/** Portals see at most one check per scope in this window, measured from the end of the last one. */
 export const SCOPE_SPACING_MS = 30_000;
 
-/**
- * Runs permit checks one at a time. Checks on different portals don't wait for each other; checks on one portal are
- * spaced out. Scheduled work is rechecked for eligibility when it is about to start, again after the key is read, and
- * through `stillWanted` after the starter's own waits; it pauses while no key works. Manual requests always go ahead.
- */
 export class CheckQueue {
   private entries: Entry[] = [];
   private current: Current | null = null;
@@ -71,7 +47,6 @@ export class CheckQueue {
 
   constructor(private readonly ports: CheckQueuePorts) {}
 
-  /** Queues a check unless one is already queued or running; a manual request upgrades a queued scheduled one. */
   enqueue(permitId: string, reason: CheckReason): void {
     if (this.stopped || (reason === "scheduled" && this.paused === "rejected") || !this.ports.scopeOf(permitId)) return;
 
@@ -89,7 +64,6 @@ export class CheckQueue {
     this.kick();
   }
 
-  /** Stops a queued, starting, or running check for the permit. */
   cancel(permitId: string): void {
     const index = this.entries.findIndex((entry) => entry.permitId === permitId);
 
@@ -105,7 +79,6 @@ export class CheckQueue {
     }
   }
 
-  /** Forgets a queued check for a permit being removed. Returns false while its check is under way. */
   remove(permitId: string): boolean {
     if (this.current?.permitId === permitId) return false;
     this.entries = this.entries.filter((entry) => entry.permitId !== permitId);
@@ -113,7 +86,6 @@ export class CheckQueue {
     return true;
   }
 
-  /** Drops queued scheduled work that is no longer eligible, after a setting changed. */
   prune(): void {
     const before = this.entries.length;
     this.entries = this.entries.filter(
@@ -123,7 +95,6 @@ export class CheckQueue {
     if (this.entries.length !== before) this.ports.changed();
   }
 
-  /** Permits with a check queued, starting, or running. */
   checkingIds(): Set<string> {
     const ids = new Set(this.entries.map((entry) => entry.permitId));
 
@@ -132,19 +103,16 @@ export class CheckQueue {
     return ids;
   }
 
-  /** True after the service rejected the key; scheduled checks aren't queued again until a key is saved. */
   get keyPaused(): boolean {
     return this.paused === "rejected";
   }
 
-  /** A key was saved, so paused checks may run again. */
   resume(): void {
     this.keyGeneration += 1;
     this.paused = null;
     this.kick();
   }
 
-  /** Stops taking work and cancels what is running. Resolves once the loop has finished. */
   stop(): Promise<void> {
     this.stopped = true;
     this.entries = [];
@@ -159,13 +127,11 @@ export class CheckQueue {
     return this.running ?? Promise.resolve();
   }
 
-  /** Takes work again after a shutdown that didn't go ahead. */
   restart(): void {
     this.stopped = false;
     this.kick();
   }
 
-  /** Whether a check is starting or running. */
   get busy(): boolean {
     return this.current !== null;
   }
@@ -173,7 +139,6 @@ export class CheckQueue {
   private kick(): void {
     if (this.stopped) return;
 
-    // Work that arrives while the loop is finishing is looked at again once it has.
     if (this.running) {
       this.again = true;
 
@@ -194,7 +159,6 @@ export class CheckQueue {
     this.timer = null;
   }
 
-  /** The first queued entry whose scope is ready, taken off the queue, or when the soonest scope will be. */
   private next(): { _tag: "ready"; entry: Entry } | { _tag: "wait"; until: number } | { _tag: "empty" } {
     const now = Date.now();
     let soonest = Number.POSITIVE_INFINITY;
@@ -234,12 +198,10 @@ export class CheckQueue {
     }
   }
 
-  /** Whether an entry may still start: a manual request always may; scheduled work must qualify and not wait on a rejected key. */
   private wanted(entry: Entry): boolean {
     return entry.reason === "manual" || (this.paused !== "rejected" && this.ports.scheduledEligible(entry.permitId));
   }
 
-  /** Reads the saved key, telling no saved key apart from one that couldn't be read. */
   private readSavedKey(): Promise<KeyRead> {
     return this.ports.readKey().then(
       (key): KeyRead => (key === null ? { _tag: "missing" } : { _tag: "key", key }),
@@ -263,7 +225,6 @@ export class CheckQueue {
       let generation = this.keyGeneration;
       let read = await this.readSavedKey();
 
-      // A key saved during the read invalidates its answer, including a missing or unreadable one.
       while (generation !== this.keyGeneration && !this.stopped && !current.cancelled) {
         generation = this.keyGeneration;
         read = await this.readSavedKey();
@@ -275,7 +236,6 @@ export class CheckQueue {
         return;
       }
 
-      // Settings can change while the key is read. Work that no longer qualifies stays due for a later pass.
       if (!this.wanted(entry)) return;
 
       if (read._tag !== "key") {
@@ -284,7 +244,6 @@ export class CheckQueue {
         return;
       }
 
-      // A key that reads again ends a pause for a missing or unreadable one; a rejected key waits for a new one.
       if (this.paused !== "rejected") this.paused = null;
 
       const check = this.ports.start(
@@ -305,10 +264,7 @@ export class CheckQueue {
       });
 
       if (outcome !== null) this.readyAt.set(scope, Date.now() + SCOPE_SPACING_MS);
-      // A check cancelled before it recorded a run still waits for its next slot, like one cancelled in the queue.
       else if (current.cancelled) this.ports.defer(entry.permitId);
-      // The starter can still be waiting for the bundled browser when a key is replaced. Its stale generation
-      // must not launch, but the original request still belongs to the new key and needs another start.
       else if (!saveFailed && generation !== this.keyGeneration && !this.stopped && this.wanted(entry))
         this.entries.unshift(entry);
 
@@ -319,10 +275,6 @@ export class CheckQueue {
     }
   }
 
-  /**
-   * Without a working key every check would fail the same way, so the queue empties rather than recording failures.
-   * The notice goes out when the problem first appears or changes, and again for each check someone asked for.
-   */
   private pause(problem: KeyProblem, requested: boolean): void {
     this.entries = [];
 

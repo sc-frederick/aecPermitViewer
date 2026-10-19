@@ -9,8 +9,6 @@ const browserPath = path.resolve("vendor/playwright-browsers");
 
 mkdirSync(browserPath, { recursive: true });
 
-// The worker and tests only launch the headless shell, so the full Chromium (about 400 MB) stays out of the installer.
-// On macOS it is also an app bundle full of symlinks, which the payload check refuses.
 const result = spawnSync(
   process.execPath,
   [path.resolve("node_modules/playwright/cli.js"), "install", "chromium", "--only-shell"],
@@ -29,8 +27,6 @@ async function filesIn(directory, prefix = "") {
     if (entry.name === "sha256-manifest.json") continue;
     const relative = path.posix.join(prefix, entry.name);
 
-    // Tests on Windows can leave Chromium's debug.log here. It changes between runs, so it is deleted rather than
-    // hashed; every other browser file is hashed.
     if (entry.isFile() && isBrowserDiagnosticFile(relative)) {
       await unlink(path.join(directory, entry.name));
 

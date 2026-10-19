@@ -64,18 +64,12 @@ const projectSkip = element("project-skip", HTMLButtonElement);
 
 const projectSave = element("project-save", HTMLButtonElement);
 
-// Hand-checked permits: open the portal, then record what the user reads there.
 let manualPermitId: string | null = null;
 
-// Project number: asked once after a permit is added, editable later from its details.
 let projectPermitId: string | null = null;
 
 let settleProject: ((saved: string | null) => void) | null = null;
 
-/**
- * Opens a hand-checked permit's portal, then the dialog that records the status the user reads there. A portal that
- * fails to open shows a notice instead.
- */
 export async function startManualCheck(permit: PermitRow): Promise<void> {
   const result = await api.openPortal(permit.id);
 
@@ -110,7 +104,6 @@ function askProjectNumber(permit: PermitRow): Promise<string | null> {
   projectPermit.textContent = permit.permitNumber;
   const others = ui.currentSnapshot?.permits.filter((entry) => entry.id !== permit.id) ?? [];
   const recent = recentProjects(others, 5);
-  // Permits tend to arrive a project at a time, so prefill the last one used, selected so typing replaces it.
   projectInput.value = recent[0] ?? "";
   projectRecent.hidden = recent.length < 2;
   projectRecentList.replaceChildren(
@@ -134,7 +127,6 @@ function askProjectNumber(permit: PermitRow): Promise<string | null> {
   });
 }
 
-/** Closes the project number prompt, if open, and settles its pending question with `saved`. */
 export function finishProject(saved: string | null): void {
   projectPermitId = null;
 
@@ -170,7 +162,6 @@ function renderJurisdictionHelp(): void {
   permitNumberInput.placeholder = (profile && numberExample(profile)) ?? "Full permit number";
 }
 
-/** Wires the hand-check dialog, the project number prompt, and the add form, and fills the jurisdiction menu. */
 export function initAddPermit(): void {
   manualStatus.addEventListener("input", () => setInlineError(manualStatus, manualError, null));
 

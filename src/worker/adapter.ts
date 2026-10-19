@@ -3,17 +3,14 @@ import type { ReviewEntry } from "../shared/reviews.js";
 import type { JurisdictionId } from "../shared/jurisdictions.js";
 import { sameJurisdictionPermitNumber } from "../shared/permit.js";
 
-/** What a record showed: its identity, record-level status and label, and the record page link to save. */
 export interface DisplayedRecord {
   displayedNumber: string | null;
   statusLabel: string | null;
   statusValue: string | null;
   recordUrl: string | null;
-  /** Populated by adapters that read individual review processes. */
   reviews?: ReviewEntry[] | null;
 }
 
-/** A read that found no record: no number, status, label, or link. */
 export const NOTHING_DISPLAYED: DisplayedRecord = {
   displayedNumber: null,
   statusLabel: null,
@@ -21,10 +18,6 @@ export const NOTHING_DISPLAYED: DisplayedRecord = {
   recordUrl: null,
 };
 
-/**
- * The result links whose text is the requested permit number, keeping the first link to each address. Several links to
- * one record count as one result.
- */
 export function exactLinks<T extends { text: string; href: string }>(
   links: readonly T[],
   requested: string,
@@ -35,7 +28,6 @@ export function exactLinks<T extends { text: string; href: string }>(
   return matching.filter((link, index) => matching.findIndex((candidate) => candidate.href === link.href) === index);
 }
 
-/** A search page's state and the next steps it allows. */
 export interface SearchObservation {
   phase: PageObservation["phase"];
   inputValue: string;
@@ -45,10 +37,8 @@ export interface SearchObservation {
   candidates: Candidate[];
 }
 
-/** Drives one portal family's search, results, and record pages for a single requested number. */
 export interface PortalAdapter {
   observe(): Promise<SearchObservation>;
-  /** True once the search for the requested number has finished without it. */
   foundNothing(): Promise<boolean>;
   openSearch?(): Promise<void>;
   fill(): Promise<void>;

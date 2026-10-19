@@ -6,13 +6,6 @@ import { decideInstallerUpload, decideManifestReplacement } from "../infra/updat
 import { createReadStream } from "node:fs";
 import { installerPath, macZipPath, manifestPath, readLocalMac, readLocalRelease } from "./release-feed.mjs";
 
-// CI publishing path (.github/workflows/windows.yml). Cloudflare challenges GitHub's runners on the Worker
-// hosts, so this writes to R2's S3 endpoint with the AWS CLI. It applies the Worker's upload rules: a
-// versioned installer is written once (an identical rerun is skipped, different bytes fail the job), and the
-// manifest only moves to a newer version. The workflow serializes CI releases, and the manifest's final
-// conditional write refuses a concurrent change through the manual publisher. Both platform artifacts are
-// required and created conditionally before the manifest, so the feed's /mac link never names a missing file.
-
 const endpoint = process.env.R2_ENDPOINT;
 
 const bucket = process.env.R2_BUCKET ?? "permitmon-updates";
@@ -35,10 +28,6 @@ const headText = jsonText.pipe(
   }),
 );
 
-/**
- * Runs the AWS CLI against the R2 endpoint and resolves with its exit code and output. Rejects only when the
- * CLI can't be started. With `sink`, stdout goes there instead of being buffered.
- */
 function aws(args, sink) {
   return new Promise((resolve, reject) => {
     const child = spawn("aws", [...args, "--endpoint-url", endpoint], { stdio: ["ignore", "pipe", "pipe"] });
@@ -58,7 +47,6 @@ function failure(action, result) {
   return new Error(`${action} failed (exit ${result.code}): ${result.stderr.trim()}`);
 }
 
-/** The stored installer's size and recorded hash, or null when the key is absent. */
 async function headInstaller(key) {
   const result = await aws(["s3api", "head-object", "--bucket", bucket, "--key", key, "--output", "json"]);
 
@@ -77,7 +65,6 @@ async function headInstaller(key) {
   };
 }
 
-/** Hashes a stored object by streaming it through the CLI. Needed only for older installers with no recorded hash. */
 async function hashStored(key) {
   const hash = createHash("sha256");
 
@@ -90,10 +77,6 @@ async function hashStored(key) {
   return hash.digest("hex");
 }
 
-/**
- * The upload decision for whatever is stored under `key`. A copy stored without a recorded hash is downloaded and
- * hashed, since a matching size alone can't show it holds the same bytes.
- */
 async function decideStored(key, claim) {
   const decision = decideInstallerUpload(await headInstaller(key), claim);
 
@@ -103,9 +86,7 @@ async function decideStored(key, claim) {
   return decideInstallerUpload({ size: claim.size, sha256: await hashStored(key) }, claim);
 }
 
-/** The published manifest and its version, or null before the first release. */
 async function publishedManifest() {
-  // Read the etag before the body: if the object changes during either read, the conditional write fails closed.
   const headResult = await aws(["s3api", "head-object", "--bucket", bucket, "--key", MANIFEST, "--output", "json"]);
 
   if (headResult.code !== 0) {
@@ -121,13 +102,11 @@ async function publishedManifest() {
 
   const payload = parseManifest(result.stdout);
 
-  // Replacing an unreadable manifest would bypass the version rule, so that is left to a person.
   if (!payload) throw new Error(`The published ${MANIFEST} is unreadable; inspect the feed and replace it by hand.`);
 
   return { version: payload.version, text: result.stdout, etag };
 }
 
-/** Writes the manifest only if the version decision still applies to the same published object. */
 async function uploadManifest(etag) {
   const condition = etag ? ["--if-match", etag] : ["--if-none-match", "*"];
 
@@ -148,7 +127,6 @@ async function uploadManifest(etag) {
   if (result.code !== 0) throw failure(`Upload ${MANIFEST}`, result);
 }
 
-/** Writes `file` under `key` once: an identical stored copy is skipped and different bytes fail the job. */
 async function publishOnce(file, key, contentType, claim) {
   const decision = await decideStored(key, claim);
 

@@ -2,7 +2,6 @@ import type { Page } from "playwright";
 import { reviewDate, reviewsSchema } from "../shared/review-schema.js";
 import type { ReviewEntry } from "../shared/reviews.js";
 
-/** The workflow could not be read completely; treating that as an empty workflow would clear known requests. */
 export class ReviewReadFailed extends Error {
   readonly _tag = "ReviewReadFailed" as const;
 
@@ -13,10 +12,6 @@ export class ReviewReadFailed extends Error {
 
 type ReviewRead = { _tag: "ok"; value: ReviewEntry[] | null } | { _tag: "err"; error: ReviewReadFailed };
 
-/**
- * Reads Accela's nested Processing Status history, including collapsed rows. Only structured status fields count;
- * reviewer comments, icons, assignment names, and unrelated record text never become statuses.
- */
 export async function readAccelaReviews(page: Page): Promise<ReviewRead> {
   const failed: ReviewRead = { _tag: "err", error: new ReviewReadFailed() };
 

@@ -1,33 +1,18 @@
-// The contract between the app and the shared-list Worker (infra/sync-server). Both sides import this file, and it uses
-// only Web Crypto and base64 built-ins so it runs unchanged in Node, Electron main, and Workers.
-//
-// A shared list has three secrets, all made by the publishing app:
-// - the write key (32 random bytes), kept by the publisher and sent only to publish or delete;
-// - the read token (16 bytes derived from the write key), sent by followers to fetch;
-// - the content key (32 random bytes), which encrypts the list and is never sent to the Worker.
-// The share code a follower pastes holds the read token and the content key. The Worker stores ciphertext under a room
-// named by a hash of the read token, so it can route both sides to the same room without holding anything that
-// decrypts the list or proves the right to publish.
-
-/** Marks a share code and its format version. */
 const SHARE_CODE_PREFIX = "PMS1-";
 
 /** The most encrypted bytes one published list may hold. A Durable Object SQLite row holds up to 2 MB. */
 export const SHARE_BODY_MAX_BYTES = 1_500_000;
 
-/** Bytes in a write key. */
 export const WRITE_KEY_BYTES = 32;
 
 const READ_TOKEN_BYTES = 16;
 
-/** Bytes in a content key. */
 export const CONTENT_KEY_BYTES = 32;
 
 const BASE64URL = /^[A-Za-z0-9_-]*$/;
 
 const encoder = new TextEncoder();
 
-/** Base64url without padding, as used for every token and the share code. */
 export function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
 
@@ -36,7 +21,6 @@ export function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** The bytes a base64url string holds, or null when it isn't base64url of exactly `length` bytes. */
 export function fromBase64Url(value: string, length: number): Uint8Array<ArrayBuffer> | null {
   if (!BASE64URL.test(value) || value.length !== Math.ceil((length * 4) / 3)) return null;
   const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
@@ -46,7 +30,6 @@ export function fromBase64Url(value: string, length: number): Uint8Array<ArrayBu
 
   for (let index = 0; index < length; index += 1) bytes[index] = binary.charCodeAt(index);
 
-  // A non-canonical encoding (stray low bits in the last character) would name the same bytes two ways.
   return toBase64Url(bytes) === value ? bytes : null;
 }
 
@@ -59,7 +42,6 @@ async function sha256(label: string, bytes: Uint8Array<ArrayBuffer>): Promise<Ui
   return new Uint8Array(await crypto.subtle.digest("SHA-256", input));
 }
 
-/** The read token for a write key, or null when the write key is malformed. */
 export async function readTokenFor(writeKey: string): Promise<string | null> {
   const bytes = fromBase64Url(writeKey, WRITE_KEY_BYTES);
 
@@ -68,7 +50,6 @@ export async function readTokenFor(writeKey: string): Promise<string | null> {
   return toBase64Url((await sha256("permitmon-share-read", bytes)).subarray(0, READ_TOKEN_BYTES));
 }
 
-/** The Durable Object name for a read token, or null when the token is malformed. The token itself never names a room. */
 export async function roomNameFor(readToken: string): Promise<string | null> {
   const bytes = fromBase64Url(readToken, READ_TOKEN_BYTES);
 
@@ -77,13 +58,11 @@ export async function roomNameFor(readToken: string): Promise<string | null> {
   return [...(await sha256("permitmon-share-room", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** What a follower needs: the token that fetches the list and the key that decrypts it. */
 export interface ShareCode {
   readonly readToken: string;
   readonly contentKey: Uint8Array<ArrayBuffer>;
 }
 
-/** The share code for a read token and content key, or null when either has the wrong length or encoding. */
 export function formatShareCode(readToken: string, contentKey: Uint8Array): string | null {
   const token = fromBase64Url(readToken, READ_TOKEN_BYTES);
 
@@ -95,7 +74,6 @@ export function formatShareCode(readToken: string, contentKey: Uint8Array): stri
   return `${SHARE_CODE_PREFIX}${toBase64Url(joined)}`;
 }
 
-/** The share code's parts, or null when it isn't one. Surrounding whitespace is ignored. */
 export function parseShareCode(value: string): ShareCode | null {
   const text = value.trim();
 

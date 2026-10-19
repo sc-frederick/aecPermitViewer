@@ -43,11 +43,8 @@ import {
   showWindow,
 } from "./window.js";
 
-// The Squirrel ID only matches a Start menu shortcut once installed. Unpackaged runs keep
-// Electron's default so development builds can still show toasts.
 if (process.platform === "win32" && app.isPackaged) app.setAppUserModelId(APP_USER_MODEL_ID);
 
-// Squirrel runs the app to handle install, update, and uninstall events; those launches do their work and quit.
 const squirrelEvent = handleSquirrelEvent(process.argv, () => setOpenAtLogin(false));
 
 if (squirrelEvent || !app.requestSingleInstanceLock()) {
@@ -56,7 +53,6 @@ if (squirrelEvent || !app.requestSingleInstanceLock()) {
   app.on("second-instance", () => {
     if (running) showWindow(running);
   });
-  // macOS: clicking the Dock icon brings back a window closed to the menu bar.
   app.on("activate", () => {
     if (running) showWindow(running);
   });
@@ -65,7 +61,6 @@ if (squirrelEvent || !app.requestSingleInstanceLock()) {
 
 let startupFailed = false;
 
-/** Both startup and the deferred browser check can fail; the user sees one dialog. */
 function failStartup(): void {
   if (startupFailed) return;
   startupFailed = true;
@@ -82,13 +77,8 @@ function failStartup(): void {
 
 const lifecycle: Lifecycle = { quitting: false, quitAllowed: false };
 
-/** The running app, from the moment startup opens local data. */
 let running: AppContext | null = null;
 
-/**
- * The services main's modules share, created in the order they rely on each other. Each service that calls back into
- * the app reads this context when it does, and none calls back before the constructor finishes.
- */
 class MainContext implements AppContext {
   store: PermitStore;
   sharing: Sharing;
@@ -115,7 +105,6 @@ class MainContext implements AppContext {
     this.store.alignSchedule(new Date());
     this.checks = createQueue(this);
     this.scheduler = createScheduler(this);
-    // Sharing can send a snapshot as soon as it starts, and a snapshot reads the key state.
     this.keys = createKeyStore(dataRoot());
     this.shareService = loadShareService(syncConfigPath());
     this.sharing = createSharing(this);
@@ -133,8 +122,6 @@ async function startApp(): Promise<void> {
     return;
   }
 
-  // Hashing the browser payload takes a while, so the window opens meanwhile. Checks wait for it,
-  // and a mismatch still ends the app before the browser is ever launched.
   const browserVerified = payload.then(
     () => true,
     () => {
@@ -159,11 +146,10 @@ async function startApp(): Promise<void> {
   registerDataHandlers(context);
   registerSharingHandlers(context);
 
-  // Handlers are registered before the page loads so its first snapshot request never races them.
   await mainWindow.loadFile(pagePath());
 
   if (!(process.argv.includes(HIDDEN_LAUNCH_ARG) && context.background.available)) mainWindow.show();
-  await context.broadcast(); // Populates the tray menu and tooltip before anything changes.
+  await context.broadcast();
 
   context.scheduler.start();
   context.scheduler.scheduleDue();
@@ -180,7 +166,6 @@ app.on("before-quit", (event) => {
   }
 
   event.preventDefault();
-  // A stopped update download removes its partial file instead of leaving it for the next run.
   void Promise.all([stopChecks(context), context.updates.cancel(), context.sharing.stop()]).then(([stopped]) => {
     if (stopped) context.store.close();
     lifecycle.quitAllowed = true;

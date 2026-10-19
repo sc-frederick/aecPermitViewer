@@ -5,10 +5,8 @@ import type { AutomatedJurisdictionProfile } from "../shared/jurisdictions.js";
 import type { Candidate } from "../shared/worker-protocol.js";
 import type { DisplayedRecord, PortalAdapter, SearchObservation } from "./adapter.js";
 
-/** A district searched through the ePermit app St. Johns River WMD hosts. */
 type EpermitProfile = Extract<AutomatedJurisdictionProfile, { portalFamily: "epermit" }>;
 
-// The search form renders in an open shadow root, which Playwright's CSS locators reach into.
 const PERMIT_FIELD = "input[formcontrolname=permitNo]";
 
 const SEQUENCE_FIELD = "input[formcontrolname=seqNo]";
@@ -17,14 +15,9 @@ const RESULT_LINK = "ng-reg-search td a";
 
 const NO_RESULTS = "No Results Found";
 
-/** Opening a result shows the record in a dialog frame over the results. */
 const RECORD_FRAME = "iframe#iframeDiagHtml";
 
-/**
- * Counts the search form's lookup lists as they load, and returns a wait for the form to settle. The form clears its
- * fields just after the third list arrives, so numbers entered earlier are lost and the search then reports that no
- * criteria were given.
- */
+// ePermit clears its search fields after the third lookup list arrives.
 export function watchEpermitForm(page: Page): () => Promise<void> {
   let lists = 0;
   page.on("response", (response) => {
@@ -47,7 +40,6 @@ function searchButton(page: Page): Locator {
   return page.locator("ng-reg-search button").filter({ hasText: /^\s*Search\s*$/ });
 }
 
-/** Visible result links whose number matches `requested` exactly (prefix, number, and sequence), with their text. */
 async function exactLinks(page: Page, requested: string): Promise<Array<{ link: Locator; text: string }>> {
   const links = page.locator(RESULT_LINK).filter({ visible: true });
   const texts = (await links.allInnerTexts()).map((text) => text.trim());
@@ -84,7 +76,6 @@ async function noResultsShown(page: Page): Promise<boolean> {
     .catch(() => false);
 }
 
-/** Each "label = value" pair on the open record, from its bold labels and their following values. */
 async function recordFields(page: Page): Promise<Array<[string, string]>> {
   const frame = page.locator(RECORD_FRAME);
 
@@ -107,7 +98,6 @@ function field(fields: Array<[string, string]>, name: string): string | null {
   return values.length === 1 && values[0] ? values[0] : null;
 }
 
-/** Offer the next step, or report that the exactly matching record is open over the results. */
 async function observeEpermitSearch(
   page: Page,
   profile: EpermitProfile,
@@ -116,7 +106,6 @@ async function observeEpermitSearch(
   const entered = await criteriaEntered(page, requested);
   const inputValue = entered ? requested : "";
 
-  // Another dialog, such as a portal warning, leaves nothing safe to do.
   if (
     (await page
       .locator("mat-dialog-container")
@@ -211,7 +200,6 @@ async function observeEpermitSearch(
   };
 }
 
-/** True once a search for the requested number and sequence found nothing, or only other prefixes. */
 async function epermitSearchFoundNothing(page: Page, requested: string): Promise<boolean> {
   if (!(await criteriaEntered(page, requested))) return false;
 
@@ -235,14 +223,12 @@ async function fillEpermitSearch(page: Page, requested: string): Promise<void> {
 
 async function submitEpermitSearch(page: Page, requested: string): Promise<void> {
   if (!(await criteriaEntered(page, requested))) return;
-  // A loading overlay can cover the button while the form's lookup lists load.
   await page
     .locator(".cdk-overlay-backdrop")
     .first()
     .waitFor({ state: "hidden", timeout: 20_000 })
     .catch(() => undefined);
 
-  // The form can clear itself after the numbers go in; if it did, enter them again before searching.
   if (!(await criteriaEntered(page, requested))) await fillEpermitSearch(page, requested);
 
   if (
@@ -266,7 +252,6 @@ async function openEpermitResult(page: Page, requested: string): Promise<void> {
 
   if (!exact) return;
   await exact.link.click();
-  // The record fills in after its own request, so wait for its number and status to hold text.
   await page
     .waitForFunction(
       (selector) => {
@@ -284,7 +269,6 @@ async function openEpermitResult(page: Page, requested: string): Promise<void> {
     .catch(() => undefined);
 }
 
-/** The result row's Status column: the district's own status, which the record dialog abbreviates (Never Issued shows as Closed). */
 async function rowStatus(link: Locator): Promise<string | null> {
   return link.evaluate((anchor) => {
     const row = anchor.closest("tr");
@@ -299,7 +283,6 @@ async function rowStatus(link: Locator): Promise<string | null> {
   });
 }
 
-/** Read the open record: the result row's full number and Status, with the record's Project Number and process stage. */
 async function readEpermitRecord(page: Page, profile: EpermitProfile, requested: string): Promise<DisplayedRecord> {
   const fields = await recordFields(page);
   const row = onlyElement(await exactLinks(page, requested));
@@ -316,7 +299,6 @@ async function readEpermitRecord(page: Page, profile: EpermitProfile, requested:
   };
 }
 
-/** Drive a district's ePermit search for one requested permit number with its sequence. */
 export function epermitAdapter(page: Page, profile: EpermitProfile, requested: string): PortalAdapter {
   return {
     observe: () => observeEpermitSearch(page, profile, requested),

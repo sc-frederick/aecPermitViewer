@@ -4,7 +4,6 @@ import type { AppContext } from "../app-context.js";
 import { reopenAfterFailedShutdown, resumeAfterFailedShutdown, stopChecks } from "../shutdown.js";
 import { createHandle, NO_INPUT } from "./handle.js";
 
-/** Registers the window's update requests: checking, downloading, and installing an update. */
 export function registerUpdateHandlers(context: AppContext): void {
   const handle = createHandle(context);
 
@@ -18,7 +17,6 @@ export function registerUpdateHandlers(context: AppContext): void {
     }
   });
   handle("permit:download-update", NO_INPUT, "Invalid request.", async () => {
-    // The feed's installer is for Windows. A Mac copy is replaced by hand from the download page.
     if (process.platform === "darwin") return { ok: false, error: "Download the new version from the download page." };
 
     try {

@@ -1,4 +1,3 @@
-/** Public permit authorities and the portal that issues each record. */
 export const JURISDICTIONS = [
   {
     id: "hillsborough-county-building",
@@ -8,7 +7,6 @@ export const JURISDICTIONS = [
     startUrl: "https://aca-prod.accela.com/HCFL/Cap/CapHome.aspx?module=Building&TabName=Building",
     tenant: "HCFL",
     module: "Building",
-    // HillsGovHub's Global Search finds a record number in any of these modules.
     globalSearch: true,
     modules: ["Building", "LandDevelopment", "Fire", "Enforcement", "Administrative"],
     coverageNote:
@@ -23,7 +21,6 @@ export const JURISDICTIONS = [
     startUrl: "https://aca-prod.accela.com/PASCO/Default.aspx",
     tenant: "PASCO",
     module: "Building",
-    // PascoGateway's home-page Global Search finds a record number in any of these modules.
     globalSearch: true,
     modules: ["Building", "Permits", "Planning", "Enforcement"],
     coverageNote:
@@ -71,7 +68,6 @@ export const JURISDICTIONS = [
     authorityType: "county-government",
     portalFamily: "tyler-civic-access",
     startUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice",
-    // Civic Access lands on its home page; the public records search is a separate route under the county's site.
     searchUrl: "https://hernandocountyfl-energovweb.tylerhost.net/apps/selfservice/hernandocountyflprod#/search",
     tenant: "",
     module: "Building",
@@ -89,7 +85,6 @@ export const JURISDICTIONS = [
     coverageNote: "Polk County Building records in Accela; historical permits use a separate county lookup.",
     adapterVersion: "accela-reviews-1",
   },
-  // SWFWMD's public WMIS searches each cover one permit program. Record pages are served from a second host.
   {
     id: "swfwmd-erp",
     label: "SWFWMD · Environmental resource permit",
@@ -144,7 +139,6 @@ export const JURISDICTIONS = [
     tenant: "",
     module: "All",
     statusLabels: ["Permit Status", "Application Status", "App Status"],
-    // The district's firewall turns away browsers that name themselves HeadlessChrome, though its search is public.
     plainUserAgent: true,
     numberExample: "48-112909-P or 260901-67337",
     coverageNote:
@@ -195,8 +189,6 @@ export const JURISDICTIONS = [
       "Northwest Florida Water Management District ERP, water use, and well construction records in its ePermit search, which updates nightly. Enter the full number, such as IND-113-18663-5 or 2E-131-6688-3.",
     adapterVersion: "epermit-1",
   },
-  // None of these portals allows an anonymous automated lookup, so they are checked by hand: the app opens
-  // the official search and records the status the user reads there.
   {
     id: "orange-county-building",
     label: "Orange County",
@@ -238,63 +230,48 @@ export const JURISDICTIONS = [
   },
 ] as const;
 
-/** One authority supported by the permit selector. */
 export type JurisdictionProfile = (typeof JURISDICTIONS)[number];
 
-/** An authority the browser worker can search on its own. */
 export type AutomatedJurisdictionProfile = Exclude<JurisdictionProfile, { portalFamily: "manual" }>;
 
-/** Stable identifier for a supported permit authority. */
 export type JurisdictionId = JurisdictionProfile["id"];
 
-/** The profile for a persisted or user-selected id, or null when no supported authority has it. */
 export function getJurisdiction(id: string): JurisdictionProfile | null {
   return JURISDICTIONS.find((profile) => profile.id === id) ?? null;
 }
 
-/** The profile only if the browser worker can check it; manual authorities return null. */
 export function getAutomatedJurisdiction(id: string): AutomatedJurisdictionProfile | null {
   const profile = getJurisdiction(id);
 
   return profile && profile.portalFamily !== "manual" ? profile : null;
 }
 
-/** True for Accela portals searched through the home page's Global Search instead of one module's record search. */
 export function usesGlobalSearch(id: string): boolean {
   const profile = getJurisdiction(id);
 
   return Boolean(profile && "globalSearch" in profile && profile.globalSearch);
 }
 
-/** Accela modules whose record pages belong to the authority. */
 export function accelaModules(profile: JurisdictionProfile): readonly string[] {
   return "modules" in profile ? profile.modules : [profile.module];
 }
 
-/** True for authorities whose status the user enters by hand. */
 export function isManualJurisdiction(id: string): boolean {
   return getJurisdiction(id)?.portalFamily === "manual";
 }
 
-/** The host serving record pages: the profile's `recordHost` when it has one, otherwise the search host. */
 export function recordHost(profile: JurisdictionProfile): string {
   return "recordHost" in profile ? profile.recordHost : new URL(profile.startUrl).host;
 }
 
-/**
- * The portal a check's traffic lands on, used to pace checks: authorities that share one host, such as the Accela
- * tenants on aca-prod.accela.com or the districts on one ePermit server, share one pace.
- */
 export function checkScope(profile: AutomatedJurisdictionProfile): string {
   return new URL(profile.startUrl).host;
 }
 
-/** An example of the number format the authority's search accepts, for the add form. */
 export function numberExample(profile: JurisdictionProfile): string | null {
   return "numberExample" in profile ? profile.numberExample : null;
 }
 
-/** Selector groups: local permitting authorities first, then the water management districts. */
 export const JURISDICTION_GROUPS = [
   {
     label: "Counties and cities",

@@ -8,12 +8,9 @@ import { PREFERENCE_KEYS } from "../../shared/bridge.js";
 import { keyProblem } from "../../shared/key-format.js";
 import { MAX_CHECK_TIMES, normalizeCheckTimes } from "../../shared/schedule.js";
 
-/** Registers the window's Settings requests: the key, the check schedule, and preferences. */
 export function registerSettingsHandlers(context: AppContext): void {
   const handle = createHandle(context);
 
-  // The key arrives once from the settings field and is encrypted immediately. It is never
-  // echoed back to the window, logged, stored in the database, or given to the browser worker.
   handle("permit:save-key", z.string(), "Enter your API key.", async (raw) => {
     const key = raw.trim();
     const problem = keyProblem(key);
@@ -31,7 +28,6 @@ export function registerSettingsHandlers(context: AppContext): void {
     }
 
     context.notifier.resetKeyNotice();
-    // Work paused for want of a key picks up now rather than at the next slot.
     context.checks.resume();
     context.scheduler.scheduleDue();
     await context.broadcast();

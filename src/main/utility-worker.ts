@@ -3,10 +3,6 @@ import path from "node:path";
 import { workerToMainSchema } from "../shared/worker-protocol.js";
 import type { WorkerStart } from "./check-runner.js";
 
-/**
- * Starts the browser worker script as an Electron utility process with exactly `environment`. Messages are parsed here,
- * because the worker drives untrusted pages; anything that doesn't match the worker protocol is dropped.
- */
 export function startUtilityWorker(workerPath: string, environment: NodeJS.ProcessEnv): WorkerStart {
   let child: Electron.UtilityProcess;
 

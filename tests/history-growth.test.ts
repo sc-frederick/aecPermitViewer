@@ -6,12 +6,8 @@ import { buildSharedListAsync, parseSharedList } from "../src/main/share-list.js
 import { PermitStore } from "../src/main/store.js";
 import { temporaryDirectory } from "./support/temporary-directory.js";
 
-/** A folder named by HISTORY_BENCHMARK_OUTPUT also gets each round's results as `aec-history-<days>.json`. */
 const outputDirectory = process.env.HISTORY_BENCHMARK_OUTPUT;
 
-// CI runs this alone with `npm run benchmark:history`. The fixture models 75 permits with three daily checks and
-// 20 reviews per check. The two-minute timeout covers seeding 246,375 observations on Windows; publication must still
-// keep every event-loop turn under 100 ms.
 describe("history growth benchmark", () => {
   it("materializes only the retained daily window as discarded history grows", async () => {
     const file = path.join(temporaryDirectory("permit-history-growth-"), "data.sqlite");

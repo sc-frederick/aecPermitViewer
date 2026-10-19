@@ -1,7 +1,5 @@
 name: Sync server
 
-# Deploys the shared-list Worker (infra/sync-server) whenever it or the protocol it shares with the app changes on
-# master, so it is always live before a release that relies on it is tagged. Pull requests only bundle it.
 on:
   workflow_dispatch:
   push:
@@ -18,7 +16,6 @@ on:
       - tests/sync-server.test.ts
       - .github/workflows/sync-server.yml
 
-# Deploys run one at a time; a newer push to the same pull request replaces its run.
 concurrency:
   group: sync-server-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -36,7 +33,6 @@ jobs:
         with:
           node-version: 24.21.0
           cache: npm
-      # The Worker bundles zod from the root node_modules. Nothing here needs install scripts.
       - run: npm ci --allow-git=all --ignore-scripts
       - run: npx tsc --noEmit -p infra/sync-server
       - run: npx vitest run tests/sync-server.test.ts
@@ -44,7 +40,6 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: infra/sync-server
         run: node cloudflare-cli/run.mjs dry-run --skip-prepare
-      # cf uses the existing account and deployment token. The toolchain is pinned in cloudflare-cli/app.
       - name: Deploy
         if: github.event_name != 'pull_request'
         working-directory: infra/sync-server

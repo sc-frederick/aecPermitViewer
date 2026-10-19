@@ -2,7 +2,6 @@ import { powerMonitor } from "electron";
 import type { AppContext, Scheduler } from "./app-context.js";
 import { withinCheckWindow } from "../shared/schedule.js";
 
-/** Whether a scheduled check may start now: scheduling on, inside the check window, and the permit included. */
 export function scheduledEligible(context: AppContext, permitId: string): boolean {
   if (
     context.shuttingDown ||
@@ -15,14 +14,9 @@ export function scheduledEligible(context: AppContext, permitId: string): boolea
   return context.store.getPermit(permitId)?.monitoringEnabled === true;
 }
 
-/** The scheduler for this app: it queues due permits each minute and on wake while scheduled monitoring is on. */
 export function createScheduler(context: AppContext): Scheduler {
   let schedulerTimer: NodeJS.Timeout | null = null;
 
-  /**
-   * Queues due permits. `stop` removes the timer and resume listener before the store closes; the `shuttingDown` guard
-   * covers the other callers.
-   */
   const scheduleDue = (): void => {
     if (
       context.shuttingDown ||
@@ -33,7 +27,6 @@ export function createScheduler(context: AppContext): Scheduler {
       return;
     const now = new Date();
 
-    // Scheduled checks stay inside the check window; anything missed overnight runs at the first morning slot.
     if (!withinCheckWindow(now, context.store.getCheckTimes())) return;
 
     for (const id of context.store.duePermitIds(now.toISOString())) context.checks.enqueue(id, "scheduled");

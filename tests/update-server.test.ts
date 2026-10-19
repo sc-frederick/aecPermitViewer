@@ -19,7 +19,6 @@ const TOKEN = "upload-token";
 
 const INSTALLER_TYPE = "application/vnd.microsoft.portable-executable";
 
-/** A bucket and the Worker bindings that serve it. */
 interface TestFeed {
   readonly bucket: MemoryBucket;
   readonly env: FeedEnv;
@@ -41,7 +40,6 @@ function uploadCall(env: FeedEnv, path: string, method: string, body?: BodyInit)
   return call(env, `/upload/${path}`, init);
 }
 
-/** Uploads `installer` through the manual multipart protocol in parts of `partBytes`, as scripts/publish-update.mjs does. */
 async function uploadInstaller(env: FeedEnv, version: string, installer: string, partBytes = 4): Promise<Response> {
   const key = `PermitMonitorSetup-${version}.exe`;
   const claim = { sha256: sha256(installer), size: Buffer.byteLength(installer) };
@@ -73,7 +71,6 @@ async function uploadInstaller(env: FeedEnv, version: string, installer: string,
   );
 }
 
-/** Silences the Worker's storage-failure log for a test that causes one on purpose; `vi.restoreAllMocks` undoes it. */
 function quietStorageLog(): void {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 }
@@ -426,7 +423,6 @@ describe("manual installer upload", () => {
     const { bucket, env } = feed();
     const key = "PermitMonitorSetup-0.8.0.exe";
     const late = { sha256: sha256("second"), size: 6 };
-    // Both uploads start while the key is empty; the one started second completes first.
     const started = await (await uploadCall(env, key, "POST", JSON.stringify(late))).json();
 
     const part = await (
@@ -613,7 +609,6 @@ describe("manual manifest upload", () => {
     vi.restoreAllMocks();
   });
 
-  /** A feed at 0.7.0 with the 0.8.0 installer already uploaded. */
   function published(): TestFeed {
     const setup = feed();
     setup.bucket.seed("PermitMonitorSetup-0.7.0.exe", "seven", INSTALLER_TYPE, sha256("seven"));
@@ -691,7 +686,6 @@ describe("manual manifest upload", () => {
   it("refuses a manifest whose installer is missing or has other bytes", async () => {
     const { env } = published();
     expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.9.0", "nine"))).status).toBe(409);
-    // Same size as the stored 0.8.0 installer, different hash.
     expect((await uploadCall(env, "release-manifest.json", "PUT", releaseManifest("0.8.0", "EIGHT"))).status).toBe(409);
   });
 
@@ -703,7 +697,6 @@ describe("manual manifest upload", () => {
 
   it("counts the size limit in bytes, not UTF-16 code units", async () => {
     const { env } = published();
-    // 20,000 characters, 40,000 UTF-8 bytes: under the limit by string length, over it by bytes.
     const response = await uploadCall(env, "release-manifest.json", "PUT", "é".repeat(20_000));
     expect(response.status).toBe(413);
   });

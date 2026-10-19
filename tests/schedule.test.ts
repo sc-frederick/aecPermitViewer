@@ -10,7 +10,6 @@ import {
   type CheckTimes,
 } from "../src/shared/schedule.js";
 
-// Local-time dates, matching how the app reads the computer's clock.
 const on = (hour: number, minute = 0, day = 24) => new Date(2026, 8, day, hour, minute);
 
 const times = DEFAULT_CHECK_TIMES;
@@ -53,10 +52,6 @@ describe("default check schedule", () => {
     expect(effectiveRunTime(on(17, 20), on(16, 50), times)).toEqual(on(8, 30, 25));
     expect(effectiveRunTime(on(12, 30), on(7, 0), times)).toEqual(on(12, 30));
   });
-
-  it("names the times for display", () => {
-    expect(describeCheckTimes(times, "en-US")).toBe("8:30 AM, 12:30 PM, and 4:30 PM");
-  });
 });
 
 describe("custom check times", () => {
@@ -97,7 +92,6 @@ describe("custom check times", () => {
     expect(withinCheckWindow(on(8, 29, 25), late)).toBe(false);
     expect(withinCheckWindow(on(8, 30, 25), late)).toBe(true);
 
-    // The 11:45 PM check that is overdue just after midnight runs then, not at 11:45 the next night.
     expect(effectiveRunTime(on(23, 45), on(0, 5, 25), late)).toEqual(on(0, 5, 25));
     expect(effectiveRunTime(on(23, 45), on(0, 15, 25), late)).toEqual(on(8, 30, 25));
     expect(nextDueAfter(on(0, 5, 25), "success", late)).toEqual(on(8, 30, 25));

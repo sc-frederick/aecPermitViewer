@@ -101,7 +101,6 @@ async function populate(number: string, status = "Issued"): Promise<void> {
   );
 }
 
-/** Each kind of SFWMD record: a sample number, the label its status field carries, and its record class. */
 const RECORD_KINDS: Array<[string, string, string]> = [
   ["260901-67337", "Application Status", "SFWMD-REG-PERMIT-WORK"],
   ["48-112909-P", "Permit Status", "SFWMD-REG-PERMIT-WORK"],

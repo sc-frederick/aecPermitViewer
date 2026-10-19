@@ -46,7 +46,6 @@ function run(script: string, cwd: string, env: NodeJS.ProcessEnv, loader?: strin
 }
 
 describe("actual release publishers against local storage", () => {
-  /** A release job's output for an installer holding `body`, beside a fake `aws` whose bucket starts empty. */
   function workspace(body = "AAAA") {
     const root = temporaryDirectory("permit-monitor-manual-");
     const out = path.join(root, "work", "out", "make", "squirrel.windows", "x64");
@@ -59,7 +58,6 @@ describe("actual release publishers against local storage", () => {
     return { root, cwd: path.join(root, "work"), macFile, aws: installFakeAwsCli(root) };
   }
 
-  /** The update Worker on a local HTTP server, recording each request's method and path. */
   async function serve(bucket: MemoryBucket) {
     const env: FeedEnv = { BUCKET: bucket, UPLOAD_TOKEN: "local-token" };
     const requests: string[] = [];
@@ -153,7 +151,6 @@ describe("actual release publishers against local storage", () => {
       }
 
       const winner = identical ? "AAAA" : "BBBB";
-      // The CI process has checked an absent key and is paused immediately before its final conditional write.
       const claim = { sha256: sha256(winner), size: 4 };
 
       const response = await worker.fetch(
