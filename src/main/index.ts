@@ -1,4 +1,6 @@
 import { app, dialog, type BrowserWindow } from "electron";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import type { AppContext, Lifecycle, Scheduler } from "./app-context.js";
 import { sendSnapshot } from "./app-state.js";
 import { APP_USER_MODEL_ID, HIDDEN_LAUNCH_ARG, setOpenAtLogin, type Background } from "./background.js";
@@ -21,6 +23,7 @@ import {
   databasePath,
   dataRoot,
   diagnosticsPath,
+  isolatedDataDirectory,
   pagePath,
   syncConfigPath,
   updateConfigPath,
@@ -44,6 +47,15 @@ import {
 } from "./window.js";
 
 if (process.platform === "win32" && app.isPackaged) app.setAppUserModelId(APP_USER_MODEL_ID);
+
+const isolated = isolatedDataDirectory();
+
+// Before the single-instance lock, which lives in userData: an isolated run must never reach the user's own copy.
+if (isolated) {
+  const profile = path.join(isolated, "electron");
+  mkdirSync(profile, { recursive: true });
+  app.setPath("userData", profile);
+}
 
 const squirrelEvent = handleSquirrelEvent(process.argv, () => setOpenAtLogin(false));
 
@@ -106,7 +118,7 @@ class MainContext implements AppContext {
     this.checks = createQueue(this);
     this.scheduler = createScheduler(this);
     this.keys = createKeyStore(dataRoot());
-    this.shareService = loadShareService(syncConfigPath());
+    this.shareService = isolated ? null : loadShareService(syncConfigPath());
     this.sharing = createSharing(this);
     this.updates = new UpdateManager(dataRoot(), app.getVersion(), updateScriptPath(), updateConfigPath());
   }

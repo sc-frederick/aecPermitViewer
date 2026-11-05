@@ -1,8 +1,22 @@
 import { app } from "electron";
 import path from "node:path";
 
+/**
+ * The private folder an unpackaged build runs in when PERMIT_MONITOR_DATA_DIR names one, as benchmarks do; null
+ * otherwise. Packaged builds ignore the variable. An isolated run keeps all of its data, Electron's profile, and the
+ * single-instance lock there, and never stores a key, contacts the sharing service, or touches the user's own copy.
+ */
+export function isolatedDataDirectory(): string | null {
+  const directory = app.isPackaged ? "" : (process.env.PERMIT_MONITOR_DATA_DIR?.trim() ?? "");
+
+  return directory ? path.resolve(directory) : null;
+}
+
 /** The folder holding the database, logs, saved key, browser cache, and update downloads. Delete local data removes it. */
 export function dataRoot(): string {
+  const isolated = isolatedDataDirectory();
+
+  if (isolated) return path.join(isolated, "PermitMonitorData");
   const local = process.platform === "win32" ? process.env.LOCALAPPDATA : null;
 
   return path.join(local || app.getPath("userData"), "PermitMonitorData");

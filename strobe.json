@@ -1,0 +1,4 @@
+{
+  "$schema": "./node_modules/@hona/strobe/schema/strobe.v1.json",
+  "harness": ["src/main/paths.ts", "src/main/electron-key-store.ts", "src/main/index.ts", "scripts/build.mjs"]
+}

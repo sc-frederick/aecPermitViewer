@@ -84,6 +84,21 @@ SHARE_SERVICE_URL=http://127.0.0.1:8787 npm run dev
 npx electron . --user-data-dir=/tmp/permit-monitor-2
 ```
 
+### Benchmarks
+
+Performance is measured with [strobe](https://github.com/Hona/strobe), which needs [Bun](https://bun.sh). It builds the before and after commits in its own worktrees and runs them in alternating pairs:
+
+```sh
+npx strobe bench perf/permits.bench.ts --check --head .
+npx strobe bench perf/permits.bench.ts --base origin/master --head .
+```
+
+Each launch is an unpackaged build with `PERMIT_MONITOR_DATA_DIR` set to its own folder, seeded with a fixed permit list by `perf/variant.mjs`. With that variable, Electron's profile, the single-instance lock, and all app data stay in the folder, key storage is off, sharing is off, and the user's installed copy is never reached. Packaged builds ignore the variable.
+
+`strobe.json` copies the data-isolation code and source-map build support into both variants, including commits from before the benchmark harness existed. Keep performance changes out of those shared harness files: their contents are identical in both variants. The fixture uses manual checks and has no API key or sharing service; these cases only reload, open details, and scroll the list, once as a scroll gesture and once with the mouse wheel under the pointer.
+
+On WSL, run strobe with `DISPLAY=:0`. The bench sets `GALLIUM_DRIVER=d3d12` so Electron renders on the Windows GPU instead of Mesa's software renderer, which strobe refuses; set `MESA_D3D12_DEFAULT_ADAPTER_NAME` (for example `NVIDIA`) to choose between GPUs.
+
 ### Windows builds from WSL
 
 Windows npm can't run from a `\\wsl.localhost\...` path. `npm run sync:windows` mirrors the source to `C:\Users\<you>\dev\aecPermitViewer`, where you can install and run as above in PowerShell. `npm run make:win` builds the Squirrel installer, and `npm run package:mac` builds the Mac app on a Mac.
@@ -103,6 +118,7 @@ src/shared      Domain logic and message schemas shared across processes
 infra/          Cloudflare Workers for updates and shared lists
 scripts/        Build, browser staging, release, and smoke-check scripts
 tests/          Vitest suites and recorded portal fixtures
+perf/           strobe benchmarks and their fixture seeding
 docs/           Portal research, status survey, design notes, and release process
 ```
 
