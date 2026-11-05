@@ -611,6 +611,10 @@ select.field-control option::checkmark {
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+  /* The standard scrollbar, not the ::-webkit-scrollbar parts used elsewhere: Blink repaints those on the renderer's
+     main thread at every scroll offset, which kept the main thread painting for the whole of every scroll. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(84, 84, 90, 0.34) transparent;
   border-radius: 14px;
 }
 .table-scroll:focus-visible {
@@ -664,9 +668,10 @@ select.field-control option::checkmark {
 .table td:nth-child(5) time {
   white-space: nowrap;
 }
+/* Row hover changes without a transition: a mouse-wheel scroll moves rows under the pointer, and each change would
+   start a background-color transition that restyles and repaints on the main thread for its whole duration. */
 .table tbody tr {
   background: #fffdfa;
-  transition: background-color var(--duration-fast);
 }
 .table tbody tr:last-child td {
   border-bottom: 0;
