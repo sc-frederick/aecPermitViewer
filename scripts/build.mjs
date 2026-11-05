@@ -43,9 +43,14 @@ await writeFile("dist/sync-config.json", JSON.stringify({ serviceUrl: process.en
 
 const { version: playwrightVersion } = createRequire(import.meta.url)("playwright/package.json");
 
+// strobe builds benchmark variants with STROBE_SOURCEMAP=hidden: maps beside the scripts for attribution, with no
+// sourceMappingURL comment, so the bundles stay byte for byte the same. Other builds write no maps, and packaging
+// leaves maps out (forge.config.cjs).
+const sourcemap = process.env.STROBE_SOURCEMAP === "hidden" ? "external" : false;
+
 const shared = {
   bundle: true,
-  sourcemap: false,
+  sourcemap,
   target: "node24",
   platform: "node",
   format: "cjs",
@@ -70,6 +75,7 @@ await Promise.all([
     format: "esm",
     splitting: true,
     minify: true,
+    sourcemap,
     chunkNames: "chunks/[name]-[hash]",
   }),
   copyFile("src/renderer/index.html", "dist/index.html"),

@@ -18,6 +18,7 @@
   "include": [
     "src/**/*.ts",
     "tests/**/*.ts",
+    "perf/**/*.ts",
     "infra/update-server/src/**/*.ts",
     "infra/sync-server/src/room.ts",
     "infra/sync-server/src/router.ts",
